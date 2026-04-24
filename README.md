@@ -3,7 +3,7 @@
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://www.linux.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-mdbook-blue?style=for-the-badge)](https://jwoirhaye.github.io/joule-profiler/)
+[![Documentation](https://img.shields.io/badge/docs-mdbook-blue?style=for-the-badge)](https://joule-profiler.github.io/joule-profiler-docs/)
 
 A modular tool for measuring energy consumption and performance metrics of programs on Linux systems.
 
