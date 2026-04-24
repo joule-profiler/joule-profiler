@@ -1,6 +1,6 @@
 [package]
 name = "joule-profiler-cli"
-version = "1.0.1"
+version = "2.0.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
