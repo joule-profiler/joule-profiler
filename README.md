@@ -34,13 +34,13 @@ sudo cp target/release/joule-profiler /usr/local/bin/
 
 ```bash
 # Phase-based profiling
-sudo joule-profiler phases -- python workload.py
+sudo joule-profiler profile -- python workload.py
 
 # JSON output
-sudo joule-profiler --json phases -- ./benchmark
+sudo joule-profiler --json profile -- ./benchmark
 
 # GPU profiling (NVIDIA)
-sudo joule-profiler --gpu phases-- ./gpu-workload
+sudo joule-profiler --gpu profile-- ./gpu-workload
 ```
 
 ## Documentation
@@ -68,7 +68,7 @@ print("__CLEANUP__")
 ```
 
 ```bash
-sudo joule-profiler phases -- python example.py
+sudo joule-profiler profile -- python example.py
 ```
 
 ### Multiple Metric Sources
