@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Intel RAPL energy measurement source for joule-profiler"
-keywords = ["energy", "rapl", "intel", "hardware", "powercap", "perf_event"]
+keywords = ["energy", "rapl", "hardware", "powercap", "perf_event"]
 
 [dependencies]
 joule-profiler-core.workspace = true
