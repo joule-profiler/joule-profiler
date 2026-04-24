@@ -18,8 +18,8 @@ async fn main() -> Result<()> {
     let mut displayer = output_format_to_displayer(&cli)?;
     let mut profiler = JouleProfiler::new();
 
-    let rapl_sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
     let rapl_path = cli.rapl_path.as_deref();
+    let rapl_sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
     let rapl_polling = match &cli.command {
         ProfilerCommand::Profile(profile_args) => profile_args.rapl_polling,
         ProfilerCommand::ListSensors => None,
