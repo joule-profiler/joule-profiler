@@ -10,7 +10,7 @@ members = [
 edition = "2024"
 authors = ["Jérémy Woirhaye <jerem.woirhaye@gmail.com>", "François Gibier <francoisgibier.contact@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/jwoirhaye/joule-profiler"
+repository = "https://github.com/joule-profiler/joule-profiler"
 readme = "README.md"
 
 [workspace.dependencies]
