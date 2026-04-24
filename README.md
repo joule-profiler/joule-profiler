@@ -21,10 +21,10 @@ A modular tool for measuring energy consumption and performance metrics of progr
 
 ```bash
 # Quick install (recommended)
-curl -fsSL https://raw.githubusercontent.com/jwoirhaye/joule-profiler/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joule-profiler/joule-profiler/main/install.sh | bash
 
 # Or build from source
-git clone https://github.com/jwoirhaye/joule-profiler.git
+git clone https://github.com/joule-profiler/joule-profiler.git
 cd joule-profiler
 cargo build --release
 sudo cp target/release/joule-profiler /usr/local/bin/
@@ -45,11 +45,11 @@ sudo joule-profiler --gpu phases-- ./gpu-workload
 
 ## Documentation
 
-**[Full Documentation](https://jwoirhaye.github.io/joule-profiler/)**
+**[Full Documentation](https://joule-profiler.github.io/joule-profiler-docs/)**
 
-- [Quickstart](https://jwoirhaye.com/joule-profiler/quickstart.html)
-- [Metric Sources](https://jwoirhaye.com/joule-profiler/sources/overview.html)
-- [Examples](https://jwoirhaye.com/joule-profiler/examples/overview.html)
+- [Quickstart](https://joule-profiler.github.io/joule-profiler-docs/quickstart.html)
+- [Metric Sources](https://joule-profiler.github.io/joule-profiler-docs/sources/overview.html)
+- [Examples](https://joule-profiler.github.io/joule-profiler-docs/examples/overview.html)
 
 ## What Makes Joule Profiler Different?
 
@@ -108,11 +108,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact
 
-- **Issues**: [GitHub Issues](https://github.com/jwoirhaye/joule-profiler/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/jwoirhaye/joule-profiler/discussions)
+- **Issues**: [GitHub Issues](https://github.com/joule-profiler/joule-profiler/issues)
 - **Author**: [@jwoirhaye](https://github.com/jwoirhaye), [@FrancoisGib](https://github.com/FrancoisGib)
 
 ---
 
 **[Read the Full Documentation](https://joule-profiler.github.io/joule-profiler-docs/)** | *
-*[⭐ Star on GitHub](https://github.com/jwoirhaye/joule-profiler)**
+*[⭐ Star on GitHub](https://github.com/joule-profiler/joule-profiler/)**
