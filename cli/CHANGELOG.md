@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v2.0.0...joule-profiler-cli-v2.1.0) - 2026-04-24
+
+### Added
+
+- force cli release
+
 ## [2.0.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v1.0.1...joule-profiler-cli-v2.0.0) - 2026-04-24
 
 ### Added
