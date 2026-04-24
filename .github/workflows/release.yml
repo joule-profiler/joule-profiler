@@ -71,6 +71,7 @@ jobs:
             echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
           else
             echo "cli_released=false" >> "$GITHUB_OUTPUT"
+          fi
 
   build-release:
     needs: release-plz-release
