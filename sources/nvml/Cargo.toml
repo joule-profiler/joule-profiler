@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "NVIDIA NVML-based GPU energy measurement source for joule-profiler"
 keywords = ["energy", "nvml", "nvidia", "GPU", "hardware"]
+readme = "README.md"
 
 [dependencies]
 joule-profiler-core.workspace = true

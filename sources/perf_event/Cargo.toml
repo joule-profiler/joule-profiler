@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "perf_event counters source for joule-profiler"
 keywords = ["energy", "perf_event", "performance_counters"]
+readme = "README.md"
 
 [dependencies]
 joule-profiler-core.workspace = true
