@@ -114,5 +114,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**[Read the Full Documentation](https://jwoirhaye.github.io/joule-profiler/)** | *
+**[Read the Full Documentation](https://joule-profiler.github.io/joule-profiler-docs/)** | *
 *[⭐ Star on GitHub](https://github.com/jwoirhaye/joule-profiler)**
