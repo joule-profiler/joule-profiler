@@ -6,7 +6,7 @@
 set -e
 
 # Configuration
-readonly REPO="jwoirhaye/joule-profiler"
+readonly REPO="joule-profiler/joule-profiler"
 readonly BINARY_NAME="joule-profiler"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 TARGET_VERSION="${TARGET_VERSION:-latest}"
