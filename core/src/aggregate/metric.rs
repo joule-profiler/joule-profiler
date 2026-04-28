@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::unit::MetricUnit;
 
@@ -51,7 +51,7 @@ pub type Metrics = Vec<Metric>;
 /// Enum representing the value of a metric,
 /// with this enum, a metric can be a signed or
 /// unsigned integer or a float.
-#[derive(Debug, Serialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MetricValue {
     UnsignedInteger(u64),
     SignedInteger(i64),
@@ -80,6 +80,19 @@ impl Display for MetricValue {
             Self::UnsignedInteger(v) => v.fmt(f),
             Self::SignedInteger(v) => v.fmt(f),
             Self::Float(v) => v.fmt(f),
+        }
+    }
+}
+
+impl Serialize for MetricValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            MetricValue::UnsignedInteger(v) => serializer.serialize_u64(*v),
+            MetricValue::SignedInteger(v) => serializer.serialize_i64(*v),
+            MetricValue::Float(v) => serializer.serialize_f64(*v),
         }
     }
 }
