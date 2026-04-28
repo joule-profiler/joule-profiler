@@ -20,7 +20,10 @@ A modular tool for measuring energy consumption and performance metrics of progr
 ### Installation
 
 ```bash
-# Quick install (recommended)
+# Quick install with cargo
+cargo install joule-profiler-cli
+
+# Quick install with binaries
 curl -fsSL https://raw.githubusercontent.com/joule-profiler/joule-profiler/main/install.sh | bash
 
 # Or build from source
