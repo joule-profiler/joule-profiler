@@ -3,7 +3,7 @@
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://www.linux.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-mdbook-blue?style=for-the-badge)](https://joule-profiler.github.io/joule-profiler-docs/)
+[![Documentation](https://img.shields.io/badge/docs-mdbook-blue?style=for-the-badge)](https://joule-profiler.github.io)
 
 A modular tool for measuring energy consumption and performance metrics of programs on Linux systems.
 
@@ -48,11 +48,11 @@ sudo joule-profiler --gpu profile-- ./gpu-workload
 
 ## Documentation
 
-**[Full Documentation](https://joule-profiler.github.io/joule-profiler-docs/)**
+**[Full Documentation](https://joule-profiler.github.io/)**
 
-- [Quickstart](https://joule-profiler.github.io/joule-profiler-docs/quickstart.html)
-- [Metric Sources](https://joule-profiler.github.io/joule-profiler-docs/sources/overview.html)
-- [Examples](https://joule-profiler.github.io/joule-profiler-docs/examples/overview.html)
+- [Quickstart](https://joule-profiler.github.io/quickstart.html)
+- [Metric Sources](https://joule-profiler.github.io/sources/overview.html)
+- [Examples](https://joule-profiler.github.io/examples/overview.html)
 
 ## What Makes Joule Profiler Different?
 
@@ -99,7 +99,7 @@ sudo joule-profiler profile -- python example.py
 
 ## Contributing
 
-Contributions are welcome! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions are welcome! Please see our [Contributing Guide](https://github.com/joule-profiler/.github/blob/main/CONTRIBUTING.md) for details.
 
 ## License
 
@@ -116,5 +116,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**[Read the Full Documentation](https://joule-profiler.github.io/joule-profiler-docs/)** | *
+**[Read the Full Documentation](https://joule-profiler.github.io)** | *
 *[⭐ Star on GitHub](https://github.com/joule-profiler/joule-profiler/)**
