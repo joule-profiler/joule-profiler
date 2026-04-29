@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v2.1.0...joule-profiler-cli-v2.1.1) - 2026-04-29
+
+### Other
+
+- Update README link to doc and update CONTRIBUTING.md link
+- *(README)* added cargo installation method to README
+- Update command example (phase -> profile)
+- Update docs link in readme
+- *(CARGO)* Add readme link for cli crate
+
 ## [2.1.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v2.0.0...joule-profiler-cli-v2.1.0) - 2026-04-24
 
 ### Added
