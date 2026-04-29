@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v1.0.1...joule-profiler-core-v1.0.2) - 2026-04-29
+
+### Fixed
+
+- MetricValue serialization implementation to inline values in json results
+
 ## [1.0.1](https://github.com/jwoirhaye/joule-profiler/compare/v1.0.0...v1.0.1) (2026-01-08)
 
 
