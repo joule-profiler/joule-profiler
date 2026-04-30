@@ -27,6 +27,7 @@ anyhow = "1.0.100"
 env_logger = "0.11.8"
 clap = { version = "4.5.53", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
+clap_complete = "4.6.3"
 
 [dev-dependencies]
 tempfile.workspace = true

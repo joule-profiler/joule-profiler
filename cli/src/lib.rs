@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
 use joule_profiler_core::config::{Command, Config, ProfileConfig};
 
@@ -80,23 +80,31 @@ impl CliArgs {
     }
 }
 
-impl From<CliArgs> for Config {
-    fn from(cli_args: CliArgs) -> Self {
+impl TryFrom<CliArgs> for Config {
+    type Error = anyhow::Error;
+
+    fn try_from(cli_args: CliArgs) -> Result<Self> {
         let command = match cli_args.command {
-            ProfilerCommand::Profile(profile_args) => Command::Profile(ProfileConfig {
-                stdout_file: profile_args.stdout_file,
-                cmd: profile_args.cmd,
-                token_pattern: profile_args.token_pattern,
-                use_root: profile_args.use_root,
-            }),
+            ProfilerCommand::Profile(profile_args) => {
+                Command::Profile(ProfileConfig {
+                    stdout_file: profile_args.stdout_file,
+                    cmd: profile_args.cmd,
+                    token_pattern: profile_args.token_pattern,
+                    use_root: profile_args.use_root,
+                })
+            }
 
             ProfilerCommand::ListSensors => Command::ListSensors,
+
+            ProfilerCommand::Completions { .. } => {
+                bail!("'completions' cannot be converted into Config.");
+            }
         };
 
-        Config {
+        Ok(Config {
             command,
             rapl_path: cli_args.rapl_path,
-        }
+        })
     }
 }
 

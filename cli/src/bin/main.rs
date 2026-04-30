@@ -1,4 +1,8 @@
+use std::io::stdout;
+
 use anyhow::Result;
+use clap::CommandFactory;
+use clap_complete::generate;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, init_logging, output_format_to_displayer,
     parse_sockets_spec,
@@ -13,6 +17,16 @@ use log::{trace, warn};
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = CliArgs::from_args();
+
+    match &cli.command {
+        ProfilerCommand::Completions { shell } => {
+            let mut cmd = CliArgs::command();
+            generate(*shell, &mut cmd, "joule-profiler", &mut stdout());
+            return Ok(());
+        }
+        _ => {}
+    }
+
     init_logging(cli.verbose);
 
     let mut displayer = output_format_to_displayer(&cli)?;
@@ -22,7 +36,7 @@ async fn main() -> Result<()> {
     let rapl_sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
     let rapl_polling = match &cli.command {
         ProfilerCommand::Profile(profile_args) => profile_args.rapl_polling,
-        ProfilerCommand::ListSensors => None,
+        _ => None,
     };
 
     match cli.rapl_backend {
@@ -62,7 +76,7 @@ async fn main() -> Result<()> {
         profiler.add_source(perf_event);
     }
 
-    let config = Config::from(cli);
+    let config = Config::try_from(cli)?;
 
     match config.command {
         Command::Profile(profile_config) => {
