@@ -70,7 +70,7 @@ The tool uses a layered structure: the core detects phases and aggregates metric
 
 To validate its measurements, Joule Profiler was compared with reference tools perf [@perfwiki] and Alumet [@alumet], both using RAPL counters but different strategies. This checks whether Joule Profiler introduces measurement bias.
 
-Three scenarios were tested: (1) parallel runs of Joule Profiler and perf (with CPU load) or Alumet (with GPU load) alongside a sleep command, ensuring identical hardware activity and measurement noise ; (2) Sequential execution of Joule Profiler, perf, and Alumet with workload pinned to a single CPU core, to compare overhead and variability; and (3) A custom workload with periodic output tokens tested phase detection precision.
+Three scenarios were tested: (1) parallel runs of Joule Profiler and perf (with CPU load) or Alumet (with GPU load) alongside a sleep command, ensuring identical hardware activity and measurement noise; (2) Sequential execution of Joule Profiler, perf, and Alumet with workload pinned to a single CPU core, to compare overhead and variability; and (3) A custom workload with periodic output tokens tested phase detection precision.
 
 Experiments used Grid’5000 nodes: Chirop (Intel Xeon, RAPL, 512 GiB RAM) and Chifflot (Nvidia Tesla V100, NVML, 192 GiB RAM). Energy was measured from RAPL (PACKAGE, DRAM) and NVML (GPU). `perf_event` was used for access. Hyper-threading was disabled, and the CPU frequency governor was set to performance to reduce variability.
 
@@ -128,7 +128,7 @@ Joule Profiler was developed at [Inria](https://www.inria.fr/fr) and the [Univer
 
 All validation experiments used the Grid’5000/SLICES-FR testbed, a shared French research infrastructure. Joule Profiler is intentionally compatible with its hardware and workflows.
 
-Joule Profiler is open-source (MIT) at https://github.com/joule-profiler/joule-profiler, with versioned releases and documentation.
+Joule Profiler is open-source (MIT) at [https://github.com/joule-profiler/joule-profiler](https://github.com/joule-profiler/joule-profiler), with versioned releases and documentation.
 
 # AI Usage Disclosure
 
