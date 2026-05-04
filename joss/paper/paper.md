@@ -13,12 +13,12 @@ tags:
 authors:
   - name: Jérémy Woirhaye
     equal-contrib: true
-    affiliation: 1,2
+    affiliation: "1,2"
   - name: François Gibier
     equal-contrib: true 
-    affiliation: 1,2
+    affiliation: "1,2"
   - name: Romain Rouvoy
-    affiliation: 1,2
+    affiliation: "1,2"
 affiliations:
  - name: Inria, France
    index: 1
