@@ -48,10 +48,10 @@ These solutions are suited for system-level monitoring, not fine-grained analysi
 # Phase-based profiling
 
 \begin{figure}
-\centering
-\includegraphics[width=\linewidth]{images/phases.png}
-\caption{Process lifecycle illustrating sequential phases}
-\label{fig:phases}
+	\centering
+	\includegraphics[width=\linewidth]{images/phases.png}
+	\caption{Process lifecycle illustrating sequential phases}
+	\label{fig:phases}
 \end{figure}
 
 Traditional energy measurement provides either total energy or periodic power readings, leaving unclear which code regions are most energy-intensive. Joule Profiler enables phase-based profiling, letting users decompose execution into logical phases with minimal code changes by watching standard output for phase markers.
@@ -62,7 +62,7 @@ When a phase marker is detected, Joule Profiler records energy counter values at
 
 # Software design
 
-Joule Profiler’s modular design separates measurement logic from hardware specifics. It accesses energy and performance metrics using `perf_event` [@linux_perf_event] (or powercap as a fallback) for RAPL, and NVML for NVIDIA GPUs [@nvidia_nvml]. The tool can correlate energy with performance counters, supporting extension and maintenance.
+Joule Profiler’s modular design separates measurement logic from hardware specifics. It accesses energy and performance metrics using `perf_event` [@linux_perf_event] (or powercap as a fallback) for RAPL, and NVML [@nvidia_nvml] for NVIDIA GPUs. The tool can correlate energy with performance counters, supporting extension and maintenance.
 
 The tool uses a layered structure: the core detects phases and aggregates metrics; sources run asynchronously for parallel data collection; the CLI manages user interaction; and hardware backends are abstracted for easy integration of new sources.
 
@@ -78,7 +78,7 @@ Experiments used Grid’5000 nodes: Chirop (Intel Xeon, RAPL, 512 GiB RAM) and C
 
 ### Parallel execution
 
-We performed 4000 measurements to achieve a statistical power of 80% and applied a *Two One-Sided Tests* (TOST) procedure with an equivalence margin of 0.1% of the reference tool's mean to assess statistical equivalence.
+We performed 4,000 measurements to achieve a statistical power of 80% and applied a *Two One-Sided Tests* (TOST) procedure with an equivalence margin of 0.1% of the reference tool's mean to assess statistical equivalence.
 
 \begin{figure}
 	\centering
@@ -111,7 +111,7 @@ A sequential execution (2,000 runs) was used to compare the tool's overhead and 
 
 ## Phase attribution precision
 
-To evaluate the temporal accuracy of output-based phase detection, we used a custom program printing periodic tokens at frequencies from 100 Hz to 1,000 Hz, comparing the timestamp at print time to the timestamp at which Joule Profiler detected each token. This was repeated 40 times per frequency with 10,000 measures per iteration to achieve 80% statistical power.
+To evaluate the temporal accuracy of output-based phase detection, we used a custom program that printed periodic tokens at frequencies from 100 Hz to 1,000 Hz, comparing the timestamp at print time with the timestamp at which Joule Profiler detected each token. This was repeated 40 times at each frequency, with 10,000 measures per iteration, to achieve 80% statistical power.
 
 \begin{figure}
 	\centering
@@ -120,7 +120,7 @@ To evaluate the temporal accuracy of output-based phase detection, we used a cus
 	\label{fig:phase_delay}
 \end{figure}
 
-\autoref{fig:phase_delay} shows that the baseline median detection delay is approximately 25 µs and remains stable across all frequencies. Joule Profiler introduces an additional median delay of 11 µs, with a coefficient of variation increasing from 23% below 800 Hz to 28% at 1,000 Hz. Under CPU load (stress-ng), baseline delay drops to 2 µs and Joule Profiler to 3 µs, confirming that idle-state latency is the primary source of delay. These results confirm that output-based instrumentation is viable for workloads with phase durations above 1 ms, which is consistent with the RAPL counter refresh rate of 1,000 Hz.
+\autoref{fig:phase_delay} shows that the baseline median detection delay is approximately 25 µs and remains stable across all frequencies. Joule Profiler introduces an additional median delay of 11 µs, with a coefficient of variation increasing from 23% below 800 Hz to 28% at 1,000 Hz. Under CPU load (stress-ng), the baseline delay drops to 2 µs, and the Joule Profiler to 3 µs, confirming that idle-state latency is the primary source of delay. These results confirm that output-based instrumentation is viable for workloads with phase durations exceeding 1 ms, consistent with the RAPL counter refresh rate of 1,000 Hz.
 
 # Research impact statement
 
