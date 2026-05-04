@@ -31,7 +31,7 @@ repository: https://github.com/joule-profiler/joule-profiler
 
 # Summary
 
-Joule Profiler is a lightweight Linux command-line tool for measuring a program’s energy consumption with minimal instrumentation overhead. It enables users to break execution into user-defined phases (e.g., data loading, computation) and to attribute energy use to each. The tool detects phase triggers from program output and automatically queries sources like Intel RAPL (CPUs) or NVML (GPUs) to report energy consumption.
+Joule Profiler is a lightweight Linux command-line tool for measuring a program’s energy consumption with minimal instrumentation overhead. It enables users to break execution into user-defined phases (e.g., data loading, computation) and to attribute energy use to each. The tool detects phase triggers from program output and automatically queries sources like Intel RAPL (CPUs) or NVML (GPUs) to report system-wide energy consumption.
 
 # Statement of need
 
@@ -41,7 +41,7 @@ Researchers and developers need simple tools to measure the energy use of code s
 
 # State of the field
 
-Existing tools like PowerAPI [@powerapi], Alumet [@alumet], Scaphandre [@alumet], and EnergiBridge [@sallou_energibridge_2024] monitor energy using these counters, often focusing on distributed and system-level observability. JouleIt [@jouleit], which inspired this work, demonstrated a light wrapper approach but lacked phase decomposition, GPU support, and modularity.
+Existing tools like PowerAPI [@powerapi], Alumet [@alumet], Scaphandre [@scaphandre], and EnergiBridge [@sallou_energibridge_2024] monitor energy using these counters, often focusing on distributed and system-level observability. JouleIt [@jouleit], which inspired this work, demonstrated a light wrapper approach but lacked phase decomposition, GPU support, and modularity.
 
 These solutions are suited for system-level monitoring, not fine-grained analysis of program phases. Joule Profiler, in contrast, is designed for lightweight, single-invocation use, enabling energy attribution to specific phases within programs.
 
@@ -68,53 +68,50 @@ The tool uses a layered structure: the core detects phases and aggregates metric
 
 # Validity of the energy measurement
 
-To validate its measurements, Joule Profiler was compared with reference tools perf [@perfwiki] and Alumet, both using RAPL counters but different strategies. This checks whether Joule Profiler introduces measurement bias.
+To validate its measurements, Joule Profiler was compared with reference tools perf [@perfwiki] and Alumet [@alumet], both using RAPL counters but different strategies. This checks whether Joule Profiler introduces measurement bias.
 
 Three scenarios were tested: (1) parallel runs of Joule Profiler and perf (with CPU load) or Alumet (with GPU load) alongside a sleep command, ensuring identical hardware activity and measurement noise ; (2) Sequential execution of Joule Profiler, perf, and Alumet with workload pinned to a single CPU core, to compare overhead and variability; and (3) A custom workload with periodic output tokens tested phase detection precision.
 
-Experiments used Grid’5000 nodes: Chirop (Intel Xeon, RAPL, 512 GiB RAM) and Chifflot (Nvidia Tesla V100, NVML, 192 GiB RAM). Energy was measured from RAPL (PACKAGE, DRAM) and NVML (GPU). perf_event was used for access. Hyper-threading was disabled, and CPU frequency was fixed to reduce variability.
+Experiments used Grid’5000 nodes: Chirop (Intel Xeon, RAPL, 512 GiB RAM) and Chifflot (Nvidia Tesla V100, NVML, 192 GiB RAM). Energy was measured from RAPL (PACKAGE, DRAM) and NVML (GPU). `perf_event` was used for access. Hyper-threading was disabled, and the CPU frequency governor was set to performance to reduce variability.
 
 ## Total energy comparison
 
 ### Parallel execution
 
-Scenario 1: 4,000 parallel measurements of a 10-second sleep command were made, using TOST analysis with a 0.1% equivalence margin.
+We performed 4000 measurements to achieve a statistical power of 80% and applied a *Two One-Sided Tests* (TOST) procedure with an equivalence margin of 0.1% of the reference tool's mean to assess statistical equivalence.
 
 \begin{figure}
 	\centering
 	\includegraphics[width=\linewidth]{images/full_comparison_parallel.pdf}
-	\caption{_Empirical Cumulative Distribution Function_ (ECDF) of energy measurements (J) across RAPL domains (`DRAM`, `PACKAGE`) comparing perf and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
+	\caption{\textit{Empirical Cumulative Distribution Function} (ECDF) of energy measurements (J) across RAPL domains (DRAM, PACKAGE) comparing perf and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
 	\label{fig:rapl_energy_distribution}
 \end{figure}
 
 \begin{figure}
 	\centering
 	\includegraphics[width=\linewidth]{images/full_comparison_parallel2.pdf}
-	\caption{Bland–Altman analysis of energy measurements (J) across RAPL domains (`DRAM`, `PACKAGE`) comparing `perf` and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
+	\caption{Bland–Altman analysis of energy measurements (J) across RAPL domains (DRAM, PACKAGE) comparing `perf` and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
 	\label{fig:rapl_bland_altman}
 \end{figure}
 
-Results: For `DRAM-0`, tools reported values near 157.15 J with low variance; `PACKAGE-0` around 1008 J; `GPU-0` (Alumet, Joule Profiler) around 1550 J, all with overlapping distributions.
-
-Bland-Altman analysis: For `DRAM-0`, bias was 0.013 J with 96.8% within ±0.039 J LoA. `PACKAGE-0`: bias 0.046 J, LoA 0.3 J, with a few outliers up to 1.04 J. Joule Profiler and `perf` closely agree for `DRAM` and, for most runs, `PACKAGE` domain. 
-High energy values exhibit greater variability, as is typical for RAPL. 95.8% of measures fall within LoA.
-For `GPU-0`, LoA was ±4.29 J, bias 1.39 J (1.95% variation), with 94.5% within LoA. RAPL domain coefficients of variation were about 0.35% (`DRAM-0`) and 0.49% (`PACKAGE-0`).
-TOST rejected the null of non-equivalence, confirming statistical equivalence. Effect sizes were small (<0.05) and Pearson correlations exceeded 99.9% (RAPL) and 99.5% (GPU). Joule Profiler does not introduce significant bias.
+\autoref{fig:rapl_energy_distribution} and \autoref{fig:rapl_bland_altman} show close agreement between Joule Profiler and the reference tools. For `DRAM-0`, the bias is 0.013 J with 96.8% of measurements within the Limits of Agreement (LoA). For `PACKAGE-0`, the bias is 0.046 J with 95.8% within LoA, though higher variability is observed at high energy values, consistent with known RAPL noise at the package level. For `GPU-0`, the bias is 1.39 J with 94.5% within LoA, reflecting the higher natural variability of GPU power sampling (coefficient of variation ~1.95% for both tools). The Pearson correlation between Joule Profiler and perf exceeded 99.9% for both RAPL domains, and reached 99.5% against Alumet for GPU. The TOST null hypotheses of non-equivalence were rejected for all domains, confirming that Joule Profiler does not introduce a significant measurement bias.
 
 ### Sequential execution
+
 A sequential execution (2,000 runs) was used to compare the tool's overhead and variability. All tools produced nearly identical distributions, with <0.1% difference (RAPL) and <0.5% (GPU), indicating minimal overhead.
 
 \begin{figure}
 	\centering
 	\includegraphics[width=0.9\linewidth]{images/full_comparison_sequential.pdf}
-	\caption{Energy distribution (J) across RAPL domains (`DRAM`, `PACKAGE`) and GPU comparing perf, Alumet, and Joule Profiler.}
+	\caption{Energy distribution (J) across RAPL domains (DRAM, PACKAGE) and GPU comparing perf, Alumet, and Joule Profiler.}
 	\label{fig:sequential_comparison}
 \end{figure}
 
 \autoref{fig:sequential_comparison} presents the energy distributions of `perf`, Joule Profiler, and Alumet across sequential runs for RAPL domains and the GPU. As for the parallel scenario, all tools report nearly identical values, with differences of less than 0.1% for RAPL domains and 0.5% for GPU. The sequential execution results show that Joule Profiler does not introduce a significant overhead compared to Alumet and perf.
 
 ## Phase attribution precision
-To assess phase-detection accuracy, a custom program printed timestamped tokens at 100-1,000 Hz; parent-process detection times measured the delay. This was repeated with Joule Profiler and with the stress-ng workload to examine CPU frequency effects. Each setup was run 40 times with 10,000 measures per frequency.
+
+To evaluate the temporal accuracy of output-based phase detection, we used a custom program printing periodic tokens at frequencies from 100 Hz to 1,000 Hz, comparing the timestamp at print time to the timestamp at which Joule Profiler detected each token. This was repeated 40 times per frequency with 10,000 measures per iteration to achieve 80% statistical power.
 
 \begin{figure}
 	\centering
@@ -123,7 +120,7 @@ To assess phase-detection accuracy, a custom program printed timestamped tokens 
 	\label{fig:phase_delay}
 \end{figure}
 
-Results: Baseline median detection delay was ~25 μs at 100–1,000 Hz. Joule Profiler added ~11 μs delay. At high frequencies, delay variation increased, likely due to scheduling effects. With stress-ng, delays dropped to 2–3 μs, but with higher variance. Printed-output instrumentation is viable for phase durations above 1 ms.
+\autoref{fig:phase_delay} shows that the baseline median detection delay is approximately 25 µs and remains stable across all frequencies. Joule Profiler introduces an additional median delay of 11 µs, with a coefficient of variation increasing from 23% below 800 Hz to 28% at 1,000 Hz. Under CPU load (stress-ng), baseline delay drops to 2 µs and Joule Profiler to 3 µs, confirming that idle-state latency is the primary source of delay. These results confirm that output-based instrumentation is viable for workloads with phase durations above 1 ms, which is consistent with the RAPL counter refresh rate of 1,000 Hz.
 
 # Research impact statement
 
@@ -147,5 +144,9 @@ AI assisted with repository structure, initial boilerplate, and early organisati
 All AI outputs were reviewed and validated by the authors, who made all key decisions and ensured compliance with standards.
 
 The authors take full responsibility for the accuracy, originality, and integrity of the submitted work.
+
+# Acknowledgements
+
+This work received support from the France 2030 program under grant agreement No. `ANR-23-PECL-0003` (PEPR CLOUD CARECloud), and from the Inria–Qarnot PULSE project ([https://defi-pulse.github.io/](https://defi-pulse.github.io/)). Experiments were carried out using the Grid'5000 testbed, supported by a scientific interest group hosted by Inria and including CNRS, RENATER, and several Universities (see [https://www.grid5000.fr](https://www.grid5000.fr)).
 
 # References
