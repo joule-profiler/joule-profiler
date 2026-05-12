@@ -55,7 +55,7 @@ pub type Metrics = Vec<Metric>;
 pub enum MetricValue {
     UnsignedInteger(u64),
     SignedInteger(i64),
-    Float(f64),
+    Float(f64, Option<u8>),
 }
 
 impl From<u64> for MetricValue {
@@ -70,7 +70,13 @@ impl From<i64> for MetricValue {
 }
 impl From<f64> for MetricValue {
     fn from(v: f64) -> Self {
-        Self::Float(v)
+        Self::Float(v, None)
+    }
+}
+
+impl From<(f64, u8)> for MetricValue {
+    fn from((v, dec): (f64, u8)) -> Self {
+        Self::Float(v, Some(dec))
     }
 }
 
@@ -79,7 +85,8 @@ impl Display for MetricValue {
         match self {
             Self::UnsignedInteger(v) => v.fmt(f),
             Self::SignedInteger(v) => v.fmt(f),
-            Self::Float(v) => v.fmt(f),
+            Self::Float(v, None) => v.fmt(f),
+            Self::Float(v, Some(decimal)) => write!(f, "{:.prec$}", v, prec = *decimal as usize),
         }
     }
 }
@@ -92,7 +99,11 @@ impl Serialize for MetricValue {
         match self {
             MetricValue::UnsignedInteger(v) => serializer.serialize_u64(*v),
             MetricValue::SignedInteger(v) => serializer.serialize_i64(*v),
-            MetricValue::Float(v) => serializer.serialize_f64(*v),
+            MetricValue::Float(v, None) => serializer.serialize_f64(*v),
+            MetricValue::Float(v, Some(dec)) => {
+                let factor = 10f64.powi(*dec as i32);
+                serializer.serialize_f64((v * factor).round() / factor)
+            }
         }
     }
 }
