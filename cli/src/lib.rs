@@ -65,6 +65,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub perf: bool,
 
+    /// `procfs` counters support
+    #[arg(long)]
+    pub procfs: bool,
+
     /// Choose RAPL backend between powercap or perf
     #[arg(long = "rapl-backend", value_enum, default_value_t = RaplBackend::Perf)]
     pub rapl_backend: RaplBackend,

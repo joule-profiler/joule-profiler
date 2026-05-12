@@ -1,0 +1,26 @@
+[package]
+name = "joule-profiler-source-procfs"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "procfs source for joule-profiler"
+keywords = ["procfs"]
+
+[dependencies]
+joule-profiler-core.workspace = true
+log.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+futures.workspace = true
+
+procfs = "0.18.0"
+tokio-timerfd = "0.2.0"
+
+[dev-dependencies]
+mockall.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
