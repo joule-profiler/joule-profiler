@@ -530,7 +530,8 @@ check_existing_installation() {
 
         if [ "$SKIP_CONFIRM" = false ]; then
             echo -n "Do you want to overwrite it? [y/N] " >&2
-            read -r reply
+            read -r reply </dev/tty
+            
             if [[ ! $reply =~ ^[Yy]$ ]]; then
                 log_info "Installation cancelled"
                 exit 0
