@@ -7,6 +7,7 @@ set -e
 
 # Configuration
 readonly REPO="joule-profiler/joule-profiler"
+readonly DOCUMENTATION_QUICKSTART_URL="https://joule-profiler.github.io/quickstart.html"
 readonly BINARY_NAME="joule-profiler"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 TARGET_VERSION="${TARGET_VERSION:-latest}"
@@ -578,11 +579,12 @@ print_usage() {
     echo "  # Show help" >&2
     echo -e "  ${COLOR_BLUE}joule-profiler --help${COLOR_RESET}" >&2
     echo "" >&2
-    echo "If you want to launch Joule Profiler without root privileges (root), configure the perf_event_paranoid level:" >&2
+    echo "  Note: Joule Profiler requires root privileges. To run without sudo, configure the perf_event_paranoid level:" >&2
     echo -e "  ${COLOR_BLUE}sudo sysctl kernel.perf_event_paranoid=0${COLOR_RESET}" >&2
     echo "" >&2
-    echo "For more information, visit:" >&2
-    echo "  https://github.com/$REPO" >&2
+    echo "For more information:" >&2
+    echo "  QuickStart:  $DOCUMENTATION_QUICKSTART_URL" >&2
+    echo "  Source code: https://github.com/$REPO" >&2
     echo "" >&2
 }
 
