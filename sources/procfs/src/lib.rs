@@ -5,6 +5,7 @@ use joule_profiler_core::{
     types::{Metric, MetricValue, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
 };
+use log::{debug, trace};
 use procfs::process::Process;
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,6 +83,7 @@ pub struct Procfs {
 
 fn read_memory(process: &Process) -> Result<(u64, u64, u64, u64, u64)> {
     let vm_size = process.stat()?.vsize;
+    trace!("Querying process {} smaps_rollup.", process.pid);
     let smaps = process.smaps_rollup()?;
 
     let (rss, pss, anon, shared) = smaps
@@ -103,6 +105,7 @@ fn read_memory(process: &Process) -> Result<(u64, u64, u64, u64, u64)> {
 }
 
 fn read_io(process: &Process) -> Result<(u64, u64)> {
+    trace!("Querying process {} io.", process.pid);
     let io = process.io()?;
     Ok((io.rchar, io.wchar))
 }
@@ -130,6 +133,7 @@ impl MetricReader for Procfs {
         let current_counters = self.memory_counters.clone();
 
         let handle = tokio::spawn(async move {
+            debug!("Starting procfs polling.");
             let mut ticker = Interval::new_interval(interval)?;
 
             loop {
@@ -139,6 +143,7 @@ impl MetricReader for Procfs {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
+                trace!("Found pids {pids:?}.");
 
                 let (vm_size, rss, pss, shared, anon) = pids
                     .into_iter()
@@ -147,6 +152,7 @@ impl MetricReader for Procfs {
                     .fold((0, 0, 0, 0, 0), |acc, (vm, r, ps, sh, an)| {
                         (acc.0 + vm, acc.1 + r, acc.2 + ps, acc.3 + sh, acc.4 + an)
                     });
+                trace!("vm_size: {vm_size}, rss: {rss}, pss: {pss}, shared: {shared}, anon: {anon}.");
 
                 let mut counters = current_counters.lock().await;
                 counters.update(vm_size, rss, pss, shared, anon);
