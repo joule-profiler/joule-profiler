@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use procfs::process::Process;
+use std::collections::VecDeque;
 
 fn read_task_children(pid: i32) -> Vec<i32> {
     let Ok(process) = Process::new(pid) else {
