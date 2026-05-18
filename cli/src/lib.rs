@@ -123,6 +123,7 @@ pub enum Source {
     #[value(alias = "perf_event")]
     Perf,
     Procfs,
+    Cgroup,
 }
 
 impl std::fmt::Display for Source {
@@ -132,6 +133,7 @@ impl std::fmt::Display for Source {
             Source::Nvml => "nvml",
             Source::Perf => "perf | perf_event",
             Source::Procfs => "procfs",
+            Source::Cgroup => "cgroup",
         };
         write!(f, "{s}")
     }
