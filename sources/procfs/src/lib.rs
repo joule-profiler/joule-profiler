@@ -17,7 +17,10 @@ use crate::counters::{Counters, IoCounters, MemoryCounters};
 
 pub mod counters;
 
-const IO_COUNTERS_METRIC_UNIT: MetricUnit = MetricUnit {prefix: UnitPrefix::None, unit: Unit::Byte};
+const IO_COUNTERS_METRIC_UNIT: MetricUnit = MetricUnit {
+    prefix: UnitPrefix::None,
+    unit: Unit::Byte,
+};
 
 #[derive(Error, Debug)]
 pub enum ProcfsError {
@@ -157,7 +160,7 @@ impl MetricReader for Procfs {
 
     async fn measure(&mut self) -> Result<()> {
         let process = self.process.as_ref().ok_or(ProcfsError::NotInitialized)?;
-        
+
         match read_io(process) {
             Ok((read_bytes, write_bytes)) => {
                 self.io_counters.end_read_bytes = read_bytes;
@@ -184,7 +187,10 @@ impl MetricReader for Procfs {
         let memory_counters = lock.clone();
         lock.reset_phase();
 
-        let counters = Counters { memory_counters, io_counters: self.io_counters };
+        let counters = Counters {
+            memory_counters,
+            io_counters: self.io_counters,
+        };
 
         self.io_counters.begin_read_bytes = self.io_counters.end_read_bytes;
         self.io_counters.begin_write_bytes = self.io_counters.end_write_bytes;
@@ -194,15 +200,15 @@ impl MetricReader for Procfs {
 
     fn get_sensors(&self) -> Result<Sensors> {
         Ok([
-            "vm_size",
+            "vm_size_min",
             "vm_size_max",
-            "rss",
+            "rss_min",
             "rss_max",
-            "pss",
+            "pss_min",
             "pss_max",
-            "shared",
+            "shared_min",
             "shared_max",
-            "anon",
+            "anon_min",
             "anon_max",
         ]
         .into_iter()
@@ -215,85 +221,56 @@ impl MetricReader for Procfs {
 
         let memory_counters = counters.memory_counters;
 
-        let (conv, conv_delta): (fn(u64) -> MetricValue, fn(i64) -> MetricValue) =
-            match self.memory_unit {
-                MemoryUnit::Bytes => (
-                    |b| MetricValue::UnsignedInteger(b),
-                    |s| MetricValue::SignedInteger(s),
-                ),
-                MemoryUnit::Kilo => (
-                    |b| MetricValue::UnsignedInteger(b / 1024),
-                    |s| MetricValue::SignedInteger(s / 1024),
-                ),
-                MemoryUnit::Mega => (
-                    |b| MetricValue::Float(b as f64 / (1024.0 * 1024.0), Some(2)),
-                    |s| MetricValue::Float(s as f64 / (1024.0 * 1024.0), Some(2)),
-                ),
-                MemoryUnit::Giga => (
-                    |b| MetricValue::Float(b as f64 / (1024.0 * 1024.0 * 1024.0), Some(2)),
-                    |s| MetricValue::Float(s as f64 / (1024.0 * 1024.0 * 1024.0), Some(2)),
-                ),
-            };
+        let conv: fn(u64) -> MetricValue = match self.memory_unit {
+            MemoryUnit::Bytes => |b| MetricValue::UnsignedInteger(b),
+            MemoryUnit::Kilo => |b| MetricValue::UnsignedInteger(b / 1024),
+            MemoryUnit::Mega => |b| MetricValue::Float(b as f64 / (1024.0 * 1024.0), Some(2)),
+            MemoryUnit::Giga => {
+                |b| MetricValue::Float(b as f64 / (1024.0 * 1024.0 * 1024.0), Some(2))
+            }
+        };
 
         let memory_metrics: Metrics = [
-            ("vm_size", conv(memory_counters.vm_size)),
+            ("vm_size_min", conv(memory_counters.min_vm_size)),
             ("vm_size_max", conv(memory_counters.max_vm_size)),
-            ("rss", conv(memory_counters.rss)),
+            ("rss_min", conv(memory_counters.min_rss)),
             ("rss_max", conv(memory_counters.max_rss)),
-            ("pss", conv(memory_counters.pss)),
+            ("pss_min", conv(memory_counters.min_pss)),
             ("pss_max", conv(memory_counters.max_pss)),
-            ("shared", conv(memory_counters.shared)),
+            ("shared_min", conv(memory_counters.min_shared)),
             ("shared_max", conv(memory_counters.max_shared)),
-            ("anon", conv(memory_counters.anon)),
+            ("anon_min", conv(memory_counters.min_anon)),
             ("anon_max", conv(memory_counters.max_anon)),
         ]
         .into_iter()
         .map(|(name, value)| Metric::new(name, value, memory_unit, Self::get_name()))
         .collect();
 
-        let memory_deltas: Metrics = [
-            (
-                "vm_size_delta",
-                conv_delta(MemoryCounters::delta(memory_counters.vm_size, memory_counters.phase_start_vm_size)),
-            ),
-            (
-                "rss_delta",
-                conv_delta(MemoryCounters::delta(memory_counters.rss, memory_counters.phase_start_rss)),
-            ),
-            (
-                "pss_delta",
-                conv_delta(MemoryCounters::delta(memory_counters.pss, memory_counters.phase_start_pss)),
-            ),
-            (
-                "shared_delta",
-                conv_delta(MemoryCounters::delta(memory_counters.shared, memory_counters.phase_start_shared)),
-            ),
-            (
-                "anon_delta",
-                conv_delta(MemoryCounters::delta(memory_counters.anon, memory_counters.phase_start_anon)),
-            ),
-        ]
-        .into_iter()
-        .map(|(name, value)| Metric::new(name, value, memory_unit, Self::get_name()))
-        .collect();
-
         let io_counters = counters.io_counters;
-        let read_bytes =
-    io_counters
-        .end_read_bytes
-        .saturating_sub(io_counters.begin_read_bytes);
+        let read_bytes = io_counters
+            .end_read_bytes
+            .saturating_sub(io_counters.begin_read_bytes);
 
-        let write_bytes =
-    io_counters
-        .end_write_bytes
-        .saturating_sub(io_counters.begin_write_bytes);
+        let write_bytes = io_counters
+            .end_write_bytes
+            .saturating_sub(io_counters.begin_write_bytes);
 
         let io_metrics = vec![
-            Metric::new("read_bytes", read_bytes, IO_COUNTERS_METRIC_UNIT, Self::get_name()),
-            Metric::new("write_bytes", write_bytes, IO_COUNTERS_METRIC_UNIT, Self::get_name()),
+            Metric::new(
+                "io_read_bytes",
+                read_bytes,
+                IO_COUNTERS_METRIC_UNIT,
+                Self::get_name(),
+            ),
+            Metric::new(
+                "io_write_bytes",
+                write_bytes,
+                IO_COUNTERS_METRIC_UNIT,
+                Self::get_name(),
+            ),
         ];
 
-        Ok(memory_metrics.into_iter().chain(memory_deltas).chain(io_metrics).collect())
+        Ok(memory_metrics.into_iter().chain(io_metrics).collect())
     }
 
     fn get_name() -> &'static str {
