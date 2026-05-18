@@ -9,6 +9,7 @@ use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_rapl::{perf, powercap};
 use log::{trace, warn};
+use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -61,6 +62,15 @@ async fn main() -> Result<()> {
         let perf_event = PerfEvent::new()?;
         profiler.add_source(perf_event);
     }
+
+    if cli.cgroup {
+        trace!("Initializing CGroup v2 source");
+        match CgroupSource::new(CgroupConfig::default()) {
+            Ok(cgroup) => profiler.add_source(cgroup),
+            Err(err) => warn!("Cannot initialize CGroup source: {err}"),
+        }
+    }
+
 
     let config = Config::from(cli);
 
