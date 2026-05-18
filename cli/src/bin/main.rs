@@ -11,6 +11,7 @@ use joule_profiler_source_procfs::Procfs;
 use joule_profiler_source_procfs::config::ProcfsConfig;
 use joule_profiler_source_rapl::{perf, powercap};
 use log::{trace, warn};
+use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -72,6 +73,12 @@ async fn main() -> Result<()> {
         trace!("Initializing procfs source");
         let procfs = Procfs::new(ProcfsConfig::default())?;
         profiler.add_source(procfs);
+    }
+    
+    if cli.sources.contains(&Source::Cgroup) {
+        trace!("Initializing CGroup v2 source");
+        let cgroup = CgroupSource::new(CgroupConfig::default())?;
+        profiler.add_source(cgroup);
     }
 
     let config = Config::try_from(cli)?;
