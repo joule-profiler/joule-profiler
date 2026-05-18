@@ -13,9 +13,13 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 
-use crate::counters::{Counters, IoCounters, MemoryCounters};
+use crate::{
+    counters::{Counters, IoCounters, MemoryCounters},
+    utils::collect_all_children,
+};
 
 pub mod counters;
+mod utils;
 
 const IO_COUNTERS_METRIC_UNIT: MetricUnit = MetricUnit {
     prefix: UnitPrefix::None,
@@ -68,7 +72,7 @@ type Result<T> = std::result::Result<T, ProcfsError>;
 
 #[derive(Debug, Default)]
 pub struct Procfs {
-    process: Option<Process>,
+    pid: i32,
     poll_interval: Option<Duration>,
     memory_counters: Arc<Mutex<MemoryCounters>>,
     io_counters: IoCounters,
@@ -117,7 +121,7 @@ impl MetricReader for Procfs {
     type Error = ProcfsError;
 
     async fn init(&mut self, pid: i32) -> Result<()> {
-        self.process = Some(Process::new(pid)?);
+        self.pid = pid;
 
         let Some(interval) = self.poll_interval else {
             return Ok(());
@@ -126,15 +130,23 @@ impl MetricReader for Procfs {
         let current_counters = self.memory_counters.clone();
 
         let handle = tokio::spawn(async move {
-            let process = Process::new(pid)?;
             let mut ticker = Interval::new_interval(interval)?;
 
             loop {
                 ticker.next().await;
 
-                let Ok((vm_size, rss, pss, shared, anon)) = read_memory(&process) else {
-                    continue;
+                let pids = match collect_all_children(pid) {
+                    Ok(c) => c,
+                    Err(_) => continue,
                 };
+
+                let (vm_size, rss, pss, shared, anon) = pids
+                    .into_iter()
+                    .filter_map(|p| Process::new(p).ok())
+                    .filter_map(|p| read_memory(&p).ok())
+                    .fold((0, 0, 0, 0, 0), |acc, (vm, r, ps, sh, an)| {
+                        (acc.0 + vm, acc.1 + r, acc.2 + ps, acc.3 + sh, acc.4 + an)
+                    });
 
                 let mut counters = current_counters.lock().await;
                 counters.update(vm_size, rss, pss, shared, anon);
@@ -159,25 +171,16 @@ impl MetricReader for Procfs {
     }
 
     async fn measure(&mut self) -> Result<()> {
-        let process = self.process.as_ref().ok_or(ProcfsError::NotInitialized)?;
+        let pids = collect_all_children(self.pid)?;
 
-        match read_io(process) {
-            Ok((read_bytes, write_bytes)) => {
-                self.io_counters.end_read_bytes = read_bytes;
-                self.io_counters.end_write_bytes = write_bytes;
-            }
-            Err(ProcfsError::Procfs(_)) => {}
-            Err(e) => return Err(e),
-        }
+        let (read_bytes, write_bytes) = pids
+            .into_iter()
+            .filter_map(|p| Process::new(p).ok())
+            .filter_map(|p| read_io(&p).ok())
+            .fold((0, 0), |acc, (r, w)| (acc.0 + r, acc.1 + w));
 
-        match read_memory(process) {
-            Ok((vm_size, rss, pss, shared, anon)) => {
-                let mut counters = self.memory_counters.lock().await;
-                counters.update(vm_size, rss, pss, shared, anon);
-            }
-            Err(ProcfsError::Procfs(_)) => {}
-            Err(e) => return Err(e),
-        }
+        self.io_counters.end_read_bytes = read_bytes;
+        self.io_counters.end_write_bytes = write_bytes;
 
         Ok(())
     }

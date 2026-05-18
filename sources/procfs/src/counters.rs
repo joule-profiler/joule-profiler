@@ -33,7 +33,7 @@ impl MemoryCounters {
         self.max_pss = 0;
         self.max_shared = 0;
         self.max_anon = 0;
-        
+
         self.min_vm_size = u64::MAX;
         self.min_rss = u64::MAX;
         self.min_pss = u64::MAX;
