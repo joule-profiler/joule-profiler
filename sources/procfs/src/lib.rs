@@ -139,10 +139,7 @@ impl MetricReader for Procfs {
             loop {
                 ticker.next().await;
 
-                let pids = match collect_all_children(pid) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
+                let pids = collect_all_children(pid);
                 trace!("Found pids {pids:?}.");
 
                 let (vm_size, rss, pss, shared, anon) = pids
@@ -152,7 +149,9 @@ impl MetricReader for Procfs {
                     .fold((0, 0, 0, 0, 0), |acc, (vm, r, ps, sh, an)| {
                         (acc.0 + vm, acc.1 + r, acc.2 + ps, acc.3 + sh, acc.4 + an)
                     });
-                trace!("vm_size: {vm_size}, rss: {rss}, pss: {pss}, shared: {shared}, anon: {anon}.");
+                trace!(
+                    "vm_size: {vm_size}, rss: {rss}, pss: {pss}, shared: {shared}, anon: {anon}."
+                );
 
                 let mut counters = current_counters.lock().await;
                 counters.update(vm_size, rss, pss, shared, anon);
@@ -177,7 +176,7 @@ impl MetricReader for Procfs {
     }
 
     async fn measure(&mut self) -> Result<()> {
-        let pids = collect_all_children(self.pid)?;
+        let pids = collect_all_children(self.pid);
 
         let (read_bytes, write_bytes) = pids
             .into_iter()
@@ -228,12 +227,15 @@ impl MetricReader for Procfs {
     fn to_metrics(&self, counters: Self::Type) -> Result<Metrics> {
         let memory_unit = self.memory_unit.into();
 
-        let memory_counters = counters.memory_counters;
+        let mut memory_counters = counters.memory_counters;
+        memory_counters.remove_sentinel_values();
 
         let conv: fn(u64) -> MetricValue = match self.memory_unit {
             MemoryUnit::Bytes => |b| MetricValue::UnsignedInteger(b),
             MemoryUnit::Kilo => |b| MetricValue::UnsignedInteger(b / 1024),
+            #[allow(clippy::cast_precision_loss)]
             MemoryUnit::Mega => |b| MetricValue::Float(b as f64 / (1024.0 * 1024.0), Some(2)),
+            #[allow(clippy::cast_precision_loss)]
             MemoryUnit::Giga => {
                 |b| MetricValue::Float(b as f64 / (1024.0 * 1024.0 * 1024.0), Some(2))
             }

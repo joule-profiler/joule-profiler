@@ -101,7 +101,7 @@ impl Serialize for MetricValue {
             MetricValue::SignedInteger(v) => serializer.serialize_i64(*v),
             MetricValue::Float(v, None) => serializer.serialize_f64(*v),
             MetricValue::Float(v, Some(dec)) => {
-                let factor = 10f64.powi(*dec as i32);
+                let factor = 10f64.powi(i32::from(*dec));
                 serializer.serialize_f64((v * factor).round() / factor)
             }
         }
