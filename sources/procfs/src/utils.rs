@@ -22,13 +22,12 @@ fn read_task_children(pid: i32) -> Vec<i32> {
         .filter(|&child_pid| {
             Process::new(child_pid)
                 .and_then(|p| p.status())
-                .map(|s| s.pid == s.tgid)
-                .unwrap_or(false)
+                .is_ok_and(|s| s.pid == s.tgid)
         })
         .collect()
 }
 
-pub fn collect_all_children(root_pid: i32) -> Result<Vec<i32>, std::io::Error> {
+pub fn collect_all_children(root_pid: i32) -> Vec<i32> {
     let mut pids: Vec<i32> = vec![root_pid];
     let mut queue: VecDeque<i32> = VecDeque::from([root_pid]);
 
@@ -40,6 +39,5 @@ pub fn collect_all_children(root_pid: i32) -> Result<Vec<i32>, std::io::Error> {
             }
         }
     }
-
-    Ok(pids)
+    pids
 }

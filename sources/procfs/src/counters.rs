@@ -42,7 +42,22 @@ impl MemoryCounters {
     }
 
     pub fn delta(current: u64, start: u64) -> i64 {
-        current as i64 - start as i64
+        current.cast_signed() - start.cast_signed()
+    }
+
+    pub fn remove_sentinel_values(&mut self) {
+        let values = [
+            &mut self.min_vm_size,
+            &mut self.min_rss,
+            &mut self.min_pss,
+            &mut self.min_shared,
+            &mut self.min_anon,
+        ];
+        for v in values {
+            if *v == u64::MAX {
+                *v = 0;
+            }
+        }
     }
 }
 
