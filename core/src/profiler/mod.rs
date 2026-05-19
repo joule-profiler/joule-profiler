@@ -13,6 +13,7 @@ use std::{
     io::{BufRead, BufReader, ErrorKind, Write},
     process::{self, Stdio},
 };
+use tokio::task::{JoinHandle, spawn_blocking};
 
 pub mod error;
 
@@ -204,6 +205,25 @@ impl JouleProfiler {
             .take()
             .ok_or(JouleProfilerError::StdOutCaptureFail)?;
 
+        let child_stderr = child
+            .stderr
+            .take()
+            .ok_or(JouleProfilerError::StdErrCaptureFail)?;
+
+        let err_handle: JoinHandle<Result<()>> = spawn_blocking(move || {
+            let reader = BufReader::new(child_stderr);
+
+            let mut stderr = BufWriter::new(std::io::stderr().lock());
+
+            for line in reader.lines() {
+                writeln!(stderr, "{}", line?)?;
+            }
+
+            stderr.flush()?;
+
+            Ok(())
+        });
+
         let reader = BufReader::new(child_stdout);
         let mut detected_phases = Vec::with_capacity(2);
 
@@ -223,6 +243,8 @@ impl JouleProfiler {
             &mut sink,
         )
         .await?;
+
+        err_handle.await??;
 
         sink.flush()?;
 
@@ -284,8 +306,6 @@ impl JouleProfiler {
                     line.pop();
                 }
             }
-
-            trace!("STDOUT[{line_number}]: {line}");
 
             writeln!(sink, "{line}")?;
 
@@ -360,7 +380,7 @@ pub fn init_command(cmd: &[String], use_root: bool) -> Result<Command> {
     }
 
     command.stdout(Stdio::piped());
-    command.stderr(Stdio::inherit());
+    command.stderr(Stdio::piped());
 
     Ok(command)
 }

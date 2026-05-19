@@ -1,6 +1,7 @@
 use crate::orchestrator::error::OrchestratorError;
 use crate::source::error::MetricSourceError;
 use thiserror::Error;
+use tokio::task::JoinError;
 
 /// Top-level error type for `JouleProfiler`.
 ///
@@ -27,6 +28,18 @@ pub enum JouleProfilerError {
     /// Failed to capture the profiled command's stdout.
     #[error("Stdout capture failed")]
     StdOutCaptureFail,
+
+    /// Failed to capture the profiled command's stderr.
+    #[error("Stderr capture failed")]
+    StdErrCaptureFail,
+
+    /// Failed to join the stderr tokio task handle.
+    #[error("Join error")]
+    StdErrHandleJoinError(
+        #[from]
+        #[source]
+        JoinError,
+    ),
 
     /// Failed to retrieve `SUDO_USER` environment variable.
     #[error(
