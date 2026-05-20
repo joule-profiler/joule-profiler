@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::error::CgroupError;
 pub fn read_u64_opt(path: &Path) -> Result<Option<u64>, CgroupError> {
-    let raw = fs::read_to_string(path).map_err(|e| CgroupError::Io {
+    let raw = fs::read_to_string(path).map_err(|e| CgroupError::IoPath {
         path: path.display().to_string(),
         source: e,
     })?;
@@ -25,7 +25,7 @@ pub fn read_u64_opt(path: &Path) -> Result<Option<u64>, CgroupError> {
 }
 
 pub fn read_flat_keyed(path: &Path) -> Result<HashMap<String, u64>, CgroupError> {
-    let raw = fs::read_to_string(path).map_err(|e| CgroupError::Io {
+    let raw = fs::read_to_string(path).map_err(|e| CgroupError::IoPath {
         path: path.display().to_string(),
         source: e,
     })?;
@@ -33,17 +33,17 @@ pub fn read_flat_keyed(path: &Path) -> Result<HashMap<String, u64>, CgroupError>
     let mut map = HashMap::new();
     for line in raw.lines() {
         let mut parts = line.splitn(2, ' ');
-        if let (Some(key), Some(val_str)) = (parts.next(), parts.next()) {
-            if let Ok(v) = val_str.trim().parse::<u64>() {
-                map.insert(key.to_string(), v);
-            }
+        if let (Some(key), Some(val_str)) = (parts.next(), parts.next())
+            && let Ok(v) = val_str.trim().parse::<u64>()
+        {
+            map.insert(key.to_string(), v);
         }
     }
     Ok(map)
 }
 
 pub fn read_io_stat(path: &Path) -> Result<(u64, u64), CgroupError> {
-    let raw = fs::read_to_string(path).map_err(|e| CgroupError::Io {
+    let raw = fs::read_to_string(path).map_err(|e| CgroupError::IoPath {
         path: path.display().to_string(),
         source: e,
     })?;

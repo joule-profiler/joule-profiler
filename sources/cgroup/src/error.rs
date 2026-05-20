@@ -6,11 +6,18 @@ pub enum CgroupError {
     NotAvailable(String),
 
     #[error("I/O error on `{path}`: {source}")]
-    Io {
+    IoPath {
         path: String,
         #[source]
         source: std::io::Error,
     },
+
+    #[error("I/O error")]
+    Io(
+        #[from]
+        #[source]
+        std::io::Error,
+    ),
 
     #[error("Failed to parse `{path}`: expected {expected}, got `{got}`")]
     Parse {

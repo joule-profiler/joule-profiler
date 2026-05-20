@@ -65,10 +65,9 @@ pub struct CliArgs {
     #[arg(long)]
     pub perf: bool,
 
-    /// CGroup v2 metrics
+    /// cgroup v2 metrics
     #[arg(long)]
     pub cgroup: bool,
-
 
     /// Choose RAPL backend between powercap or perf
     #[arg(long = "rapl-backend", value_enum, default_value_t = RaplBackend::Perf)]

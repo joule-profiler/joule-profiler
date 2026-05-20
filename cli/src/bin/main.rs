@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, init_logging, output_format_to_displayer,
@@ -5,11 +7,11 @@ use joule_profiler_cli::{
 };
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
+use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_rapl::{perf, powercap};
 use log::{trace, warn};
-use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -65,12 +67,14 @@ async fn main() -> Result<()> {
 
     if cli.cgroup {
         trace!("Initializing CGroup v2 source");
-        match CgroupSource::new(CgroupConfig::default()) {
+        match CgroupSource::new(CgroupConfig {
+            poll_interval: Some(Duration::from_millis(1)),
+            ..Default::default()
+        }) {
             Ok(cgroup) => profiler.add_source(cgroup),
             Err(err) => warn!("Cannot initialize CGroup source: {err}"),
         }
     }
-
 
     let config = Config::from(cli);
 
