@@ -12,9 +12,11 @@ readme = "README.md"
 
 [dependencies]
 joule-profiler-core.workspace = true
+futures.workspace = true
 log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-timerfd = "0.2.0"
 
 [lints]
 workspace = true
