@@ -1,6 +1,6 @@
 use anyhow::Result;
 use joule_profiler_cli::{
-    CliArgs, ProfilerCommand, RaplBackend, init_logging, output_format_to_displayer,
+    CliArgs, ProfilerCommand, RaplBackend, Source, init_logging, output_format_to_displayer,
     parse_sockets_spec,
 };
 use joule_profiler_core::JouleProfiler;
@@ -25,28 +25,30 @@ async fn main() -> Result<()> {
         ProfilerCommand::ListSensors => None,
     };
 
-    match cli.rapl_backend {
-        RaplBackend::Perf => {
-            if let Err(err) = perf::Rapl::check_perf_access() {
-                warn!("Cannot initialize RAPL with perf_event, switching to powercap: {err}");
+    if cli.sources.contains(&Source::Rapl) {
+        match cli.rapl_backend {
+            RaplBackend::Perf => {
+                if let Err(err) = perf::Rapl::check_perf_access() {
+                    warn!("Cannot initialize RAPL with perf_event, switching to powercap: {err}");
+                    let rapl_powercap =
+                        powercap::Rapl::new(rapl_path, rapl_sockets_spec.as_ref(), rapl_polling)?;
+                    profiler.add_source(rapl_powercap);
+                } else {
+                    trace!("Using perf_event for RAPL profiling");
+                    let perf_rapl = perf::Rapl::new(rapl_sockets_spec.as_ref())?;
+                    profiler.add_source(perf_rapl);
+                }
+            }
+            RaplBackend::Powercap => {
+                trace!("Using Powercap for RAPL profiling");
                 let rapl_powercap =
                     powercap::Rapl::new(rapl_path, rapl_sockets_spec.as_ref(), rapl_polling)?;
                 profiler.add_source(rapl_powercap);
-            } else {
-                trace!("Using perf_event for RAPL profiling");
-                let perf_rapl = perf::Rapl::new(rapl_sockets_spec.as_ref())?;
-                profiler.add_source(perf_rapl);
             }
-        }
-        RaplBackend::Powercap => {
-            trace!("Using Powercap for RAPL profiling");
-            let rapl_powercap =
-                powercap::Rapl::new(rapl_path, rapl_sockets_spec.as_ref(), rapl_polling)?;
-            profiler.add_source(rapl_powercap);
         }
     }
 
-    if cli.gpu {
+    if cli.sources.contains(&Source::Nvml) {
         match Nvml::new() {
             Ok(nvml) => {
                 trace!("Using NVML for Nvidia GPU profiling");
@@ -56,7 +58,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    if cli.perf {
+    if cli.sources.contains(&Source::Perf) {
         trace!("Initializing perf_event source");
         let perf_event = PerfEvent::new()?;
         profiler.add_source(perf_event);
