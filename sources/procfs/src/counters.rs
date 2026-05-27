@@ -57,8 +57,8 @@ impl ProcCounters {
         self.shared.update(snapshot.shared);
         self.anon.update(snapshot.anon);
 
-        self.end_read_bytes = snapshot.read_bytes;
-        self.end_write_bytes = snapshot.write_bytes;
+        self.end_read_bytes = self.end_read_bytes.max(snapshot.read_bytes);
+        self.end_write_bytes = self.end_write_bytes.max(snapshot.write_bytes);
     }
 
     pub fn reset(&mut self) {

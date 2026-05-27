@@ -39,9 +39,16 @@ pub fn read_proc(pids: &[i32]) -> Result<ProcSnapshot> {
             + map.get("Shared_Dirty").copied().unwrap_or(0);
 
         trace!("Querying process {} io.", process.pid);
-        let io = process.io()?;
-        snapshot.read_bytes += io.rchar;
-        snapshot.write_bytes += io.wchar;
+
+        // Match because procfs throws permission denied if process terminated.
+        match process.io() {
+            Ok(io) => {
+                snapshot.read_bytes += io.rchar;
+                snapshot.write_bytes += io.wchar;
+            }
+            Err(procfs::ProcError::PermissionDenied(_)) => {}
+            Err(err) => return Err(err.into()),
+        }
     }
 
     Ok(snapshot)
