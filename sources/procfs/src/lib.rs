@@ -1,3 +1,8 @@
+//! Procfs metric source for Joule Profiler.
+//!
+//! Provides memory and I/O metrics for a process and it's children and system-wide,
+//! by reading Linux's `/proc` filesystem via the `procfs` crate.
+
 use futures::StreamExt;
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
@@ -14,12 +19,14 @@ use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 
 use crate::{
+    config::ProcfsConfig,
     counters::{Counters, MinMax},
     error::ProcfsError,
-    snapshot::{GlobalSnapshot, ProcSnapshot, read_global, read_proc},
-    utils::{MemoryUnit, collect_all_children, make_conversion},
+    snapshot::{ProcSnapshot, measure_global, measure_proc},
+    utils::{MemoryUnit, make_conversion},
 };
 
+pub mod config;
 pub mod counters;
 pub mod error;
 mod snapshot;
@@ -32,28 +39,61 @@ const IO_COUNTERS_METRIC_UNIT: MetricUnit = MetricUnit {
 
 type Result<T> = std::result::Result<T, ProcfsError>;
 
+/// Procfs-based metric source.
+///
+/// Reads memory and I/O metrics from `/proc` for a target process and its
+/// entire child hierarchy, as well as system-wide memory statistics.
+///
+/// Metrics are accumulated as min/max over each measurement phase.
+/// A phase starts on [`MetricReader::measure`] and ends on [`MetricReader::retrieve`],
+/// which returns the counters and resets them for the next phase.
+///
+/// If a `poll_interval` is configured, a background task polls `/proc` continuously
+/// at that interval in addition to explicit [`MetricReader::measure`] calls.
+///
+/// # Example
+///
+/// ```no_run
+/// use joule_profiler_source_procfs::{Procfs, config::ProcfsConfig};
+///
+/// let source = Procfs::new(&ProcfsConfig::default()).unwrap();
+/// ```
 #[derive(Debug, Default)]
 pub struct Procfs {
+    /// pid of the profiled process, initialized at -1.
     pid: i32,
 
+    /// The polling interval of the source if set, else no polling.
     poll_interval: Option<Duration>,
+
+    /// Current metrics counters.
     counters: Arc<Mutex<Counters>>,
+
+    /// The handle to the polling task.
     handle: Option<JoinHandle<Result<()>>>,
 
+    /// The unit in which to convert proc memory metrics.
     proc_memory_unit: MemoryUnit,
+
+    /// The unit in which to convert global memory metrics.
     global_memory_unit: MemoryUnit,
 
+    /// Total physical memory in bytes, read once at construction from `/proc/meminfo`.
     mem_total: u64,
 }
 
 impl Procfs {
-    pub fn new(poll_interval: Option<Duration>) -> Result<Self> {
+    /// Creates a new `Procfs` source from the given configuration.
+    ///
+    /// Reads `MemTotal` from `/proc/meminfo` at construction time.
+    pub fn new(config: &ProcfsConfig) -> Result<Self> {
         let mem_total = Meminfo::from_file(Meminfo::PATH)?.mem_total;
         Ok(Self {
             pid: -1,
             mem_total,
-            poll_interval,
-            global_memory_unit: MemoryUnit::Giga,
+            poll_interval: config.poll_interval,
+            global_memory_unit: config.global_memory_unit,
+            proc_memory_unit: config.proc_memory_unit,
             ..Default::default()
         })
     }
@@ -63,6 +103,7 @@ impl MetricReader for Procfs {
     type Type = Counters;
     type Error = ProcfsError;
 
+    /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
         self.pid = pid;
 
@@ -98,19 +139,25 @@ impl MetricReader for Procfs {
         Ok(())
     }
 
+    /// Aborts the background poller if still running, or propagates its error if it already finished.
     async fn join(&mut self) -> Result<()> {
         if let Some(handle) = self.handle.take() {
             if handle.is_finished() {
+                trace!("Joining polling task.");
                 if let Ok(res) = handle.await {
                     return res;
                 }
             } else {
+                trace!("Aborting polling task.");
                 handle.abort();
             }
         }
         Ok(())
     }
 
+    /// Takes a single snapshot of process and global counters and updates them.
+    ///
+    /// If the process is not found, an empty snapshot is used.
     async fn measure(&mut self) -> Result<()> {
         let proc = match measure_proc(self.pid) {
             Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => Ok(ProcSnapshot::default()),
@@ -125,6 +172,7 @@ impl MetricReader for Procfs {
         Ok(())
     }
 
+    /// Returns the accumulated counters for the current phase and resets them.
     async fn retrieve(&mut self) -> Result<Self::Type> {
         let mut lock = self.counters.lock().await;
         let counters = *lock;
@@ -224,23 +272,12 @@ impl MetricReader for Procfs {
         .collect();
 
         let global = counters.global;
-
-        let mem_used =
-            |mem_available: Option<MinMax>, mem_free: MinMax, cached: MinMax| -> MinMax {
-                if let Some(available) = mem_available {
-                    MinMax(
-                        self.mem_total.saturating_sub(available.max()),
-                        self.mem_total.saturating_sub(available.min()),
-                    )
-                } else {
-                    MinMax(
-                        self.mem_total.saturating_sub(mem_free.min() + cached.min()),
-                        self.mem_total.saturating_sub(mem_free.max() + cached.max()),
-                    )
-                }
-            };
-
-        let mem_used = mem_used(global.mem_available, global.mem_free, global.cached);
+        let mem_used = compute_mem_used(
+            self.mem_total,
+            global.mem_available,
+            global.mem_free,
+            global.cached,
+        );
 
         let mut global_memory_metrics: Metrics = [
             (
@@ -295,14 +332,29 @@ impl MetricReader for Procfs {
     }
 }
 
-fn measure_proc(pid: i32) -> Result<ProcSnapshot> {
-    trace!("Retrieving process hierarchy from pid {pid}.");
-    let pids = collect_all_children(pid);
-    trace!("Found pids {pids:?}. Reading process procfs counters.");
-    read_proc(&pids)
-}
-
-fn measure_global() -> Result<GlobalSnapshot> {
-    trace!("Reading global procfs counters.");
-    read_global()
+/// Computes used memory as `MemTotal - MemAvailable`.
+///
+/// If `MemAvailable` is present in `/proc/meminfo`, it is used directly (preferred).
+/// Otherwise, falls back to `MemTotal - (MemFree + Cached)`, which is less accurate
+/// but universally available.
+///
+/// Note: min/max are inverted relative to `available` since higher availability
+/// means lower usage.
+fn compute_mem_used(
+    mem_total: u64,
+    mem_available: Option<MinMax>,
+    mem_free: MinMax,
+    cached: MinMax,
+) -> MinMax {
+    if let Some(available) = mem_available {
+        MinMax(
+            mem_total.saturating_sub(available.max()),
+            mem_total.saturating_sub(available.min()),
+        )
+    } else {
+        MinMax(
+            mem_total.saturating_sub(mem_free.max() + cached.max()),
+            mem_total.saturating_sub(mem_free.min() + cached.min()),
+        )
+    }
 }

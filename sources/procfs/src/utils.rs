@@ -5,7 +5,11 @@ use joule_profiler_core::{
 use procfs::process::Process;
 use std::collections::VecDeque;
 
-fn read_task_children(pid: i32) -> Vec<i32> {
+/// Reads direct child of pid (threads excluded).
+///
+/// Reads `/proc/{pid}/task/{tid}/children` for each thread of the process,
+/// then filters out threads by keeping only processes.
+fn read_child_processes(pid: i32) -> Vec<i32> {
     let Ok(process) = Process::new(pid) else {
         return vec![];
     };
@@ -23,20 +27,28 @@ fn read_task_children(pid: i32) -> Vec<i32> {
                 .filter_map(|s| s.parse::<i32>().ok())
                 .collect::<Vec<_>>()
         })
-        .filter(|&child_pid| {
-            Process::new(child_pid)
-                .and_then(|p| p.status())
-                .is_ok_and(|s| s.pid == s.tgid)
-        })
+        .filter(|&child_pid| is_process(child_pid))
         .collect()
 }
 
+/// Returns `true` if `pid` is a process leader (not a thread).
+///
+/// A thread has `pid != tgid` in `/proc/{pid}/status`.
+/// The process leader has `pid == tgid`.
+fn is_process(pid: i32) -> bool {
+    Process::new(pid)
+        .and_then(|p| p.status())
+        .is_ok_and(|s| s.pid == s.tgid)
+}
+
+/// Collects `root_pid` and all its descendant recursively.
+/// Threads are excluded, only process leaders are returned.
 pub fn collect_all_children(root_pid: i32) -> Vec<i32> {
     let mut pids: Vec<i32> = vec![root_pid];
     let mut queue: VecDeque<i32> = VecDeque::from([root_pid]);
 
     while let Some(pid) = queue.pop_front() {
-        for child_pid in read_task_children(pid) {
+        for child_pid in read_child_processes(pid) {
             if !pids.contains(&child_pid) {
                 pids.push(child_pid);
                 queue.push_back(child_pid);
@@ -78,12 +90,16 @@ impl From<MemoryUnit> for MetricUnit {
     }
 }
 
+/// Convert bytes to the provided unit.
+/// If the unit is bigger than Kilo, then it becomes a float and is rounded to 2 decimals.
 pub fn make_conversion(unit: MemoryUnit, value: u64) -> MetricValue {
     #[allow(clippy::cast_precision_loss)]
     (match unit {
         MemoryUnit::Bytes => |b| MetricValue::UnsignedInteger(b),
-        MemoryUnit::Kilo => |b| MetricValue::UnsignedInteger(b / 1_024),
-        MemoryUnit::Mega => |b| MetricValue::Float(b as f64 / 1_048_576.0, Some(2)),
-        MemoryUnit::Giga => |b| MetricValue::Float(b as f64 / 1_073_741_824.0, Some(2)),
+        MemoryUnit::Kilo => |b| MetricValue::UnsignedInteger(b / 1024),
+        MemoryUnit::Mega => |b| MetricValue::Float(b as f64 / f64::from(1024 * 1024), Some(2)),
+        MemoryUnit::Giga => {
+            |b| MetricValue::Float(b as f64 / f64::from(1024 * 1024 * 1024), Some(2))
+        }
     })(value)
 }
