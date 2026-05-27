@@ -10,6 +10,7 @@ use joule_profiler_core::config::{Command, Config};
 use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_procfs::Procfs;
+use joule_profiler_source_procfs::config::ProcfsConfig;
 use joule_profiler_source_rapl::{perf, powercap};
 use log::{trace, warn};
 
@@ -67,7 +68,11 @@ async fn main() -> Result<()> {
 
     if cli.procfs {
         trace!("Initializing procfs source");
-        let procfs = Procfs::new(Some(Duration::from_millis(1)))?;
+        let config = ProcfsConfig {
+            poll_interval: Some(Duration::from_millis(1)),
+            ..Default::default()
+        };
+        let procfs = Procfs::new(&config)?;
         profiler.add_source(procfs);
     }
 
