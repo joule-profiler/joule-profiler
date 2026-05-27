@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
 
     if cli.procfs {
         trace!("Initializing procfs source");
-        let procfs = Procfs::new(Some(Duration::from_millis(1)));
+        let procfs = Procfs::new(Some(Duration::from_millis(1)))?;
         profiler.add_source(procfs);
     }
 
