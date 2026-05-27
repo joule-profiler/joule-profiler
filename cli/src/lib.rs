@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
 use joule_profiler_core::config::{Command, Config, ProfileConfig};
 
@@ -41,7 +41,7 @@ pub struct CliArgs {
     #[arg(long = "rapl-path")]
     pub rapl_path: Option<String>,
 
-    /// Sockets to measure (e.g. 0 or 0,1)
+    /// Sockets to measure (e.g., 0 or 0,1)
     #[arg(short = 's', long = "sockets")]
     pub sockets: Option<String>,
 
@@ -57,17 +57,13 @@ pub struct CliArgs {
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
-    /// GPU support
-    #[arg(long)]
-    pub gpu: bool,
-
-    /// `perf_event` counters support
-    #[arg(long)]
-    pub perf: bool,
-
     /// Choose RAPL backend between powercap or perf
     #[arg(long = "rapl-backend", value_enum, default_value_t = RaplBackend::Perf)]
     pub rapl_backend: RaplBackend,
+
+    /// Sources activation list. All sources must be separated with a comma (e.g., "perf,nvml").
+    #[arg(long, value_delimiter = ',', default_value = "rapl")]
+    pub sources: Vec<Source>,
 
     /// The command to execute
     #[command(subcommand)]
@@ -77,6 +73,18 @@ pub struct CliArgs {
 impl CliArgs {
     pub fn from_args() -> Self {
         Self::parse()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let mut seen = HashSet::new();
+
+        for source in &self.sources {
+            if !seen.insert(source) {
+                bail!("Duplicate source specified: {source}");
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -97,6 +105,25 @@ impl From<CliArgs> for Config {
             command,
             rapl_path: cli_args.rapl_path,
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
+pub enum Source {
+    Rapl,
+    Nvml,
+    #[value(alias = "perf_event")]
+    Perf,
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Source::Rapl => "rapl",
+            Source::Nvml => "nvml",
+            Source::Perf => "perf | perf_event",
+        };
+        write!(f, "{s}")
     }
 }
 
