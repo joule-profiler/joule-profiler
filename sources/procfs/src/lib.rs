@@ -13,7 +13,6 @@ use joule_profiler_core::{
 use log::{debug, trace};
 use procfs::{Current, FromRead, Meminfo};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
@@ -23,7 +22,7 @@ use crate::{
     counters::{Counters, MinMax},
     error::ProcfsError,
     snapshot::{ProcSnapshot, measure_global, measure_proc},
-    utils::{MemoryUnit, make_conversion},
+    utils::make_conversion,
 };
 
 pub mod config;
@@ -56,27 +55,21 @@ type Result<T> = std::result::Result<T, ProcfsError>;
 /// ```no_run
 /// use joule_profiler_source_procfs::{Procfs, config::ProcfsConfig};
 ///
-/// let source = Procfs::new(&ProcfsConfig::default()).unwrap();
+/// let source = Procfs::new(ProcfsConfig::default()).unwrap();
 /// ```
 #[derive(Debug, Default)]
 pub struct Procfs {
+    /// procfs source configuration.
+    config: ProcfsConfig,
+
     /// pid of the profiled process, initialized at -1.
     pid: i32,
-
-    /// The polling interval of the source if set, else no polling.
-    poll_interval: Option<Duration>,
 
     /// Current metrics counters.
     counters: Arc<Mutex<Counters>>,
 
     /// The handle to the polling task.
     handle: Option<JoinHandle<Result<()>>>,
-
-    /// The unit in which to convert proc memory metrics.
-    proc_memory_unit: MemoryUnit,
-
-    /// The unit in which to convert global memory metrics.
-    global_memory_unit: MemoryUnit,
 
     /// Total physical memory in bytes, read once at construction from `/proc/meminfo`.
     mem_total: u64,
@@ -86,14 +79,12 @@ impl Procfs {
     /// Creates a new `Procfs` source from the given configuration.
     ///
     /// Reads `MemTotal` from `/proc/meminfo` at construction time.
-    pub fn new(config: &ProcfsConfig) -> Result<Self> {
+    pub fn new(config: ProcfsConfig) -> Result<Self> {
         let mem_total = Meminfo::from_file(Meminfo::PATH)?.mem_total;
         Ok(Self {
+            config,
             pid: -1,
             mem_total,
-            poll_interval: config.poll_interval,
-            global_memory_unit: config.global_memory_unit,
-            proc_memory_unit: config.proc_memory_unit,
             ..Default::default()
         })
     }
@@ -107,7 +98,7 @@ impl MetricReader for Procfs {
     async fn init(&mut self, pid: i32) -> Result<()> {
         self.pid = pid;
 
-        let Some(interval) = self.poll_interval else {
+        let Some(interval) = self.config.poll_interval else {
             return Ok(());
         };
 
@@ -181,8 +172,8 @@ impl MetricReader for Procfs {
     }
 
     fn get_sensors(&self) -> Result<Sensors> {
-        let proc_memory_unit: MetricUnit = self.proc_memory_unit.into();
-        let global_memory_unit: MetricUnit = self.global_memory_unit.into();
+        let proc_memory_unit: MetricUnit = self.config.proc_memory_unit.into();
+        let global_memory_unit: MetricUnit = self.config.global_memory_unit.into();
 
         let proc_sensors = [
             "proc_vm_size_min",
@@ -232,8 +223,8 @@ impl MetricReader for Procfs {
     }
 
     fn to_metrics(&self, mut counters: Self::Type) -> Result<Metrics> {
-        let proc_unit: MetricUnit = self.proc_memory_unit.into();
-        let global_unit: MetricUnit = self.global_memory_unit.into();
+        let proc_unit: MetricUnit = self.config.proc_memory_unit.into();
+        let global_unit: MetricUnit = self.config.global_memory_unit.into();
 
         counters.remove_sentinels();
         let proc = counters.proc;
@@ -252,7 +243,7 @@ impl MetricReader for Procfs {
         ]
         .into_iter()
         .map(|(name, value)| {
-            let value = make_conversion(self.proc_memory_unit, value);
+            let value = make_conversion(self.config.proc_memory_unit, value);
             Metric::new(name, value, proc_unit, Self::get_name())
         })
         .collect();
@@ -279,30 +270,32 @@ impl MetricReader for Procfs {
             global.cached,
         );
 
+        let global_memory_unit = self.config.global_memory_unit;
+
         let mut global_memory_metrics: Metrics = [
             (
                 "global_mem_used_min",
-                make_conversion(self.global_memory_unit, mem_used.min()),
+                make_conversion(global_memory_unit, mem_used.min()),
             ),
             (
                 "global_mem_used_max",
-                make_conversion(self.global_memory_unit, mem_used.max()),
+                make_conversion(global_memory_unit, mem_used.max()),
             ),
             (
                 "global_cached_min",
-                make_conversion(self.global_memory_unit, global.cached.min()),
+                make_conversion(global_memory_unit, global.cached.min()),
             ),
             (
                 "global_cached_max",
-                make_conversion(self.global_memory_unit, global.cached.max()),
+                make_conversion(global_memory_unit, global.cached.max()),
             ),
             (
                 "global_swap_free_min",
-                make_conversion(self.global_memory_unit, global.swap_free.min()),
+                make_conversion(global_memory_unit, global.swap_free.min()),
             ),
             (
                 "global_swap_free_max",
-                make_conversion(self.global_memory_unit, global.swap_free.max()),
+                make_conversion(global_memory_unit, global.swap_free.max()),
             ),
         ]
         .into_iter()
@@ -313,7 +306,7 @@ impl MetricReader for Procfs {
             let anon: Vec<_> = [("global_anon_max", anon.0), ("global_anon_min", anon.1)]
                 .into_iter()
                 .map(|(name, value)| {
-                    let value = make_conversion(self.global_memory_unit, value);
+                    let value = make_conversion(global_memory_unit, value);
                     Metric::new(name, value, global_unit, Self::get_name())
                 })
                 .collect();
