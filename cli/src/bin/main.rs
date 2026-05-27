@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
             poll_interval: Some(Duration::from_millis(1)),
             ..Default::default()
         };
-        let procfs = Procfs::new(&config)?;
+        let procfs = Procfs::new(config)?;
         profiler.add_source(procfs);
     }
 
