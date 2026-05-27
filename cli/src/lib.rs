@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
 use joule_profiler_core::config::{Command, Config, ProfileConfig};
 
@@ -74,6 +74,18 @@ impl CliArgs {
     pub fn from_args() -> Self {
         Self::parse()
     }
+
+    pub fn validate(&self) -> Result<()> {
+        let mut seen = HashSet::new();
+
+        for source in &self.sources {
+            if !seen.insert(source) {
+                bail!("Duplicate source specified: {source}");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl From<CliArgs> for Config {
@@ -102,6 +114,17 @@ pub enum Source {
     Nvml,
     #[value(alias = "perf_event")]
     Perf,
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Source::Rapl => "rapl",
+            Source::Nvml => "nvml",
+            Source::Perf => "perf | perf_event",
+        };
+        write!(f, "{s}")
+    }
 }
 
 #[derive(Clone, Debug, ValueEnum)]

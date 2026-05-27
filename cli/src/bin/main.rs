@@ -13,6 +13,8 @@ use log::{trace, warn};
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = CliArgs::from_args();
+    cli.validate()?;
+
     init_logging(cli.verbose);
 
     let mut displayer = output_format_to_displayer(&cli)?;
