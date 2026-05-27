@@ -2,7 +2,7 @@ use futures::StreamExt;
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
     source::MetricReader,
-    types::{Metric, MetricValue, Metrics},
+    types::{Metric, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use log::{debug, trace};
@@ -17,7 +17,7 @@ use crate::{
     counters::{Counters, MinMax},
     error::ProcfsError,
     snapshot::{GlobalSnapshot, ProcSnapshot, read_global, read_proc},
-    utils::{MemoryUnit, collect_all_children},
+    utils::{MemoryUnit, collect_all_children, make_conversion},
 };
 
 pub mod counters;
@@ -186,26 +186,27 @@ impl MetricReader for Procfs {
     fn to_metrics(&self, mut counters: Self::Type) -> Result<Metrics> {
         let proc_unit: MetricUnit = self.proc_memory_unit.into();
         let global_unit: MetricUnit = self.global_memory_unit.into();
-        let proc_conv = make_conv(self.proc_memory_unit);
-        let global_conv = make_conv(self.global_memory_unit);
 
         counters.remove_sentinels();
         let proc = counters.proc;
 
         let proc_memory_metrics: Metrics = [
-            ("proc_vm_size_min", proc_conv(proc.vm_size.min())),
-            ("proc_vm_size_max", proc_conv(proc.vm_size.max())),
-            ("proc_rss_min", proc_conv(proc.rss.min())),
-            ("proc_rss_max", proc_conv(proc.rss.max())),
-            ("proc_pss_min", proc_conv(proc.pss.min())),
-            ("proc_pss_max", proc_conv(proc.pss.max())),
-            ("proc_shared_min", proc_conv(proc.shared.min())),
-            ("proc_shared_max", proc_conv(proc.shared.max())),
-            ("proc_anon_min", proc_conv(proc.anon.min())),
-            ("proc_anon_max", proc_conv(proc.anon.max())),
+            ("proc_vm_size_min", proc.vm_size.min()),
+            ("proc_vm_size_max", proc.vm_size.max()),
+            ("proc_rss_min", proc.rss.min()),
+            ("proc_rss_max", proc.rss.max()),
+            ("proc_pss_min", proc.pss.min()),
+            ("proc_pss_max", proc.pss.max()),
+            ("proc_shared_min", proc.shared.min()),
+            ("proc_shared_max", proc.shared.max()),
+            ("proc_anon_min", proc.anon.min()),
+            ("proc_anon_max", proc.anon.max()),
         ]
         .into_iter()
-        .map(|(name, value)| Metric::new(name, value, proc_unit, Self::get_name()))
+        .map(|(name, value)| {
+            let value = make_conversion(self.proc_memory_unit, value);
+            Metric::new(name, value, proc_unit, Self::get_name())
+        })
         .collect();
 
         let io_metrics: Metrics = [
@@ -242,33 +243,44 @@ impl MetricReader for Procfs {
         let mem_used = mem_used(global.mem_available, global.mem_free, global.cached);
 
         let mut global_memory_metrics: Metrics = [
-            ("global_mem_used_min", global_conv(mem_used.min())),
-            ("global_mem_used_max", global_conv(mem_used.max())),
-            ("global_cached_min", global_conv(global.cached.min())),
-            ("global_cached_max", global_conv(global.cached.max())),
-            ("global_swap_free_min", global_conv(global.swap_free.min())),
-            ("global_swap_free_max", global_conv(global.swap_free.max())),
+            (
+                "global_mem_used_min",
+                make_conversion(self.global_memory_unit, mem_used.min()),
+            ),
+            (
+                "global_mem_used_max",
+                make_conversion(self.global_memory_unit, mem_used.max()),
+            ),
+            (
+                "global_cached_min",
+                make_conversion(self.global_memory_unit, global.cached.min()),
+            ),
+            (
+                "global_cached_max",
+                make_conversion(self.global_memory_unit, global.cached.max()),
+            ),
+            (
+                "global_swap_free_min",
+                make_conversion(self.global_memory_unit, global.swap_free.min()),
+            ),
+            (
+                "global_swap_free_max",
+                make_conversion(self.global_memory_unit, global.swap_free.max()),
+            ),
         ]
         .into_iter()
         .map(|(name, value)| Metric::new(name, value, global_unit, Self::get_name()))
         .collect();
 
         if let Some(anon) = global.anon {
-            let min_anon = global_conv(anon.min());
-            let max_anon = global_conv(anon.max());
-
-            global_memory_metrics.push(Metric::new(
-                "global_anon_max",
-                max_anon,
-                global_unit,
-                Self::get_name(),
-            ));
-            global_memory_metrics.push(Metric::new(
-                "global_anon_min",
-                min_anon,
-                global_unit,
-                Self::get_name(),
-            ));
+            let anon: Vec<_> = [("global_anon_max", anon.0), ("global_anon_min", anon.1)]
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = make_conversion(self.global_memory_unit, value);
+                    Metric::new(name, value, global_unit, Self::get_name())
+                })
+                .collect();
+            global_memory_metrics.extend(anon);
         }
 
         Ok(proc_memory_metrics
@@ -280,16 +292,6 @@ impl MetricReader for Procfs {
 
     fn get_name() -> &'static str {
         "procfs"
-    }
-}
-
-fn make_conv(unit: MemoryUnit) -> fn(u64) -> MetricValue {
-    #[allow(clippy::cast_precision_loss)]
-    match unit {
-        MemoryUnit::Bytes => |b| MetricValue::UnsignedInteger(b),
-        MemoryUnit::Kilo => |b| MetricValue::UnsignedInteger(b / 1_024),
-        MemoryUnit::Mega => |b| MetricValue::Float(b as f64 / 1_048_576.0, Some(2)),
-        MemoryUnit::Giga => |b| MetricValue::Float(b as f64 / 1_073_741_824.0, Some(2)),
     }
 }
 
