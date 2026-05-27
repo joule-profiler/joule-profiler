@@ -1,3 +1,4 @@
+use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 use procfs::process::Process;
 use std::collections::VecDeque;
 
@@ -40,4 +41,36 @@ pub fn collect_all_children(root_pid: i32) -> Vec<i32> {
         }
     }
     pids
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryUnit {
+    Bytes,
+    Kilo,
+    #[default]
+    Mega,
+    Giga,
+}
+
+impl From<MemoryUnit> for MetricUnit {
+    fn from(unit: MemoryUnit) -> Self {
+        match unit {
+            MemoryUnit::Bytes => MetricUnit {
+                prefix: UnitPrefix::None,
+                unit: Unit::Byte,
+            },
+            MemoryUnit::Kilo => MetricUnit {
+                prefix: UnitPrefix::Kilo,
+                unit: Unit::Byte,
+            },
+            MemoryUnit::Mega => MetricUnit {
+                prefix: UnitPrefix::Mega,
+                unit: Unit::Byte,
+            },
+            MemoryUnit::Giga => MetricUnit {
+                prefix: UnitPrefix::Giga,
+                unit: Unit::Byte,
+            },
+        }
+    }
 }
