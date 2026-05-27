@@ -1,4 +1,7 @@
-use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
+use joule_profiler_core::{
+    types::MetricValue,
+    unit::{MetricUnit, Unit, UnitPrefix},
+};
 use procfs::process::Process;
 use std::collections::VecDeque;
 
@@ -73,4 +76,14 @@ impl From<MemoryUnit> for MetricUnit {
             },
         }
     }
+}
+
+pub fn make_conversion(unit: MemoryUnit, value: u64) -> MetricValue {
+    #[allow(clippy::cast_precision_loss)]
+    (match unit {
+        MemoryUnit::Bytes => |b| MetricValue::UnsignedInteger(b),
+        MemoryUnit::Kilo => |b| MetricValue::UnsignedInteger(b / 1_024),
+        MemoryUnit::Mega => |b| MetricValue::Float(b as f64 / 1_048_576.0, Some(2)),
+        MemoryUnit::Giga => |b| MetricValue::Float(b as f64 / 1_073_741_824.0, Some(2)),
+    })(value)
 }
