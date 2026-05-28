@@ -12,10 +12,11 @@ use joule_profiler_core::{
 };
 use log::{debug, trace};
 use procfs::{Current, FromRead, Meminfo};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::ProcfsConfig,
@@ -37,6 +38,7 @@ const IO_COUNTERS_METRIC_UNIT: MetricUnit = MetricUnit {
 };
 
 type Result<T> = std::result::Result<T, ProcfsError>;
+type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 
 /// Procfs-based metric source.
 ///
@@ -68,8 +70,8 @@ pub struct Procfs {
     /// Current metrics counters.
     counters: Arc<Mutex<Counters>>,
 
-    /// The handle to the polling task.
-    handle: Option<JoinHandle<Result<()>>>,
+    /// The handle to the polling task and it's cancellation token.
+    handle: Option<WorkerHandle>,
 
     /// Total physical memory in bytes, read once at construction from `/proc/meminfo`.
     mem_total: u64,
@@ -88,6 +90,45 @@ impl Procfs {
             ..Default::default()
         })
     }
+
+    fn spawn_worker(
+        pid: i32,
+        counters: Arc<Mutex<Counters>>,
+        poll_interval: Duration,
+    ) -> Result<WorkerHandle> {
+        let mut ticker = Interval::new_interval(poll_interval)?;
+        let cancellation_token = CancellationToken::new();
+        let cancellation_token_clone = cancellation_token.clone();
+
+        let handle = tokio::spawn(async move {
+            debug!("Starting procfs polling.");
+
+            loop {
+                tokio::select! {
+                    _ = ticker.next() => {
+                        trace!("Polled procfs source.");
+
+                        let proc = match measure_proc(pid) {
+                            Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => {
+                                Ok(ProcSnapshot::default())
+                            }
+                            r => r,
+                        }?;
+
+                        let global = measure_global()?;
+                        let mut counters = counters.lock().await;
+                        counters.update(&proc, &global);
+                    }
+                    () = cancellation_token.cancelled() => {
+                        debug!("Cgroup worker stopped.");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        });
+        Ok((cancellation_token_clone, handle))
+    }
 }
 
 impl MetricReader for Procfs {
@@ -98,50 +139,20 @@ impl MetricReader for Procfs {
     async fn init(&mut self, pid: i32) -> Result<()> {
         self.pid = pid;
 
-        let Some(interval) = self.config.poll_interval else {
-            return Ok(());
-        };
+        if let Some(poll_interval) = self.config.poll_interval {
+            let counters = self.counters.clone();
+            let handle = Self::spawn_worker(pid, counters, poll_interval)?;
+            self.handle = Some(handle);
+        }
 
-        let counters = self.counters.clone();
-
-        let handle = tokio::spawn(async move {
-            debug!("Starting procfs polling.");
-            let mut ticker = Interval::new_interval(interval)?;
-
-            loop {
-                ticker.next().await;
-                trace!("procfs source poll.");
-
-                let proc = match measure_proc(pid) {
-                    Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => {
-                        Ok(ProcSnapshot::default())
-                    }
-                    r => r,
-                }?;
-
-                let global = measure_global()?;
-
-                let mut counters = counters.lock().await;
-                counters.update(&proc, &global);
-            }
-        });
-
-        self.handle = Some(handle);
         Ok(())
     }
 
     /// Aborts the background poller if still running, or propagates its error if it already finished.
     async fn join(&mut self) -> Result<()> {
-        if let Some(handle) = self.handle.take() {
-            if handle.is_finished() {
-                trace!("Joining polling task.");
-                if let Ok(res) = handle.await {
-                    return res;
-                }
-            } else {
-                trace!("Aborting polling task.");
-                handle.abort();
-            }
+        if let Some((cancellation_token, handle)) = self.handle.take() {
+            cancellation_token.cancel();
+            handle.await??;
         }
         Ok(())
     }
