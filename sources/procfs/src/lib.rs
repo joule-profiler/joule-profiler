@@ -19,7 +19,7 @@ use tokio_timerfd::Interval;
 
 use crate::{
     config::ProcfsConfig,
-    counters::{Counters, MinMax},
+    counters::{Counters, compute_mem_used},
     error::ProcfsError,
     snapshot::{ProcSnapshot, measure_global, measure_proc},
     utils::make_conversion,
@@ -222,24 +222,23 @@ impl MetricReader for Procfs {
             .collect())
     }
 
-    fn to_metrics(&self, mut counters: Self::Type) -> Result<Metrics> {
+    fn to_metrics(&self, counters: Self::Type) -> Result<Metrics> {
         let proc_unit: MetricUnit = self.config.proc_memory_unit.into();
         let global_unit: MetricUnit = self.config.global_memory_unit.into();
 
-        counters.remove_sentinels();
         let proc = counters.proc;
 
         let proc_memory_metrics: Metrics = [
-            ("proc_vm_size_min", proc.vm_size.min()),
-            ("proc_vm_size_max", proc.vm_size.max()),
-            ("proc_rss_min", proc.rss.min()),
-            ("proc_rss_max", proc.rss.max()),
-            ("proc_pss_min", proc.pss.min()),
-            ("proc_pss_max", proc.pss.max()),
-            ("proc_shared_min", proc.shared.min()),
-            ("proc_shared_max", proc.shared.max()),
-            ("proc_anon_min", proc.anon.min()),
-            ("proc_anon_max", proc.anon.max()),
+            ("proc_vm_size_min", proc.vm_size.min().unwrap_or_default()),
+            ("proc_vm_size_max", proc.vm_size.max().unwrap_or_default()),
+            ("proc_rss_min", proc.rss.min().unwrap_or_default()),
+            ("proc_rss_max", proc.rss.max().unwrap_or_default()),
+            ("proc_pss_min", proc.pss.min().unwrap_or_default()),
+            ("proc_pss_max", proc.pss.max().unwrap_or_default()),
+            ("proc_shared_min", proc.shared.min().unwrap_or_default()),
+            ("proc_shared_max", proc.shared.max().unwrap_or_default()),
+            ("proc_anon_min", proc.anon.min().unwrap_or_default()),
+            ("proc_anon_max", proc.anon.max().unwrap_or_default()),
         ]
         .into_iter()
         .map(|(name, value)| {
@@ -263,6 +262,7 @@ impl MetricReader for Procfs {
         .collect();
 
         let global = counters.global;
+        let global_memory_unit = self.config.global_memory_unit;
         let mem_used = compute_mem_used(
             self.mem_total,
             global.mem_available,
@@ -270,32 +270,36 @@ impl MetricReader for Procfs {
             global.cached,
         );
 
-        let global_memory_unit = self.config.global_memory_unit;
-
         let mut global_memory_metrics: Metrics = [
             (
                 "global_mem_used_min",
-                make_conversion(global_memory_unit, mem_used.min()),
+                make_conversion(global_memory_unit, mem_used.min().unwrap_or_default()),
             ),
             (
                 "global_mem_used_max",
-                make_conversion(global_memory_unit, mem_used.max()),
+                make_conversion(global_memory_unit, mem_used.max().unwrap_or_default()),
             ),
             (
                 "global_cached_min",
-                make_conversion(global_memory_unit, global.cached.min()),
+                make_conversion(global_memory_unit, global.cached.min().unwrap_or_default()),
             ),
             (
                 "global_cached_max",
-                make_conversion(global_memory_unit, global.cached.max()),
+                make_conversion(global_memory_unit, global.cached.max().unwrap_or_default()),
             ),
             (
                 "global_swap_free_min",
-                make_conversion(global_memory_unit, global.swap_free.min()),
+                make_conversion(
+                    global_memory_unit,
+                    global.swap_free.min().unwrap_or_default(),
+                ),
             ),
             (
                 "global_swap_free_max",
-                make_conversion(global_memory_unit, global.swap_free.max()),
+                make_conversion(
+                    global_memory_unit,
+                    global.swap_free.max().unwrap_or_default(),
+                ),
             ),
         ]
         .into_iter()
@@ -303,13 +307,20 @@ impl MetricReader for Procfs {
         .collect();
 
         if let Some(anon) = global.anon {
-            let anon: Vec<_> = [("global_anon_max", anon.0), ("global_anon_min", anon.1)]
-                .into_iter()
-                .map(|(name, value)| {
-                    let value = make_conversion(global_memory_unit, value);
-                    Metric::new(name, value, global_unit, Self::get_name())
-                })
-                .collect();
+            let anon: Vec<_> = [
+                ("global_anon_min", anon.min().unwrap_or_default()),
+                ("global_anon_max", anon.max().unwrap_or_default()),
+            ]
+            .into_iter()
+            .map(|(name, value)| {
+                Metric::new(
+                    name,
+                    make_conversion(global_memory_unit, value),
+                    global_unit,
+                    Self::get_name(),
+                )
+            })
+            .collect();
             global_memory_metrics.extend(anon);
         }
 
@@ -322,32 +333,5 @@ impl MetricReader for Procfs {
 
     fn get_name() -> &'static str {
         "procfs"
-    }
-}
-
-/// Computes used memory as `MemTotal - MemAvailable`.
-///
-/// If `MemAvailable` is present in `/proc/meminfo`, it is used directly (preferred).
-/// Otherwise, falls back to `MemTotal - (MemFree + Cached)`, which is less accurate
-/// but universally available.
-///
-/// Note: min/max are inverted relative to `available` since higher availability
-/// means lower usage.
-fn compute_mem_used(
-    mem_total: u64,
-    mem_available: Option<MinMax>,
-    mem_free: MinMax,
-    cached: MinMax,
-) -> MinMax {
-    if let Some(available) = mem_available {
-        MinMax(
-            mem_total.saturating_sub(available.max()),
-            mem_total.saturating_sub(available.min()),
-        )
-    } else {
-        MinMax(
-            mem_total.saturating_sub(mem_free.max() + cached.max()),
-            mem_total.saturating_sub(mem_free.min() + cached.min()),
-        )
     }
 }
