@@ -17,6 +17,10 @@ log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-timerfd = "0.2.0"
+tokio-util = "0.7.18"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

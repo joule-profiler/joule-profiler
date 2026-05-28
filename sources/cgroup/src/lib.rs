@@ -1,25 +1,29 @@
-use crate::error::CgroupError;
-use crate::snapshot::Snapshot;
-use crate::util::{read_flat_keyed, read_io_stat, read_u64_opt};
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
 use joule_profiler_core::types::{Metric, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
-use log::{debug, trace, warn};
-use std::fs;
-use std::path::{Path, PathBuf};
+use log::{debug, trace};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
+use tokio_util::sync::CancellationToken;
 
+use crate::cgroup::{Cgroup, Controller};
+use crate::counters::{Counters, CpuCounters, IoCounters, MemoryCounters};
+use crate::error::CgroupError;
+
+mod cgroup;
+mod counters;
 mod error;
 mod snapshot;
 mod util;
 
-const SOURCE_NAME: &str = "CGroup";
+const SOURCE_NAME: &str = "cgroup";
 
 const BYTE_UNIT: MetricUnit = MetricUnit {
     prefix: UnitPrefix::None,
@@ -36,11 +40,15 @@ const COUNT_UNIT: MetricUnit = MetricUnit {
     unit: Unit::Count,
 };
 
+pub(crate) type Result<T> = std::result::Result<T, CgroupError>;
+pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
+
 #[derive(Debug, Clone)]
 pub struct CgroupConfig {
     pub cgroup_root: PathBuf,
     pub cgroup_name: String,
     pub poll_interval: Option<Duration>,
+    pub controllers: HashSet<Controller>,
 }
 
 impl Default for CgroupConfig {
@@ -49,350 +57,258 @@ impl Default for CgroupConfig {
             cgroup_root: PathBuf::from("/sys/fs/cgroup"),
             cgroup_name: format!("joule-profiler-{}", std::process::id()),
             poll_interval: None,
+            controllers: vec![Controller::Io, Controller::Mem, Controller::Cpu]
+                .into_iter()
+                .collect(),
         }
     }
 }
 
 pub struct CgroupSource {
     config: CgroupConfig,
-    cgroup_path: PathBuf,
-    shared_snapshot: Arc<Mutex<Snapshot>>,
-    handle: Option<JoinHandle<Result<(), CgroupError>>>,
-    last_ponctual: Snapshot,
+    handle: Option<WorkerHandle>,
+    cgroup: Arc<Cgroup>,
+    shared_memory_counters: Arc<Mutex<MemoryCounters>>,
+    cpu_counters: CpuCounters,
+    io_counters: IoCounters,
 }
 
 impl CgroupSource {
-    pub fn new(config: CgroupConfig) -> Result<Self, CgroupError> {
-        let controllers = config.cgroup_root.join("cgroup.controllers");
-        if !controllers.exists() {
-            return Err(CgroupError::NotAvailable(
-                config.cgroup_root.display().to_string(),
-            ));
-        }
-
-        let cgroup_path = config.cgroup_root.join(&config.cgroup_name);
+    pub fn new(config: CgroupConfig) -> Result<Self> {
+        let cgroup = Arc::new(Cgroup::new(
+            config.cgroup_root.clone(),
+            &config.cgroup_name,
+        )?);
 
         Ok(Self {
             config,
-            cgroup_path,
-            shared_snapshot: Arc::new(Mutex::new(Snapshot::default())),
             handle: None,
-            last_ponctual: Snapshot::default(),
+            cgroup,
+            shared_memory_counters: Arc::default(),
+            cpu_counters: CpuCounters::default(),
+            io_counters: IoCounters::default(),
         })
     }
 
-    pub fn try_default() -> Result<Self, CgroupError> {
-        Self::new(CgroupConfig::default())
-    }
+    pub fn create_worker(
+        cgroup: Arc<Cgroup>,
+        shared_memory_counters: Arc<Mutex<MemoryCounters>>,
+        poll_interval: Duration,
+    ) -> Result<WorkerHandle> {
+        let mut ticker = Interval::new_interval(poll_interval)?;
 
-    fn create_and_enable_controllers(&self) -> Result<(), CgroupError> {
-        if !self.cgroup_path.exists() {
-            fs::create_dir_all(&self.cgroup_path).map_err(|e| CgroupError::IoPath {
-                path: self.cgroup_path.display().to_string(),
-                source: e,
-            })?;
-            debug!("Created cgroup at {}", self.cgroup_path.display());
-        }
+        let cancellation_token = CancellationToken::new();
+        let cancellation_token_clone = cancellation_token.clone();
 
-        let subtree_control = self.config.cgroup_root.join("cgroup.subtree_control");
-        for controller in ["memory", "cpu", "io"] {
-            let token = format!("+{controller}");
-            let controller_static: &'static str = match controller {
-                "memory" => "memory",
-                "cpu" => "cpu",
-                "io" => "io",
-                _ => unreachable!(),
-            };
-            fs::write(&subtree_control, &token).map_err(|e| CgroupError::EnableController {
-                controller: controller_static,
-                path: subtree_control.display().to_string(),
-                source: e,
-            })?;
-            trace!(
-                "Enabled controller `{controller}` in {}",
-                subtree_control.display()
-            );
-        }
+        let handle = tokio::spawn(async move {
+            debug!("Starting cgroup memory polling.");
 
-        Ok(())
-    }
+            loop {
+                tokio::select! {
+                    _ = ticker.next() => {
+                        trace!("Polled cgroup source.");
+                        let memory_snapshot = cgroup.read_memory()?;
+                        let mut lock = shared_memory_counters.lock().await;
+                        lock.update(&memory_snapshot);
+                    }
 
-    fn attach_pid(&self, pid: i32) -> Result<(), CgroupError> {
-        let procs_path = self.cgroup_path.join("cgroup.procs");
-        fs::write(&procs_path, pid.to_string())
-            .map_err(|e| CgroupError::Attach { pid, source: e })?;
-        debug!(
-            "Attached PID {pid} to cgroup {}",
-            self.cgroup_path.display()
-        );
-        Ok(())
-    }
-
-    fn live_pids(&self) -> Vec<i32> {
-        let path = self.cgroup_path.join("cgroup.procs");
-        match fs::read_to_string(&path) {
-            Ok(raw) => raw
-                .lines()
-                .filter_map(|l| l.trim().parse::<i32>().ok())
-                .collect(),
-            Err(e) => {
-                warn!("Could not read cgroup.procs ({}): {e}", path.display());
-                Vec::new()
+                    () = cancellation_token.cancelled() => {
+                        debug!("Cgroup worker stopped.");
+                        break;
+                    }
+                }
             }
-        }
-    }
 
-    fn cleanup(&self) {
-        let root_procs = self.config.cgroup_root.join("cgroup.procs");
-        for pid in self.live_pids() {
-            if let Err(e) = fs::write(&root_procs, pid.to_string()) {
-                warn!("Could not move PID {pid} back to root cgroup: {e}");
-            }
-        }
-        if self.cgroup_path.exists() {
-            if let Err(e) = fs::remove_dir(&self.cgroup_path) {
-                warn!(
-                    "Could not remove cgroup {} (may still have live tasks): {e}",
-                    self.cgroup_path.display()
-                );
-            } else {
-                debug!("Removed cgroup {}", self.cgroup_path.display());
-            }
-        }
-    }
+            Ok(())
+        });
 
-    fn read_memory_fields(cgroup_path: &Path) -> (u64, u64, u64, u64) {
-        let memory_current = read_u64_opt(&cgroup_path.join("memory.current"))
-            .ok()
-            .flatten()
-            .unwrap_or(0);
-
-        let memory_swap_current = read_u64_opt(&cgroup_path.join("memory.swap.current"))
-            .ok()
-            .flatten()
-            .unwrap_or(0);
-
-        let (memory_anon, memory_file) =
-            if let Ok(stat) = read_flat_keyed(&cgroup_path.join("memory.stat")) {
-                (
-                    stat.get("anon").copied().unwrap_or(0),
-                    stat.get("file").copied().unwrap_or(0),
-                )
-            } else {
-                (0, 0)
-            };
-
-        (
-            memory_current,
-            memory_anon,
-            memory_file,
-            memory_swap_current,
-        )
-    }
-
-    fn read_not_polled_fields(&self) -> Snapshot {
-        let mut snap = Snapshot::default();
-
-        if let Ok(stat) = read_flat_keyed(&self.cgroup_path.join("memory.stat")) {
-            snap.memory_kernel_stack = stat.get("kernel_stack").copied();
-            snap.memory_slab = stat.get("slab").copied();
-        }
-
-        if let Ok(stat) = read_flat_keyed(&self.cgroup_path.join("cpu.stat")) {
-            snap.cpu_usage_usec = stat.get("usage_usec").copied();
-            snap.cpu_user_usec = stat.get("user_usec").copied();
-            snap.cpu_system_usec = stat.get("system_usec").copied();
-            snap.cpu_nr_periods = stat.get("nr_periods").copied();
-            snap.cpu_nr_throttled = stat.get("nr_throttled").copied();
-            snap.cpu_throttled_usec = stat.get("throttled_usec").copied();
-        }
-
-        if let Ok((rb, wb)) = read_io_stat(&self.cgroup_path.join("io.stat")) {
-            snap.io_rbytes = Some(rb);
-            snap.io_wbytes = Some(wb);
-        }
-
-        snap.memory_peak = read_u64_opt(&self.cgroup_path.join("memory.peak"))
-            .ok()
-            .flatten();
-
-        snap
+        Ok((cancellation_token_clone, handle))
     }
 }
 
 impl MetricReader for CgroupSource {
-    type Type = Snapshot;
+    type Type = Counters;
     type Error = CgroupError;
 
-    async fn init(&mut self, pid: i32) -> Result<(), Self::Error> {
-        self.create_and_enable_controllers()?;
-        self.attach_pid(pid)?;
-
-        if let Some(interval) = self.config.poll_interval {
-            let shared = self.shared_snapshot.clone();
-            let cgroup_path = self.cgroup_path.clone();
-
-            let handle = tokio::spawn(async move {
-                debug!("Starting cgroup memory polling.");
-                let mut ticker = Interval::new_interval(interval)?;
-
-                loop {
-                    ticker.next().await;
-
-                    let (memory_current, memory_anon, memory_file, memory_swap_current) =
-                        CgroupSource::read_memory_fields(&cgroup_path);
-
-                    trace!(
-                        "cgroup poll — current:{memory_current} anon:{memory_anon} \
-                         file:{memory_file} swap:{memory_swap_current}"
-                    );
-
-                    let mut snap = shared.lock().await;
-                    snap.update(
-                        memory_current,
-                        memory_anon,
-                        memory_file,
-                        memory_swap_current,
-                    );
-                }
-            });
-
-            self.handle = Some(handle);
+    async fn init(&mut self, pid: i32) -> Result<()> {
+        self.cgroup.initialize_cgroup()?;
+        for controller in &self.config.controllers {
+            self.cgroup.activate_controller(*controller)?;
         }
 
-        debug!("CgroupSource initialised for PID {pid}");
+        self.cgroup.attach_pid(pid)?;
+
+        if let Some(poll_interval) = self.config.poll_interval {
+            self.handle = Some(Self::create_worker(
+                self.cgroup.clone(),
+                self.shared_memory_counters.clone(),
+                poll_interval,
+            )?);
+        }
+
+        debug!("Cgroup source initialised for pid {pid}");
         Ok(())
     }
 
-    async fn join(&mut self) -> Result<(), Self::Error> {
-        if let Some(handle) = self.handle.take() {
-            if handle.is_finished() {
-                if let Ok(res) = handle.await {
-                    return res;
-                }
-            } else {
-                handle.abort();
-            }
+    async fn measure(&mut self) -> Result<()> {
+        let memory_snapshot = self.cgroup.read_memory()?;
+        {
+            let mut lock = self.shared_memory_counters.lock().await;
+            lock.update(&memory_snapshot);
         }
-        self.cleanup();
+        let cpu_snapshot = self.cgroup.read_cpu()?;
+        self.cpu_counters.update(&cpu_snapshot);
+
+        let io_snapshot = self.cgroup.read_io()?;
+        self.io_counters.update(&io_snapshot);
+
         Ok(())
     }
 
-    async fn measure(&mut self) -> Result<(), Self::Error> {
-        if self.config.poll_interval.is_none() {
-            let (memory_current, memory_anon, memory_file, memory_swap_current) =
-                CgroupSource::read_memory_fields(&self.cgroup_path);
-            let mut snap = self.shared_snapshot.lock().await;
-            snap.update(
-                memory_current,
-                memory_anon,
-                memory_file,
-                memory_swap_current,
-            );
-        }
+    async fn retrieve(&mut self) -> Result<Self::Type> {
+        let memory = {
+            let mut lock = self.shared_memory_counters.lock().await;
+            let memory_counters = *lock;
+            lock.reset();
+            memory_counters
+        };
 
-        self.last_ponctual = self.read_not_polled_fields();
+        let cpu = self.cpu_counters;
+        self.cpu_counters.new_phase();
+
+        let io = self.io_counters;
+        self.io_counters.new_phase();
+
+        Ok(Counters { memory, cpu, io })
+    }
+
+    async fn join(&mut self) -> Result<()> {
+        if let Some((cancellation_token, handle)) = self.handle.take() {
+            cancellation_token.cancel();
+            handle.await??;
+        }
+        self.cgroup.cleanup()?;
         Ok(())
     }
 
-    async fn retrieve(&mut self) -> Result<Self::Type, Self::Error> {
-        let mut shared = self.shared_snapshot.lock().await;
-        shared.remove_sentinel_values();
-
-        let mut snap = shared.clone();
-        shared.reset_phase();
-        drop(shared);
-
-        snap.memory_peak = self.last_ponctual.memory_peak;
-        snap.memory_kernel_stack = self.last_ponctual.memory_kernel_stack;
-        snap.memory_slab = self.last_ponctual.memory_slab;
-        snap.cpu_usage_usec = self.last_ponctual.cpu_usage_usec;
-        snap.cpu_user_usec = self.last_ponctual.cpu_user_usec;
-        snap.cpu_system_usec = self.last_ponctual.cpu_system_usec;
-        snap.cpu_nr_periods = self.last_ponctual.cpu_nr_periods;
-        snap.cpu_nr_throttled = self.last_ponctual.cpu_nr_throttled;
-        snap.cpu_throttled_usec = self.last_ponctual.cpu_throttled_usec;
-        snap.io_rbytes = self.last_ponctual.io_rbytes;
-        snap.io_wbytes = self.last_ponctual.io_wbytes;
-
-        Ok(snap)
+    fn get_sensors(&self) -> Result<Sensors> {
+        Ok(vec![
+            Sensor::new("usage_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
+            Sensor::new("user_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
+            Sensor::new("system_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
+            Sensor::new("nr_periods", COUNT_UNIT, SOURCE_NAME),
+            Sensor::new("nr_throttled", COUNT_UNIT, SOURCE_NAME),
+            Sensor::new("throttled_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
+            Sensor::new("nr_bursts", COUNT_UNIT, SOURCE_NAME),
+            Sensor::new("burst_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
+            Sensor::new("anon_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("anon_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("file_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("file_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("kernel_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("kernel_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("kernel_stack_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("kernel_stack_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("peak_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("peak_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("shmem_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("shmem_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("slab_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("slab_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("swap_current_min", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("swap_current_max", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("read_bytes", BYTE_UNIT, SOURCE_NAME),
+            Sensor::new("write_bytes", BYTE_UNIT, SOURCE_NAME),
+        ])
     }
 
-    fn get_sensors(&self) -> Result<Sensors, Self::Error> {
-        let sensors = vec![
-            Sensor::new("memory_current_min", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_current_max", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_anon_min", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_anon_max", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_file_min", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_file_max", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_swap_current_min", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_swap_current_max", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_peak", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_kernel_stack", BYTE_UNIT, Self::get_name()),
-            Sensor::new("memory_slab", BYTE_UNIT, Self::get_name()),
-            Sensor::new("cpu_usage_usec", MICRO_SECOND_UNIT, Self::get_name()),
-            Sensor::new("cpu_user_usec", MICRO_SECOND_UNIT, Self::get_name()),
-            Sensor::new("cpu_system_usec", MICRO_SECOND_UNIT, Self::get_name()),
-            Sensor::new("cpu_nr_periods", COUNT_UNIT, Self::get_name()),
-            Sensor::new("cpu_nr_throttled", COUNT_UNIT, Self::get_name()),
-            Sensor::new("cpu_throttled_usec", MICRO_SECOND_UNIT, Self::get_name()),
-            Sensor::new("io_rbytes", BYTE_UNIT, Self::get_name()),
-            Sensor::new("io_wbytes", BYTE_UNIT, Self::get_name()),
-        ];
-        Ok(sensors)
-    }
-
-    fn to_metrics(&self, snap: Self::Type) -> Result<Metrics, Self::Error> {
-        let mut metrics = Vec::new();
-
+    fn to_metrics(&self, counters: Self::Type) -> Result<Metrics> {
         macro_rules! push {
-            ($field:expr, $name:expr, $unit:expr) => {
-                if let Some(v) = $field {
-                    metrics.push(Metric::new($name, v, $unit, Self::get_name()));
-                }
-            };
-            (direct $field:expr, $name:expr, $unit:expr) => {
-                metrics.push(Metric::new($name, $field, $unit, Self::get_name()));
+            ($metrics:expr, $name:expr, $value:expr, $unit:expr) => {
+                $metrics.push(Metric::new($name, $value, $unit, Self::get_name()));
             };
         }
 
-        push!(direct snap.memory_current_min,      "memory_current_min",      BYTE_UNIT);
-        push!(direct snap.memory_current_max,      "memory_current_max",      BYTE_UNIT);
-        push!(direct snap.memory_anon_min,         "memory_anon_min",         BYTE_UNIT);
-        push!(direct snap.memory_anon_max,         "memory_anon_max",         BYTE_UNIT);
-        push!(direct snap.memory_file_min,         "memory_file_min",         BYTE_UNIT);
-        push!(direct snap.memory_file_max,         "memory_file_max",         BYTE_UNIT);
-        push!(direct snap.memory_swap_current_min, "memory_swap_current_min", BYTE_UNIT);
-        push!(direct snap.memory_swap_current_max, "memory_swap_current_max", BYTE_UNIT);
-        push!(snap.memory_peak, "memory_peak", BYTE_UNIT);
-        push!(snap.memory_kernel_stack, "memory_kernel_stack", BYTE_UNIT);
-        push!(snap.memory_slab, "memory_slab", BYTE_UNIT);
-        push!(snap.cpu_usage_usec, "cpu_usage_usec", MICRO_SECOND_UNIT);
-        push!(snap.cpu_user_usec, "cpu_user_usec", MICRO_SECOND_UNIT);
-        push!(snap.cpu_system_usec, "cpu_system_usec", MICRO_SECOND_UNIT);
-        push!(snap.cpu_nr_periods, "cpu_nr_periods", COUNT_UNIT);
-        push!(snap.cpu_nr_throttled, "cpu_nr_throttled", COUNT_UNIT);
+        macro_rules! push_minmax {
+            ($metrics:expr, $field:expr, $name:expr, $unit:expr) => {
+                if let Some(mm) = $field {
+                    push!(
+                        $metrics,
+                        concat!($name, "_min"),
+                        mm.min().unwrap_or_default(),
+                        $unit
+                    );
+                    push!(
+                        $metrics,
+                        concat!($name, "_max"),
+                        mm.max().unwrap_or_default(),
+                        $unit
+                    );
+                }
+            };
+        }
+
+        macro_rules! push_begin_end {
+            ($metrics:expr, $field:expr, $name:expr, $unit:expr) => {
+                if let Some(be) = $field {
+                    push!($metrics, $name, be.diff(), $unit);
+                }
+            };
+        }
+
+        let mut metrics = Vec::new();
+        let m = counters.memory;
+
+        push_minmax!(metrics, m.anon, "anon", BYTE_UNIT);
+        push_minmax!(metrics, m.file, "file", BYTE_UNIT);
+        push_minmax!(metrics, m.kernel, "kernel", BYTE_UNIT);
+        push_minmax!(metrics, m.kernel_stack, "kernel_stack", BYTE_UNIT);
+        push_minmax!(metrics, m.peak, "peak", BYTE_UNIT);
+        push_minmax!(metrics, m.shmem, "shmem", BYTE_UNIT);
+        push_minmax!(metrics, m.slab, "slab", BYTE_UNIT);
+        push_minmax!(metrics, m.swap_current, "swap_current", BYTE_UNIT);
+
+        let cpu = counters.cpu;
+
         push!(
-            snap.cpu_throttled_usec,
-            "cpu_throttled_usec",
+            metrics,
+            "usage_usec",
+            cpu.usage_usec.diff(),
             MICRO_SECOND_UNIT
         );
-        push!(snap.io_rbytes, "io_rbytes", BYTE_UNIT);
-        push!(snap.io_wbytes, "io_wbytes", BYTE_UNIT);
+        push!(
+            metrics,
+            "user_usec",
+            cpu.user_usec.diff(),
+            MICRO_SECOND_UNIT
+        );
+        push!(
+            metrics,
+            "system_usec",
+            cpu.system_usec.diff(),
+            MICRO_SECOND_UNIT
+        );
+
+        push_begin_end!(metrics, cpu.nr_periods, "nr_periods", COUNT_UNIT);
+        push_begin_end!(metrics, cpu.nr_throttled, "nr_throttled", COUNT_UNIT);
+        push_begin_end!(
+            metrics,
+            cpu.throttled_usec,
+            "throttled_usec",
+            MICRO_SECOND_UNIT
+        );
+        push_begin_end!(metrics, cpu.nr_bursts, "nr_bursts", COUNT_UNIT);
+        push_begin_end!(metrics, cpu.burst_usec, "burst_usec", MICRO_SECOND_UNIT);
+
+        let io = counters.io;
+
+        push_begin_end!(metrics, io.rbytes, "read_bytes", BYTE_UNIT);
+        push_begin_end!(metrics, io.wbytes, "write_bytes", BYTE_UNIT);
 
         Ok(metrics)
     }
 
     fn get_name() -> &'static str {
         SOURCE_NAME
-    }
-}
-
-impl Drop for CgroupSource {
-    fn drop(&mut self) {
-        if self.cgroup_path.exists() {
-            self.cleanup();
-        }
     }
 }
