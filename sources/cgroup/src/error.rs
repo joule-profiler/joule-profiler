@@ -1,16 +1,36 @@
+use std::{num::ParseIntError, path::PathBuf};
+
 use thiserror::Error;
+use tokio::task::JoinError;
+
+use crate::cgroup::Controller;
 
 #[derive(Debug, Error)]
 pub enum CgroupError {
-    #[error("CGroup v2 not available at `{0}` — is the unified hierarchy mounted?")]
+    #[error("CGroup v2 not available at `{0}` - is the unified hierarchy mounted?")]
     NotAvailable(String),
 
-    #[error("I/O error on `{path}`: {source}")]
-    IoPath {
-        path: String,
+    #[error("Cgroup with name \"{0}\" already created.")]
+    AlreadyCreated(String),
+
+    #[error("Failed to create controller `{controller}` on path `{path}`, cause: {source}")]
+    FailedToCreateController {
+        controller: Controller,
+        path: PathBuf,
         #[source]
         source: std::io::Error,
     },
+
+    #[error("Failed to attach pid `{pid}` to cgroup on path `{path}`, cause: {source}")]
+    FailedToAttachPid {
+        pid: i32,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("Missing always present metric `{0}`")]
+    MissingAlwaysPresentMetric(&'static str),
 
     #[error("I/O error")]
     Io(
@@ -19,25 +39,24 @@ pub enum CgroupError {
         std::io::Error,
     ),
 
-    #[error("Failed to parse `{path}`: expected {expected}, got `{got}`")]
+    #[error("I/O error on `{path}`: {source}")]
+    IoPath {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("Failed to parse `{path}`: {source}")]
     Parse {
-        path: String,
-        expected: &'static str,
-        got: String,
+        path: PathBuf,
+        #[source]
+        source: ParseIntError,
     },
 
-    #[error("Failed to write PID {pid} to cgroup.procs: {source}")]
-    Attach {
-        pid: i32,
+    #[error("Failed to join tokio task: {0}")]
+    JoinError(
+        #[from]
         #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Failed to enable cgroup controller `{controller}` in `{path}`: {source}")]
-    EnableController {
-        controller: &'static str,
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
+        JoinError,
+    ),
 }
