@@ -1,45 +1,27 @@
 use crate::snapshot::{GlobalSnapshot, ProcSnapshot};
 
 /// A min/max accumulator for a single metric.
-///
-/// Initialized with `min = u64::MAX` and `max = 0` as sentinels,
-/// so the first [`update`](MinMax::update) call sets both bounds correctly.
-/// Call [`remove_sentinel`](MinMax::remove_sentinel) before reading min.
-#[derive(Debug, Clone, Copy)]
-pub struct MinMax(pub u64, pub u64);
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MinMax(pub Option<u64>, Option<u64>);
 
 impl MinMax {
     /// Updates the min/max bounds with the provided value.
     pub fn update(&mut self, value: u64) {
-        self.0 = self.0.min(value);
-        self.1 = self.1.max(value);
+        self.0 = Some(self.0.map_or(value, |m| m.min(value)));
+        self.1 = Some(self.1.map_or(value, |m| m.max(value)));
     }
 
-    /// Resets to sentinel state (`min = u64::MAX`, `max = 0`).
     pub fn reset(&mut self) {
-        self.0 = u64::MAX;
-        self.1 = 0;
+        self.0 = None;
+        self.1 = None;
     }
 
-    /// Replaces the `u64::MAX` sentinel with `0` if no update was received.
-    pub fn remove_sentinel(&mut self) {
-        if self.0 == u64::MAX {
-            self.0 = 0;
-        }
-    }
-
-    pub fn min(&self) -> u64 {
+    pub fn min(&self) -> Option<u64> {
         self.0
     }
 
-    pub fn max(&self) -> u64 {
+    pub fn max(&self) -> Option<u64> {
         self.1
-    }
-}
-
-impl Default for MinMax {
-    fn default() -> Self {
-        Self(u64::MAX, 0)
     }
 }
 
@@ -89,7 +71,6 @@ impl ProcCounters {
         self.pss.update(snapshot.pss);
         self.shared.update(snapshot.shared);
         self.anon.update(snapshot.anon);
-
         self.end_read_bytes = self.end_read_bytes.max(snapshot.read_bytes);
         self.end_write_bytes = self.end_write_bytes.max(snapshot.write_bytes);
     }
@@ -101,18 +82,39 @@ impl ProcCounters {
         self.pss.reset();
         self.shared.reset();
         self.anon.reset();
-
         self.begin_read_bytes = self.end_read_bytes;
         self.begin_write_bytes = self.end_write_bytes;
     }
+}
 
-    /// Replaces `u64::MAX` sentinels with `0` on all memory fields before reading.
-    pub fn remove_sentinels(&mut self) {
-        self.vm_size.remove_sentinel();
-        self.rss.remove_sentinel();
-        self.pss.remove_sentinel();
-        self.shared.remove_sentinel();
-        self.anon.remove_sentinel();
+/// Computes used memory as `MemTotal - MemAvailable`.
+///
+/// If `MemAvailable` is present in `/proc/meminfo`, it is used directly (preferred).
+/// Otherwise, falls back to `MemTotal - (MemFree + Cached)`, which is less accurate
+/// but universally available.
+///
+/// Note: min/max are inverted relative to `available` since higher availability
+/// means lower usage.
+pub fn compute_mem_used(
+    mem_total: u64,
+    mem_available: Option<MinMax>,
+    mem_free: MinMax,
+    cached: MinMax,
+) -> MinMax {
+    if let Some(available) = mem_available {
+        MinMax(
+            Some(mem_total.saturating_sub(available.max().unwrap_or_default())),
+            Some(mem_total.saturating_sub(available.min().unwrap_or_default())),
+        )
+    } else {
+        MinMax(
+            Some(mem_total.saturating_sub(
+                mem_free.max().unwrap_or_default() + cached.max().unwrap_or_default(),
+            )),
+            Some(mem_total.saturating_sub(
+                mem_free.min().unwrap_or_default() + cached.min().unwrap_or_default(),
+            )),
+        )
     }
 }
 
@@ -142,43 +144,28 @@ pub struct GlobalCounters {
 impl GlobalCounters {
     /// Merges a [`GlobalSnapshot`] into the counters.
     pub fn update(&mut self, snapshot: &GlobalSnapshot) {
-        if let Some(value) = snapshot.mem_available {
-            self.mem_available.get_or_insert_default().update(value);
-        }
-
-        if let Some(value) = snapshot.anon {
-            self.anon.get_or_insert_default().update(value);
-        }
-
         self.mem_free.update(snapshot.mem_free);
         self.cached.update(snapshot.cached);
         self.swap_free.update(snapshot.swap_free);
+        if let Some(v) = snapshot.mem_available {
+            self.mem_available.get_or_insert_default().update(v);
+        }
+        if let Some(v) = snapshot.anon {
+            self.anon.get_or_insert_default().update(v);
+        }
     }
 
     /// Resets all counters for the next phase.
     pub fn reset(&mut self) {
-        if let Some(mem_available) = &mut self.mem_available {
-            mem_available.reset();
-        }
-        if let Some(anon) = &mut self.anon {
-            anon.reset();
-        }
         self.mem_free.reset();
         self.cached.reset();
         self.swap_free.reset();
-    }
-
-    /// Replaces `u64::MAX` sentinels with `0` on all fields before reading.
-    pub fn remove_sentinels(&mut self) {
-        if let Some(mem_available) = &mut self.mem_available {
-            mem_available.remove_sentinel();
+        if let Some(v) = &mut self.mem_available {
+            v.reset();
         }
-        if let Some(anon) = &mut self.anon {
-            anon.remove_sentinel();
+        if let Some(v) = &mut self.anon {
+            v.reset();
         }
-        self.mem_free.remove_sentinel();
-        self.cached.remove_sentinel();
-        self.swap_free.remove_sentinel();
     }
 }
 
@@ -197,10 +184,5 @@ impl Counters {
     pub fn reset(&mut self) {
         self.proc.reset();
         self.global.reset();
-    }
-
-    pub fn remove_sentinels(&mut self) {
-        self.proc.remove_sentinels();
-        self.global.remove_sentinels();
     }
 }
