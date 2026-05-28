@@ -1,6 +1,7 @@
 //! Error types for the procfs metric source.
 
 use thiserror::Error;
+use tokio::task::JoinError;
 
 /// Errors that can occur while reading metrics from `/proc`.
 #[derive(Error, Debug)]
@@ -16,4 +17,12 @@ pub enum ProcfsError {
     /// An I/O error reading from `/proc` directly (e.g., `/proc/{pid}/task/{tid}/children`).
     #[error(transparent)]
     Io(#[from] std::io::Error),
+
+    /// An error occured while joining the polling task.
+    #[error("Failed to join tokio task: {0}")]
+    JoinError(
+        #[from]
+        #[source]
+        JoinError,
+    ),
 }
