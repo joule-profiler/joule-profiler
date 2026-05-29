@@ -1,6 +1,6 @@
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MemorySnapshot {
-    pub current: u64,
+    pub current: Option<u64>,
     pub swap_current: Option<u64>,
     pub anon: Option<u64>,
     pub file: Option<u64>,
