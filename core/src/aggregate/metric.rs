@@ -74,19 +74,15 @@ impl From<f64> for MetricValue {
     }
 }
 
-impl From<(f64, u8)> for MetricValue {
-    fn from((v, dec): (f64, u8)) -> Self {
-        Self::Float(v, Some(dec))
-    }
-}
-
 impl Display for MetricValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnsignedInteger(v) => v.fmt(f),
             Self::SignedInteger(v) => v.fmt(f),
             Self::Float(v, None) => v.fmt(f),
-            Self::Float(v, Some(decimal)) => write!(f, "{:.prec$}", v, prec = *decimal as usize),
+            Self::Float(v, Some(precision)) => {
+                write!(f, "{:.prec$}", v, prec = *precision as usize)
+            }
         }
     }
 }
@@ -99,11 +95,7 @@ impl Serialize for MetricValue {
         match self {
             MetricValue::UnsignedInteger(v) => serializer.serialize_u64(*v),
             MetricValue::SignedInteger(v) => serializer.serialize_i64(*v),
-            MetricValue::Float(v, None) => serializer.serialize_f64(*v),
-            MetricValue::Float(v, Some(dec)) => {
-                let factor = 10f64.powi(i32::from(*dec));
-                serializer.serialize_f64((v * factor).round() / factor)
-            }
+            MetricValue::Float(v, _) => serializer.serialize_f64(*v),
         }
     }
 }
