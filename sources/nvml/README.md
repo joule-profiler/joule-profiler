@@ -1,9 +1,8 @@
-# joule-profiler-source-nvml
-
+# NVML metric source
 
 NVIDIA GPU energy source for `joule-profiler` using the NVIDIA Management Library (NVML).
 
-This crate implements MetricSource from joule-profiler-core by querying NVIDIA GPU energy counters through the nvml-wrapper Rust crate,
+This crate implements the `MetricSource` trait from `joule-profiler-core` by querying NVIDIA GPU energy counters through the nvml-wrapper Rust crate,
 
 ## Overview
 

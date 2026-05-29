@@ -1,4 +1,4 @@
-# joule-profiler-source-rapl
+# RAPL metric source
 
 RAPL energy source for [joule-profiler](https://github.com/joule-profiler/joule-profiler).
 
@@ -29,6 +29,3 @@ RAPL (Running Average Power Limit) is an Intel processor feature available since
 | CPU | Intel Sandy Bridge+ | Intel Sandy Bridge+ |
 | Permissions | Root (kernel ≥ 5.10) | Root or `paranoid ≤ 0` |
 ---
-## See also
-
-> Main project: [joule-profiler](https://github.com/joule-profiler/joule-p
