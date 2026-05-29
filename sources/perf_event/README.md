@@ -1,7 +1,7 @@
-# joule-profiler-source-perf_event
+# perf_event metric source
 
 Performance counter source for `joule-profiler`. using the Linux perf_event subsystem.
-This crate implements MetricSource from `joule-profiler-core` and collects hardware and software performance counters (CPU cycles, instructions, cache misses, branch mispredictions…) via the perf_event_open(2) syscall, per phase.
+This crate implements `MetricSource` from `joule-profiler-core` and collects hardware and software performance counters (CPU cycles, instructions, cache misses, branch mispredictions…) via the perf_event_open(2) syscall, per phase.
 
 ## Overview
 
