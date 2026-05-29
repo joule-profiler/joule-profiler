@@ -82,7 +82,7 @@ impl UpdateOpt for Option<MinMax> {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MemoryCounters {
-    pub current: MinMax,
+    pub current: Option<MinMax>,
     pub swap_current: Option<MinMax>,
     pub anon: Option<MinMax>,
     pub file: Option<MinMax>,
@@ -107,7 +107,7 @@ impl MemoryCounters {
     }
 
     pub fn reset(&mut self) {
-        self.current.reset();
+        self.current = None;
         self.swap_current = None;
         self.anon = None;
         self.file = None;
@@ -186,7 +186,11 @@ impl IoCounters {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
-    pub memory: MemoryCounters,
-    pub cpu: CpuCounters,
-    pub io: IoCounters,
+    pub proc_memory: MemoryCounters,
+    pub proc_cpu: CpuCounters,
+    pub proc_io: IoCounters,
+
+    pub global_memory: MemoryCounters,
+    pub global_cpu: CpuCounters,
+    pub global_io: IoCounters,
 }
