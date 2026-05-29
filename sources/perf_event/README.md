@@ -7,8 +7,6 @@ This crate implements `MetricSource` from `joule-profiler-core` and collects har
 
 `perf_event` is the Linux kernel's performance monitoring API, available since kernel 2.6.31. It provides access to a wide range of hardware PMU counters, software counters, and kernel tracepoints. In the context of `joule-profiler`, these counters complement energy measurements by revealing the execution characteristics of each phase allowing you to correlate energy with IPC, cache efficiency, etc.
 
----
-
 ## Requirements
 
 | Requirement | Details |
@@ -30,14 +28,7 @@ sudo sysctl -w kernel.perf_event_paranoid=1
 echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-perf.conf
 sudo sysctl --system
 ```
----
 
 ## Scope
 
 At the moment, Joule Profiler attaches `perf_event` counters to the **monitored process** only (per-process mode).
-
----
-
-## See also
-
-> Main project: [joule-profiler](https://github.com/joule-profiler/joule-profiler)

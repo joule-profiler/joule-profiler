@@ -20,7 +20,6 @@ RAPL (Running Average Power Limit) is an Intel processor feature available since
 
 > Available domains depend on the processor model. Both backends auto-discover domains at startup.
 
----
 ## Requirements
 
 | | powercap | perf_event |
