@@ -8,7 +8,8 @@
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
-use joule_profiler_core::types::{Metric, Metrics};
+use joule_profiler_core::time::get_timestamp_micros;
+use joule_profiler_core::types::{Metric, MetricValue, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 use log::{debug, trace};
 use std::sync::Arc;
@@ -66,6 +67,8 @@ pub struct CgroupSource {
     global_cpu_counters: CpuCounters,
     proc_io_counters: IoCounters,
     global_io_counters: IoCounters,
+    begin_timestamp: u128,
+    end_timestamp: u128,
 }
 
 impl CgroupSource {
@@ -87,6 +90,8 @@ impl CgroupSource {
             global_cpu_counters: CpuCounters::default(),
             proc_io_counters: IoCounters::default(),
             global_io_counters: IoCounters::default(),
+            begin_timestamp: 0,
+            end_timestamp: 0,
         })
     }
 
@@ -167,6 +172,8 @@ impl MetricReader for CgroupSource {
             )?);
         }
 
+        self.begin_timestamp = get_timestamp_micros();
+
         debug!("Cgroup source initialised for pid {pid}");
         Ok(())
     }
@@ -175,6 +182,7 @@ impl MetricReader for CgroupSource {
     ///
     /// Updates internal CPU, memory, and I/O counters.
     async fn measure(&mut self) -> Result<()> {
+        self.end_timestamp = get_timestamp_micros();
         {
             let snapshot = self.proc_cgroup.stats().memory()?;
             let mut lock = self.proc_memory_counters.lock().await;
@@ -226,6 +234,9 @@ impl MetricReader for CgroupSource {
         let global_io = self.global_io_counters;
         self.global_io_counters.new_phase();
 
+        let begin_timestamp = self.begin_timestamp;
+        self.begin_timestamp = self.end_timestamp;
+
         Ok(Counters {
             proc_memory,
             proc_cpu,
@@ -233,6 +244,8 @@ impl MetricReader for CgroupSource {
             global_memory,
             global_cpu,
             global_io,
+            begin_timestamp,
+            end_timestamp: self.end_timestamp,
         })
     }
 
@@ -278,22 +291,68 @@ impl MetricReader for CgroupSource {
         ])
     }
 
+    #[allow(clippy::cast_precision_loss)]
     /// Converts counters into metrics.
     fn to_metrics(&self, counters: Self::Type) -> Result<Metrics> {
-        Ok(to_metrics(
-            &counters.proc_memory,
-            &counters.proc_cpu,
-            &counters.proc_io,
-            "proc",
-        )
-        .into_iter()
-        .chain(to_metrics(
-            &counters.global_memory,
-            &counters.global_cpu,
-            &counters.global_io,
-            "global",
-        ))
-        .collect())
+        let phase_duration: u64 = counters
+            .end_timestamp
+            .saturating_sub(counters.begin_timestamp)
+            .try_into()
+            .unwrap_or_default();
+
+        let proc_cpu_usage_usec = counters.proc_cpu.usage_usec.diff();
+
+        let proc_usage_ratio = if phase_duration == 0 {
+            0.0
+        } else {
+            proc_cpu_usage_usec as f64 / phase_duration as f64 * 100.0
+        };
+
+        let proc_cpu_usage = Metric::new(
+            "proc_cpu_usage",
+            MetricValue::Float(proc_usage_ratio, Some(2)),
+            MetricUnit {
+                prefix: UnitPrefix::None,
+                unit: Unit::Percent,
+            },
+            Self::get_name(),
+        );
+
+        let global_cpu_usage_usec = counters.global_cpu.usage_usec.diff();
+
+        let global_usage_ratio = if phase_duration == 0 {
+            0.0
+        } else {
+            global_cpu_usage_usec as f64 / phase_duration as f64 * 100.0
+        };
+
+        let global_cpu_usage = Metric::new(
+            "global_cpu_usage",
+            MetricValue::Float(global_usage_ratio, Some(2)),
+            MetricUnit {
+                prefix: UnitPrefix::None,
+                unit: Unit::Percent,
+            },
+            Self::get_name(),
+        );
+
+        let metrics = vec![proc_cpu_usage, global_cpu_usage];
+
+        Ok(metrics
+            .into_iter()
+            .chain(to_metrics(
+                &counters.proc_memory,
+                &counters.proc_cpu,
+                &counters.proc_io,
+                "proc",
+            ))
+            .chain(to_metrics(
+                &counters.global_memory,
+                &counters.global_cpu,
+                &counters.global_io,
+                "global",
+            ))
+            .collect())
     }
 
     fn get_name() -> &'static str {

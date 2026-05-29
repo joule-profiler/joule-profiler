@@ -7,6 +7,7 @@ pub mod sensor;
 
 mod util;
 pub use util::fs;
+pub use util::time;
 
 pub mod source;
 
