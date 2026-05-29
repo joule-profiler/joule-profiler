@@ -3,7 +3,7 @@
 GPU intensive computation using OpenGL
 Install: pip install PyOpenGL PyOpenGL_accelerate glfw
 Usage:
-    joule-profiler --gpu phases -- python3 gpu.py {n}
+    joule-profiler --gpu profile -- python3 gpu.py {n}
     with n = 10 < 1s
          n = 100 < 5s
          n = 1000 < 1m
