@@ -27,17 +27,26 @@ impl MinMax {
 
 /// Tracks the beginning and latest values of a cumulative counter for a phase.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct BeginEnd(u64, u64);
+pub struct BeginEnd(Option<u64>, Option<u64>);
 
 impl BeginEnd {
     /// Updates the latest counter value.
     pub fn update(&mut self, value: u64) {
-        self.1 = value;
+        if self.0.is_none() {
+            self.0 = Some(value);
+        }
+        self.1 = Some(value);
     }
 
     /// Returns the difference between end and begin values.
     pub fn diff(&self) -> u64 {
-        self.1.saturating_sub(self.0)
+        if let Some(begin) = self.0
+            && let Some(end) = self.1
+        {
+            end.saturating_sub(begin)
+        } else {
+            0
+        }
     }
 
     /// Starts a new measurement phase by setting begin to end.
@@ -248,4 +257,7 @@ pub struct Counters {
     pub global_cpu: CpuCounters,
 
     pub global_io: IoCounters,
+
+    pub begin_timestamp: u128,
+    pub end_timestamp: u128,
 }
