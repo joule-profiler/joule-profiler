@@ -45,8 +45,8 @@ Here is the list of the metrics implemented.
 
 | Metric | Description |
 | - | - |
-| `rbytes` | Total number of bytes read by the cgroup |
-| `wbytes` | Total number of bytes written by the cgroup |
+| `read_bytes` | Total number of bytes read by the cgroup |
+| `write_bytes` | Total number of bytes written by the cgroup |
 
 ## Requirements
 
