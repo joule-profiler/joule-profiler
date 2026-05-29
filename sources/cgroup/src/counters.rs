@@ -259,5 +259,6 @@ pub struct Counters {
     pub global_io: IoCounters,
 
     pub begin_timestamp: u128,
+
     pub end_timestamp: u128,
 }

@@ -59,8 +59,8 @@ pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 pub struct CgroupSource {
     config: CgroupConfig,
     handle: Option<WorkerHandle>,
-    proc_cgroup: Arc<Cgroup>,
-    root_cgroup: Arc<RootCgroup>,
+    pub proc_cgroup: Arc<Cgroup>,
+    pub root_cgroup: Arc<RootCgroup>,
     proc_memory_counters: Arc<Mutex<MemoryCounters>>,
     global_memory_counters: Arc<Mutex<MemoryCounters>>,
     proc_cpu_counters: CpuCounters,
@@ -449,4 +449,120 @@ fn to_metrics(
     push_begin_end!(metrics, io.wbytes, "write_bytes", BYTE_UNIT);
 
     metrics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+    use tokio::time::Duration;
+
+    fn temp_root(name: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("cgroup_src_{name}"));
+        let _ = fs::create_dir_all(&p);
+        p
+    }
+
+    fn setup_source(name: &str) -> CgroupSource {
+        let mut cfg = CgroupConfig::default();
+        cfg.cgroup_root = temp_root(name);
+        cfg.cgroup_name = "test".to_string();
+        cfg.poll_interval = None;
+        CgroupSource::new(cfg).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_init_and_attach() {
+        let mut src = setup_source("init");
+
+        src.init(42).await.unwrap();
+
+        let procs = src.proc_cgroup.path.join("cgroup.procs");
+        let content = fs::read_to_string(procs).unwrap();
+
+        assert!(content.contains("42"));
+
+        src.join().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_measure_updates_counters() {
+        let mut src = setup_source("measure");
+        let root = src.root_cgroup.path.clone();
+
+        src.init(1).await.unwrap();
+
+        fs::write(root.join("test/memory.stat"), "anon 200").unwrap();
+
+        {
+            let mem = src.proc_memory_counters.lock().await;
+            assert!(mem.anon.is_none());
+        }
+
+        src.measure().await.unwrap();
+
+        {
+            let mem = src.proc_memory_counters.lock().await;
+            assert_eq!(mem.anon.unwrap().max().unwrap(), 200);
+            assert_eq!(mem.anon.unwrap().min().unwrap(), 200);
+        }
+
+        fs::write(root.join("test/memory.stat"), "anon 400").unwrap();
+
+        src.measure().await.unwrap();
+
+        {
+            let mem = src.proc_memory_counters.lock().await;
+            assert_eq!(mem.anon.unwrap().max().unwrap(), 400);
+            assert_eq!(mem.anon.unwrap().min().unwrap(), 200);
+        }
+
+        src.join().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_compute_diffs() {
+        let mut src = setup_source("retrieve");
+        let root = src.root_cgroup.path.clone();
+
+        fs::write(
+            root.join("test/cpu.stat"),
+            "usage_usec 1000\nuser_usec 500\nsystem_usec 500\nnr_periods 2\n",
+        )
+        .unwrap();
+
+        src.init(1).await.unwrap();
+        src.measure().await.unwrap();
+
+        fs::write(
+            root.join("test/cpu.stat"),
+            "usage_usec 2000\nuser_usec 1000\nsystem_usec 1000\nnr_periods 4\n",
+        )
+        .unwrap();
+
+        src.measure().await.unwrap();
+
+        let counters = src.retrieve().await.unwrap();
+
+        assert_eq!(counters.proc_cpu.usage_usec.diff(), 1000);
+        assert_eq!(counters.proc_cpu.user_usec.diff(), 500);
+        assert_eq!(counters.proc_cpu.system_usec.diff(), 500);
+        assert_eq!(counters.proc_cpu.nr_periods.unwrap().diff(), 2);
+
+        src.join().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_join_stops_worker() {
+        let mut src = setup_source("worker");
+
+        src.config.poll_interval = Some(Duration::from_millis(10));
+
+        src.init(1).await.unwrap();
+
+        let res = src.join().await;
+
+        assert!(res.is_ok());
+    }
 }

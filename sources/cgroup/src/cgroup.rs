@@ -62,7 +62,7 @@ pub trait StatsReader {
 /// Used to enable controllers and create child cgroups.
 pub struct RootCgroup {
     /// The path of the root cgroup, default is `/sys/fs/cgroup` (override for testing).
-    path: PathBuf,
+    pub path: PathBuf,
 
     /// List of controllers activated for the root cgroup.
     controllers: HashSet<Controller>,
@@ -120,10 +120,10 @@ impl RootCgroup {
 /// Represents a child cgroup.
 pub struct Cgroup {
     /// The path of the cgroup, normally it is `/sys/fs/cgroup/{cgroup_name}` but it can be override for testing.
-    path: PathBuf,
+    pub path: PathBuf,
 
     /// The path of the root cgroup, default is `/sys/fs/cgroup` (override for testing).
-    root: PathBuf,
+    pub root: PathBuf,
 }
 
 impl Cgroup {
@@ -248,5 +248,164 @@ impl StatsReader for CgroupStat<'_> {
             nr_bursts: cpu_stat.remove("nr_bursts"),
             burst_usec: cpu_stat.remove("burst_usec"),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, io::Write, path::PathBuf};
+
+    fn temp_cgroup_dir(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("cgroup_test_{name}"));
+        let _ = fs::create_dir_all(&path);
+        path
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        let mut f = fs::File::create(path).unwrap();
+        writeln!(f, "{content}").unwrap();
+    }
+
+    fn setup_root(name: &str) -> RootCgroup {
+        let root = temp_cgroup_dir(name);
+        RootCgroup::new(root)
+    }
+
+    #[test]
+    fn test_initialize_and_attach_pid() {
+        let root = setup_root("init");
+        let cg = root.child("test_group");
+
+        cg.initialize().unwrap();
+
+        let pid_file = cg.path.join("cgroup.procs");
+        write_file(&pid_file, "1234");
+
+        cg.attach_pid(42).unwrap();
+
+        let content = fs::read_to_string(&pid_file).unwrap();
+        assert!(content.contains("42"));
+
+        let _ = cg.cleanup();
+    }
+
+    #[test]
+    fn test_pids_parsing() {
+        let root = setup_root("pids");
+        let cg = root.child("pids_group");
+
+        cg.initialize().unwrap();
+
+        write_file(&cg.path.join("cgroup.procs"), "1\n2\n3");
+
+        let pids = cg.pids().unwrap();
+        assert_eq!(pids, vec![1, 2, 3]);
+
+        let _ = cg.cleanup();
+    }
+
+    #[test]
+    fn test_cleanup_moves_pids() {
+        let root = setup_root("cleanup");
+        let cg = root.child("cleanup_group");
+
+        cg.initialize().unwrap();
+
+        let root_procs = root.path.join("cgroup.procs");
+        write_file(&cg.path.join("cgroup.procs"), "99");
+
+        cg.cleanup().unwrap();
+
+        let moved = fs::read_to_string(root_procs).unwrap();
+        assert!(moved.contains("99"));
+    }
+
+    #[test]
+    fn test_memory_stats() {
+        let root = setup_root("mem");
+        let cg = root.child("mem_group");
+
+        cg.initialize().unwrap();
+
+        write_file(&cg.path.join("memory.stat"), "anon 100\nfile 200\nslab 300");
+        write_file(&cg.path.join("memory.current"), "123");
+        write_file(&cg.path.join("memory.swap.current"), "456");
+        write_file(&cg.path.join("memory.peak"), "789");
+
+        let stats = cg.stats().memory().unwrap();
+
+        assert_eq!(stats.current, Some(123));
+        assert_eq!(stats.swap_current, Some(456));
+        assert_eq!(stats.peak, Some(789));
+        assert_eq!(stats.anon, Some(100));
+        assert_eq!(stats.file, Some(200));
+        assert_eq!(stats.slab, Some(300));
+
+        let _ = cg.cleanup();
+    }
+
+    #[test]
+    fn test_cpu_stats() {
+        let root = setup_root("cpu");
+        let cg = root.child("cpu_group");
+
+        cg.initialize().unwrap();
+
+        write_file(
+            &cg.path.join("cpu.stat"),
+            "\
+usage_usec 1000
+user_usec 400
+system_usec 600
+nr_periods 10
+nr_throttled 2
+",
+        );
+
+        let stats = cg.stats().cpu().unwrap();
+
+        assert_eq!(stats.usage_usec, 1000);
+        assert_eq!(stats.user_usec, 400);
+        assert_eq!(stats.system_usec, 600);
+        assert_eq!(stats.nr_periods, Some(10));
+        assert_eq!(stats.nr_throttled, Some(2));
+
+        let _ = cg.cleanup();
+    }
+
+    #[test]
+    fn test_io_stats() {
+        let root = setup_root("io");
+        let cg = root.child("io_group");
+
+        cg.initialize().unwrap();
+
+        write_file(
+            &cg.path.join("io.stat"),
+            "\
+8:0 rbytes=100 wbytes=50
+8:1 rbytes=20 wbytes=30
+",
+        );
+
+        let stats = cg.stats().io().unwrap();
+
+        assert_eq!(stats.rbytes, Some(120));
+        assert_eq!(stats.wbytes, Some(80));
+
+        let _ = cg.cleanup();
+    }
+
+    #[test]
+    fn test_activate_controller_does_not_crash() {
+        let root = setup_root("ctrl");
+
+        let ctrl_file = root.path.join("cgroup.subtree_control");
+        write_file(&ctrl_file, "");
+
+        let res = root.activate_controller(Controller::Cpu);
+        assert!(res.is_ok());
     }
 }
