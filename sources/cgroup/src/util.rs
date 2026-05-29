@@ -2,7 +2,8 @@ use std::{collections::HashMap, fs, path::Path};
 
 use crate::{Result, error::CgroupError};
 
-pub fn read_u64(path: &Path) -> Result<u64> {
+/// Reads a `u64` value from a file, returns an error if unable to parse.
+fn read_u64(path: &Path) -> Result<u64> {
     let raw = fs::read_to_string(path).map_err(|e| CgroupError::IoPath {
         path: path.to_path_buf(),
         source: e,
@@ -14,6 +15,9 @@ pub fn read_u64(path: &Path) -> Result<u64> {
     })
 }
 
+/// Reads an optional `u64` value from a file.
+///
+/// Return None if the file does not exist, else try to parse the file.
 pub fn read_u64_opt(path: &Path) -> Result<Option<u64>> {
     if fs::exists(path)? {
         Ok(Some(read_u64(path)?))
@@ -22,6 +26,16 @@ pub fn read_u64_opt(path: &Path) -> Result<Option<u64>> {
     }
 }
 
+/// Reads a flat key-value file.
+///
+/// Expected format:
+/// ```text
+/// key1 value1
+/// key2 value2
+/// ```
+///
+/// Returns a map of parsed metrics.
+/// Lines that fail to parse are ignored.
 pub fn read_flat_keyed_file(path: &Path) -> Result<HashMap<String, u64>> {
     let raw = fs::read_to_string(path).map_err(|err| CgroupError::IoPath {
         path: path.to_owned(),
@@ -45,6 +59,13 @@ pub fn read_flat_keyed_file(path: &Path) -> Result<HashMap<String, u64>> {
     Ok(map)
 }
 
+/// Reads I/O statistics from `io.stat`.
+///
+/// Parses per-device entries and sums:
+/// - `rbytes` (read bytes)
+/// - `wbytes` (written bytes)
+///
+/// Returns `(read_bytes, write_bytes)` if present.
 pub fn read_io_stat(path: &Path) -> Result<(Option<u64>, Option<u64>)> {
     let raw = fs::read_to_string(path).map_err(|e| CgroupError::IoPath {
         path: path.to_path_buf(),
