@@ -1,11 +1,16 @@
+//! cgroup metric source for Joule Profiler.
+//!
+//! This module implements a [`MetricReader`] and uses Linux cgroup v2 to
+//! collect per-process and global system metrics using kernel cgroup files.
+//!
+//! An asynchronous tokio task runs to poll non monotonic metrics.
+
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
 use joule_profiler_core::types::{Metric, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 use log::{debug, trace};
-use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -13,15 +18,18 @@ use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
-use crate::cgroup::{Cgroup, Controller, RootCgroup, StatsReader};
+use crate::cgroup::{Cgroup, RootCgroup, StatsReader};
 use crate::counters::{Counters, CpuCounters, IoCounters, MemoryCounters};
 use crate::error::CgroupError;
 
 mod cgroup;
+mod config;
 mod counters;
 mod error;
 mod snapshot;
 mod util;
+
+pub use config::CgroupConfig;
 
 const SOURCE_NAME: &str = "cgroup";
 
@@ -43,27 +51,10 @@ const COUNT_UNIT: MetricUnit = MetricUnit {
 pub(crate) type Result<T> = std::result::Result<T, CgroupError>;
 pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 
-#[derive(Debug, Clone)]
-pub struct CgroupConfig {
-    pub cgroup_root: PathBuf,
-    pub cgroup_name: String,
-    pub poll_interval: Option<Duration>,
-    pub controllers: HashSet<Controller>,
-}
-
-impl Default for CgroupConfig {
-    fn default() -> Self {
-        Self {
-            cgroup_root: PathBuf::from("/sys/fs/cgroup"),
-            cgroup_name: format!("joule-profiler-{}", std::process::id()),
-            poll_interval: None,
-            controllers: vec![Controller::Io, Controller::Mem, Controller::Cpu]
-                .into_iter()
-                .collect(),
-        }
-    }
-}
-
+/// cgroup metrics source.
+///
+/// Owns the process cgroup and root cgroup handles, and maintains
+/// internal counters for both process-level and system-wide metrics.
 pub struct CgroupSource {
     config: CgroupConfig,
     handle: Option<WorkerHandle>,
@@ -78,6 +69,9 @@ pub struct CgroupSource {
 }
 
 impl CgroupSource {
+    /// Creates a new cgroup metric source.
+    ///
+    /// Initializes internal cgroup handles but does initialize and attach any PID yet.
     pub fn new(config: CgroupConfig) -> Result<Self> {
         let root_cgroup = Arc::new(RootCgroup::new(config.cgroup_root.clone()));
         let proc_cgroup = Arc::new(root_cgroup.child(&config.cgroup_name));
@@ -96,6 +90,10 @@ impl CgroupSource {
         })
     }
 
+    /// Creates a background worker that periodically samples memory usage.
+    ///
+    /// This worker updates process and global memory counters at a fixed interval.
+    /// It can be cancelled using the returned `CancellationToken`.
     pub fn create_worker(
         root_cgroup: Arc<RootCgroup>,
         proc_cgroup: Arc<Cgroup>,
@@ -145,6 +143,12 @@ impl MetricReader for CgroupSource {
     type Type = Counters;
     type Error = CgroupError;
 
+    /// Initializes the cgroup for the given process and enables controllers.
+    ///
+    /// - creates the process cgroup directory
+    /// - enables requested controllers on root cgroup
+    /// - attaches the target PID
+    /// - optionally starts background polling worker
     async fn init(&mut self, pid: i32) -> Result<()> {
         self.proc_cgroup.initialize()?;
         for controller in &self.config.controllers {
@@ -167,6 +171,9 @@ impl MetricReader for CgroupSource {
         Ok(())
     }
 
+    /// Performs a measurement of all available metrics.
+    ///
+    /// Updates internal CPU, memory, and I/O counters.
     async fn measure(&mut self) -> Result<()> {
         {
             let snapshot = self.proc_cgroup.stats().memory()?;
@@ -191,6 +198,7 @@ impl MetricReader for CgroupSource {
         Ok(())
     }
 
+    /// Returns collected metrics and resets per-phase counters.
     async fn retrieve(&mut self) -> Result<Self::Type> {
         let proc_memory = {
             let mut lock = self.proc_memory_counters.lock().await;
@@ -228,6 +236,7 @@ impl MetricReader for CgroupSource {
         })
     }
 
+    /// Stops background worker and cleans up the cgroup.
     async fn join(&mut self) -> Result<()> {
         if let Some((cancellation_token, handle)) = self.handle.take() {
             cancellation_token.cancel();
@@ -237,6 +246,7 @@ impl MetricReader for CgroupSource {
         Ok(())
     }
 
+    /// Returns the list of exported sensors.
     fn get_sensors(&self) -> Result<Sensors> {
         Ok(vec![
             Sensor::new("usage_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
@@ -268,6 +278,7 @@ impl MetricReader for CgroupSource {
         ])
     }
 
+    /// Converts counters into metrics.
     fn to_metrics(&self, counters: Self::Type) -> Result<Metrics> {
         Ok(to_metrics(
             &counters.proc_memory,
