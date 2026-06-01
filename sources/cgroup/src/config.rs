@@ -6,7 +6,7 @@ use crate::cgroup::Controller;
 #[derive(Debug, Clone)]
 pub struct CgroupConfig {
     /// Path to cgroup v2 hierarchy (usually `/sys/fs/cgroup`).
-    pub cgroup_root: PathBuf,
+    pub cgroup_root: Option<PathBuf>,
 
     /// Name of the created cgroup for the monitored process.
     pub cgroup_name: String,
@@ -21,7 +21,7 @@ pub struct CgroupConfig {
 impl Default for CgroupConfig {
     fn default() -> Self {
         Self {
-            cgroup_root: PathBuf::from("/sys/fs/cgroup"),
+            cgroup_root: None,
             cgroup_name: format!("joule-profiler-{}", std::process::id()),
             poll_interval: None,
             controllers: vec![Controller::Io, Controller::Memory, Controller::Cpu]

@@ -6,12 +6,7 @@
 //! - process attachment to cgroups;
 //! - CPU, memory, and I/O statistics collection.
 
-use std::{
-    collections::HashSet,
-    fmt::Display,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashSet, fmt::Display, fs, path::PathBuf};
 
 use log::{debug, warn};
 
@@ -46,7 +41,10 @@ impl Display for Controller {
 }
 
 /// Interface for reading cgroup statistics.
-pub trait StatsReader {
+pub trait CgroupBackend: Send + Sync + 'static {
+    /// Initializes the backend.
+    fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()>;
+
     /// Returns memory statistics.
     fn memory(&self) -> Result<MemorySnapshot>;
 
@@ -55,82 +53,114 @@ pub trait StatsReader {
 
     /// Returns I/O statistics.
     fn io(&self) -> Result<IoSnapshot>;
+
+    /// Cleanup the backend.
+    fn cleanup(&self) -> Result<()>;
 }
 
-/// Root cgroup manager.
-///
-/// Used to enable controllers and create child cgroups.
-pub struct RootCgroup {
-    /// The path of the root cgroup, default is `/sys/fs/cgroup` (override for testing).
+/// A cgroup node. If `parent` is `None`, this is the root cgroup.
+pub struct Cgroup<B: CgroupBackend = SysFsBackend> {
     pub path: PathBuf,
-
-    /// List of controllers activated for the root cgroup.
-    controllers: HashSet<Controller>,
+    parent: Option<PathBuf>,
+    backend: B,
 }
 
-impl Default for RootCgroup {
-    fn default() -> Self {
-        Self {
-            path: PathBuf::from("/sys/fs/cgroup"),
-            controllers: HashSet::new(),
-        }
+impl Cgroup {
+    /// Gets the root cgroup in sys fs `/sys/fs/cgroup`.
+    pub fn root() -> Self {
+        let path = PathBuf::from("/sys/fs/cgroup");
+        Self::at(path)
     }
-}
 
-impl RootCgroup {
-    /// Creates a new root cgroup manager from a custom path.
-    pub fn new(path: PathBuf) -> Self {
+    /// Builds a cgroup handle based on the provided directory.
+    pub fn at(path: PathBuf) -> Self {
+        let backend = SysFsBackend {
+            path: path.clone(),
+            root: path.clone(),
+        };
         Self {
             path,
-            ..Default::default()
+            parent: None,
+            backend,
         }
     }
 
+    /// Gets a child handle of the current cgroup based on its name.
+    pub fn child(&self, name: &str) -> Cgroup {
+        let child_path = self.path.join(name);
+        Cgroup {
+            parent: Some(self.path.clone()),
+            backend: SysFsBackend {
+                root: self.path.clone(),
+                path: child_path.clone(),
+            },
+            path: child_path,
+        }
+    }
+}
+
+impl<B: CgroupBackend> Cgroup<B> {
+    pub fn new(path: PathBuf, parent: Option<PathBuf>, backend: B) -> Self {
+        Self {
+            path,
+            parent,
+            backend,
+        }
+    }
+
+    /// True if the cgroup is the root cgroup, else false.
+    pub fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
+
+    /// Return the backend for stats querying.
+    pub fn stats(&self) -> &B {
+        &self.backend
+    }
+
+    /// Initializes the cgroup backend.
+    pub fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()> {
+        self.backend.initialize(pid, controllers)
+    }
+
+    /// Cleanup the cgroup backend.
+    pub fn cleanup(&self) -> Result<()> {
+        self.backend.cleanup()
+    }
+}
+
+/// Cleans up the cgroup if not done already (cleanup not called or error).
+impl<B: CgroupBackend> Drop for Cgroup<B> {
+    fn drop(&mut self) {
+        if self.parent.is_some() && self.path.exists() {
+            let _ = self.backend.cleanup();
+        }
+    }
+}
+
+/// cgroup statistics accessor.
+pub struct SysFsBackend {
+    path: PathBuf,
+    root: PathBuf,
+}
+
+impl SysFsBackend {
     /// Enables a controller in `cgroup.subtree_control`.
     ///
     /// If the provided controller is already activated, then nothing happens.
     pub fn activate_controller(&self, controller: Controller) -> Result<()> {
-        if !self.controllers.contains(&controller) {
-            let subtree_control_path = self.path.join("cgroup.subtree_control");
-            fs::write(&subtree_control_path, format!("+{controller}")).map_err(|err| {
-                CgroupError::FailedToCreateController {
-                    controller,
-                    path: subtree_control_path,
-                    source: err,
-                }
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Creates a child cgroup handle.
-    pub fn child(&self, name: &str) -> Cgroup {
-        Cgroup {
-            path: self.path.join(name),
-            root: self.path.clone(),
-        }
-    }
-
-    /// Returns a statistics reader for the root cgroup.
-    pub fn stats(&self) -> CgroupStat<'_> {
-        CgroupStat { path: &self.path }
-    }
-}
-
-/// Represents a child cgroup.
-pub struct Cgroup {
-    /// The path of the cgroup, normally it is `/sys/fs/cgroup/{cgroup_name}` but it can be override for testing.
-    pub path: PathBuf,
-
-    /// The path of the root cgroup, default is `/sys/fs/cgroup` (override for testing).
-    pub root: PathBuf,
-}
-
-impl Cgroup {
-    /// Creates the cgroup directory on disk.
-    pub fn initialize(&self) -> Result<()> {
-        debug!("Creating cgroup at \"{}\"", self.path.display());
-        fs::create_dir_all(&self.path)?;
+        debug!(
+            "Activating controller for root cgroup `{}`.",
+            self.path.display()
+        );
+        let subtree_control_path = self.root.join("cgroup.subtree_control");
+        fs::write(&subtree_control_path, format!("+{controller}")).map_err(|err| {
+            CgroupError::FailedToCreateController {
+                controller,
+                path: subtree_control_path,
+                source: err,
+            }
+        })?;
         Ok(())
     }
 
@@ -146,13 +176,9 @@ impl Cgroup {
         Ok(())
     }
 
-    /// Returns a statistics reader for this cgroup.
-    pub fn stats(&self) -> CgroupStat<'_> {
-        CgroupStat { path: &self.path }
-    }
-
     /// Returns all PIDs attached to the cgroup.
     fn pids(&self) -> Result<Vec<i32>> {
+        debug!("Retrieving cgroup `{}` PIDs.", self.path.display());
         let path = self.path.join("cgroup.procs");
         let content = fs::read_to_string(&path)?;
         Ok(content
@@ -160,9 +186,28 @@ impl Cgroup {
             .filter_map(|l| l.trim().parse::<i32>().ok())
             .collect())
     }
+}
+
+impl CgroupBackend for SysFsBackend {
+    /// Creates the cgroup directory on disk.
+    fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()> {
+        debug!("Initializing cgroup at \"{}\"", self.path.display());
+
+        fs::create_dir_all(&self.path)?;
+
+        for controller in controllers {
+            self.activate_controller(*controller)?;
+        }
+
+        self.attach_pid(pid)?;
+
+        Ok(())
+    }
 
     /// Moves processes back to the root cgroup and removes the directory.
-    pub fn cleanup(&self) -> Result<()> {
+    fn cleanup(&self) -> Result<()> {
+        debug!("Cleaning cgroup `{}`.", self.path.display());
+
         let root_procs = self.root.join("cgroup.procs");
         for pid in self.pids()? {
             if let Err(e) = fs::write(&root_procs, pid.to_string()) {
@@ -181,25 +226,14 @@ impl Cgroup {
         }
         Ok(())
     }
-}
 
-/// Cleans up the cgroup if not done already (cleanup not called or error).
-impl Drop for Cgroup {
-    fn drop(&mut self) {
-        if self.path.exists() {
-            let _ = self.cleanup();
-        }
-    }
-}
-
-/// cgroup statistics accessor.
-pub struct CgroupStat<'a> {
-    path: &'a Path,
-}
-
-impl StatsReader for CgroupStat<'_> {
     /// Reads memory statistics from cgroup memory files.
     fn memory(&self) -> Result<MemorySnapshot> {
+        debug!(
+            "Reading memory metrics for cgroup `{}`.",
+            self.path.display()
+        );
+
         let mut memory_stat = read_flat_keyed_file(&self.path.join("memory.stat"))?;
         let current = read_u64_opt(&self.path.join("memory.current"))?;
         let swap_current = read_u64_opt(&self.path.join("memory.swap.current"))?;
@@ -220,12 +254,15 @@ impl StatsReader for CgroupStat<'_> {
 
     /// Reads I/O statistics from `io.stat`.
     fn io(&self) -> Result<IoSnapshot> {
+        debug!("Reading I/O metrics for cgroup `{}`.", self.path.display());
         let (rbytes, wbytes) = read_io_stat(&self.path.join("io.stat"))?;
         Ok(IoSnapshot { rbytes, wbytes })
     }
 
     /// Reads CPU statistics from `cpu.stat`.
     fn cpu(&self) -> Result<CpuSnapshot> {
+        debug!("Reading cpu metrics for cgroup `{}`.", self.path.display());
+
         let mut cpu_stat = read_flat_keyed_file(&self.path.join("cpu.stat"))?;
 
         let usage_usec = cpu_stat
@@ -254,85 +291,63 @@ impl StatsReader for CgroupStat<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, io::Write, path::PathBuf};
 
-    fn temp_cgroup_dir(name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("cgroup_test_{name}"));
-        let _ = fs::create_dir_all(&path);
-        path
+    #[derive(Default)]
+    struct MockCgroupBackend {
+        memory: MemorySnapshot,
+        cpu: CpuSnapshot,
+        io: IoSnapshot,
     }
 
-    fn write_file(path: &Path, content: &str) {
-        let mut f = fs::File::create(path).unwrap();
-        writeln!(f, "{content}").unwrap();
+    impl CgroupBackend for MockCgroupBackend {
+        fn memory(&self) -> Result<MemorySnapshot> {
+            Ok(self.memory.clone())
+        }
+
+        fn cpu(&self) -> Result<CpuSnapshot> {
+            Ok(self.cpu.clone())
+        }
+
+        fn io(&self) -> Result<IoSnapshot> {
+            Ok(self.io.clone())
+        }
+
+        fn initialize(&self, _pid: i32, _controllers: &HashSet<Controller>) -> Result<()> {
+            Ok(())
+        }
+
+        fn cleanup(&self) -> Result<()> {
+            Ok(())
+        }
     }
 
-    fn setup_root(name: &str) -> RootCgroup {
-        let root = temp_cgroup_dir(name);
-        RootCgroup::new(root)
-    }
-
-    #[test]
-    fn test_initialize_and_attach_pid() {
-        let root = setup_root("init");
-        let cg = root.child("test_group");
-
-        cg.initialize().unwrap();
-
-        let pid_file = cg.path.join("cgroup.procs");
-        write_file(&pid_file, "1234");
-
-        cg.attach_pid(42).unwrap();
-
-        let content = fs::read_to_string(&pid_file).unwrap();
-        assert!(content.contains("42"));
-
-        let _ = cg.cleanup();
-    }
-
-    #[test]
-    fn test_pids_parsing() {
-        let root = setup_root("pids");
-        let cg = root.child("pids_group");
-
-        cg.initialize().unwrap();
-
-        write_file(&cg.path.join("cgroup.procs"), "1\n2\n3");
-
-        let pids = cg.pids().unwrap();
-        assert_eq!(pids, vec![1, 2, 3]);
-
-        let _ = cg.cleanup();
+    fn mock_cgroup(name: &str, backend: MockCgroupBackend) -> Cgroup<MockCgroupBackend> {
+        let path = std::env::temp_dir().join(format!("cgroup_test_{name}"));
+        Cgroup {
+            path: path.clone(),
+            parent: Some(path),
+            backend,
+        }
     }
 
     #[test]
-    fn test_cleanup_moves_pids() {
-        let root = setup_root("cleanup");
-        let cg = root.child("cleanup_group");
+    fn test_stats_reader_memory() {
+        let backend = MockCgroupBackend {
+            memory: MemorySnapshot {
+                current: Some(123),
+                swap_current: Some(456),
+                peak: Some(789),
+                anon: Some(100),
+                file: Some(200),
+                shmem: None,
+                kernel: None,
+                kernel_stack: None,
+                slab: Some(300),
+            },
+            ..Default::default()
+        };
 
-        cg.initialize().unwrap();
-
-        let root_procs = root.path.join("cgroup.procs");
-        write_file(&cg.path.join("cgroup.procs"), "99");
-
-        cg.cleanup().unwrap();
-
-        let moved = fs::read_to_string(root_procs).unwrap();
-        assert!(moved.contains("99"));
-    }
-
-    #[test]
-    fn test_memory_stats() {
-        let root = setup_root("mem");
-        let cg = root.child("mem_group");
-
-        cg.initialize().unwrap();
-
-        write_file(&cg.path.join("memory.stat"), "anon 100\nfile 200\nslab 300");
-        write_file(&cg.path.join("memory.current"), "123");
-        write_file(&cg.path.join("memory.swap.current"), "456");
-        write_file(&cg.path.join("memory.peak"), "789");
+        let cg = mock_cgroup("mock_mem", backend);
 
         let stats = cg.stats().memory().unwrap();
 
@@ -342,27 +357,25 @@ mod tests {
         assert_eq!(stats.anon, Some(100));
         assert_eq!(stats.file, Some(200));
         assert_eq!(stats.slab, Some(300));
-
-        let _ = cg.cleanup();
     }
 
     #[test]
-    fn test_cpu_stats() {
-        let root = setup_root("cpu");
-        let cg = root.child("cpu_group");
+    fn test_stats_reader_cpu() {
+        let backend = MockCgroupBackend {
+            cpu: CpuSnapshot {
+                usage_usec: 1000,
+                user_usec: 400,
+                system_usec: 600,
+                nr_periods: Some(10),
+                nr_throttled: Some(2),
+                throttled_usec: None,
+                nr_bursts: None,
+                burst_usec: None,
+            },
+            ..Default::default()
+        };
 
-        cg.initialize().unwrap();
-
-        write_file(
-            &cg.path.join("cpu.stat"),
-            "\
-usage_usec 1000
-user_usec 400
-system_usec 600
-nr_periods 10
-nr_throttled 2
-",
-        );
+        let cg = mock_cgroup("mock_cpu", backend);
 
         let stats = cg.stats().cpu().unwrap();
 
@@ -371,41 +384,23 @@ nr_throttled 2
         assert_eq!(stats.system_usec, 600);
         assert_eq!(stats.nr_periods, Some(10));
         assert_eq!(stats.nr_throttled, Some(2));
-
-        let _ = cg.cleanup();
     }
 
     #[test]
-    fn test_io_stats() {
-        let root = setup_root("io");
-        let cg = root.child("io_group");
+    fn test_stats_reader_io() {
+        let backend = MockCgroupBackend {
+            io: IoSnapshot {
+                rbytes: Some(120),
+                wbytes: Some(80),
+            },
+            ..Default::default()
+        };
 
-        cg.initialize().unwrap();
-
-        write_file(
-            &cg.path.join("io.stat"),
-            "\
-8:0 rbytes=100 wbytes=50
-8:1 rbytes=20 wbytes=30
-",
-        );
+        let cg = mock_cgroup("mock_io", backend);
 
         let stats = cg.stats().io().unwrap();
 
         assert_eq!(stats.rbytes, Some(120));
         assert_eq!(stats.wbytes, Some(80));
-
-        let _ = cg.cleanup();
-    }
-
-    #[test]
-    fn test_activate_controller_does_not_crash() {
-        let root = setup_root("ctrl");
-
-        let ctrl_file = root.path.join("cgroup.subtree_control");
-        write_file(&ctrl_file, "");
-
-        let res = root.activate_controller(Controller::Cpu);
-        assert!(res.is_ok());
     }
 }

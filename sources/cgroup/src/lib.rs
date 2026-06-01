@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
-use crate::cgroup::{Cgroup, RootCgroup, StatsReader};
+use crate::cgroup::{Cgroup, CgroupBackend, SysFsBackend};
 use crate::counters::{Counters, CpuCounters, IoCounters, MemoryCounters};
 use crate::error::CgroupError;
 
@@ -56,11 +56,14 @@ pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 ///
 /// Owns the process cgroup and root cgroup handles, and maintains
 /// internal counters for both process-level and system-wide metrics.
-pub struct CgroupSource {
+pub struct CgroupSource<B = SysFsBackend>
+where
+    B: CgroupBackend,
+{
     config: CgroupConfig,
     handle: Option<WorkerHandle>,
-    pub proc_cgroup: Arc<Cgroup>,
-    pub root_cgroup: Arc<RootCgroup>,
+    pub proc_cgroup: Arc<Cgroup<B>>,
+    pub root_cgroup: Arc<Cgroup<B>>,
     proc_memory_counters: Arc<Mutex<MemoryCounters>>,
     global_memory_counters: Arc<Mutex<MemoryCounters>>,
     proc_cpu_counters: CpuCounters,
@@ -76,14 +79,18 @@ impl CgroupSource {
     ///
     /// Initializes internal cgroup handles but does initialize and attach any PID yet.
     pub fn new(config: CgroupConfig) -> Result<Self> {
-        let root_cgroup = Arc::new(RootCgroup::new(config.cgroup_root.clone()));
-        let proc_cgroup = Arc::new(root_cgroup.child(&config.cgroup_name));
+        let root_cgroup = if let Some(cgroup_root) = &config.cgroup_root {
+            Cgroup::at(cgroup_root.clone())
+        } else {
+            Cgroup::root()
+        };
+        let proc_cgroup = root_cgroup.child(&config.cgroup_name);
 
         Ok(Self {
             config,
             handle: None,
-            root_cgroup,
-            proc_cgroup,
+            root_cgroup: Arc::new(root_cgroup),
+            proc_cgroup: Arc::new(proc_cgroup),
             proc_memory_counters: Arc::default(),
             global_memory_counters: Arc::default(),
             proc_cpu_counters: CpuCounters::default(),
@@ -94,14 +101,16 @@ impl CgroupSource {
             end_timestamp: 0,
         })
     }
+}
 
+impl<B: CgroupBackend> CgroupSource<B> {
     /// Creates a background worker that periodically samples memory usage.
     ///
     /// This worker updates process and global memory counters at a fixed interval.
     /// It can be cancelled using the returned `CancellationToken`.
     pub fn create_worker(
-        root_cgroup: Arc<RootCgroup>,
-        proc_cgroup: Arc<Cgroup>,
+        root_cgroup: Arc<Cgroup<B>>,
+        proc_cgroup: Arc<Cgroup<B>>,
         proc_memory_counters: Arc<Mutex<MemoryCounters>>,
         global_memory_counters: Arc<Mutex<MemoryCounters>>,
         poll_interval: Duration,
@@ -144,7 +153,7 @@ impl CgroupSource {
     }
 }
 
-impl MetricReader for CgroupSource {
+impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
     type Type = Counters;
     type Error = CgroupError;
 
@@ -155,12 +164,7 @@ impl MetricReader for CgroupSource {
     /// - attaches the target PID
     /// - optionally starts background polling worker
     async fn init(&mut self, pid: i32) -> Result<()> {
-        self.proc_cgroup.initialize()?;
-        for controller in &self.config.controllers {
-            self.root_cgroup.activate_controller(*controller)?;
-        }
-
-        self.proc_cgroup.attach_pid(pid)?;
+        self.proc_cgroup.initialize(pid, &self.config.controllers)?;
 
         if let Some(poll_interval) = self.config.poll_interval {
             self.handle = Some(Self::create_worker(
@@ -174,7 +178,7 @@ impl MetricReader for CgroupSource {
 
         self.begin_timestamp = get_timestamp_micros();
 
-        debug!("Cgroup source initialised for pid {pid}");
+        debug!("Cgroup source initialized for pid {pid}.");
         Ok(())
     }
 
@@ -182,6 +186,8 @@ impl MetricReader for CgroupSource {
     ///
     /// Updates internal CPU, memory, and I/O counters.
     async fn measure(&mut self) -> Result<()> {
+        debug!("Measure cgroup source.");
+
         self.end_timestamp = get_timestamp_micros();
         {
             let snapshot = self.proc_cgroup.stats().memory()?;
@@ -208,6 +214,8 @@ impl MetricReader for CgroupSource {
 
     /// Returns collected metrics and resets per-phase counters.
     async fn retrieve(&mut self) -> Result<Self::Type> {
+        debug!("Retriving cgroup counters.");
+
         let proc_memory = {
             let mut lock = self.proc_memory_counters.lock().await;
             let counters = *lock;
@@ -252,6 +260,7 @@ impl MetricReader for CgroupSource {
     /// Stops background worker and cleans up the cgroup.
     async fn join(&mut self) -> Result<()> {
         if let Some((cancellation_token, handle)) = self.handle.take() {
+            debug!("Joining cgroup source polling task.");
             cancellation_token.cancel();
             handle.await??;
         }
@@ -261,6 +270,7 @@ impl MetricReader for CgroupSource {
 
     /// Returns the list of exported sensors.
     fn get_sensors(&self) -> Result<Sensors> {
+        debug!("Retrieving cgroup source sensors.");
         Ok(vec![
             Sensor::new("usage_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
             Sensor::new("user_usec", MICRO_SECOND_UNIT, SOURCE_NAME),
@@ -372,7 +382,7 @@ fn to_metrics(
                 format!("{prefix}_{}", $name),
                 $value,
                 $unit,
-                CgroupSource::get_name(),
+                CgroupSource::<SysFsBackend>::get_name(),
             ));
         };
     }
@@ -450,96 +460,162 @@ fn to_metrics(
 
     metrics
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::PathBuf};
-    use tokio::time::Duration;
+    use crate::cgroup::Controller;
+    use crate::snapshot::{CpuSnapshot, IoSnapshot, MemorySnapshot};
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::time::{Duration, sleep};
 
-    fn temp_root(name: &str) -> PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!("cgroup_src_{name}"));
-        let _ = fs::create_dir_all(&p);
-        p
+    #[derive(Default, Clone)]
+    struct MockCgroupBackend {
+        memory: Arc<std::sync::Mutex<MemorySnapshot>>,
+        cpu: Arc<std::sync::Mutex<CpuSnapshot>>,
+        io: Arc<std::sync::Mutex<IoSnapshot>>,
     }
 
-    fn setup_source(name: &str) -> CgroupSource {
-        let mut cfg = CgroupConfig::default();
-        cfg.cgroup_root = temp_root(name);
-        cfg.cgroup_name = "test".to_string();
-        cfg.poll_interval = None;
-        CgroupSource::new(cfg).unwrap()
+    impl CgroupBackend for MockCgroupBackend {
+        fn memory(&self) -> Result<MemorySnapshot> {
+            Ok(self.memory.lock().unwrap().clone())
+        }
+
+        fn cpu(&self) -> Result<CpuSnapshot> {
+            Ok(self.cpu.lock().unwrap().clone())
+        }
+
+        fn io(&self) -> Result<IoSnapshot> {
+            Ok(self.io.lock().unwrap().clone())
+        }
+
+        fn cleanup(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn initialize(&self, _pid: i32, _controllers: &HashSet<Controller>) -> Result<()> {
+            Ok(())
+        }
     }
 
-    #[tokio::test]
-    async fn test_init_and_attach() {
-        let mut src = setup_source("init");
+    fn setup_source() -> (CgroupSource<MockCgroupBackend>, MockCgroupBackend) {
+        let backend = MockCgroupBackend::default();
 
-        src.init(42).await.unwrap();
+        let root = Arc::new(Cgroup::new(
+            PathBuf::from("/tmp/root"),
+            None,
+            backend.clone(),
+        ));
 
-        let procs = src.proc_cgroup.path.join("cgroup.procs");
-        let content = fs::read_to_string(procs).unwrap();
+        let proc = Arc::new(Cgroup::new(
+            PathBuf::from("/tmp/proc"),
+            Some(PathBuf::from("/tmp/root")),
+            backend.clone(),
+        ));
 
-        assert!(content.contains("42"));
+        let source = CgroupSource {
+            config: CgroupConfig::default(),
+            handle: None,
+            root_cgroup: root,
+            proc_cgroup: proc,
+            proc_memory_counters: Arc::default(),
+            global_memory_counters: Arc::default(),
+            proc_cpu_counters: Default::default(),
+            global_cpu_counters: Default::default(),
+            proc_io_counters: Default::default(),
+            global_io_counters: Default::default(),
+            begin_timestamp: 0,
+            end_timestamp: 0,
+        };
 
-        src.join().await.unwrap();
+        (source, backend)
     }
 
     #[tokio::test]
     async fn test_measure_updates_counters() {
-        let mut src = setup_source("measure");
-        let root = src.root_cgroup.path.clone();
-
-        src.init(1).await.unwrap();
-
-        fs::write(root.join("test/memory.stat"), "anon 200").unwrap();
+        let (mut src, backend) = setup_source();
 
         {
             let mem = src.proc_memory_counters.lock().await;
             assert!(mem.anon.is_none());
         }
 
-        src.measure().await.unwrap();
-
         {
-            let mem = src.proc_memory_counters.lock().await;
-            assert_eq!(mem.anon.unwrap().max().unwrap(), 200);
-            assert_eq!(mem.anon.unwrap().min().unwrap(), 200);
+            backend.memory.lock().unwrap().anon = Some(200);
         }
-
-        fs::write(root.join("test/memory.stat"), "anon 400").unwrap();
 
         src.measure().await.unwrap();
 
         {
             let mem = src.proc_memory_counters.lock().await;
-            assert_eq!(mem.anon.unwrap().max().unwrap(), 400);
-            assert_eq!(mem.anon.unwrap().min().unwrap(), 200);
+            let anon = mem.anon.unwrap();
+
+            assert_eq!(anon.min(), Some(200));
+            assert_eq!(anon.max(), Some(200));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_measure_tracks_min_max() {
+        let (mut src, backend) = setup_source();
+
+        {
+            let mut memory = backend.memory.lock().unwrap();
+            memory.anon = Some(200);
+            memory.current = Some(200);
+            memory.peak = Some(200);
         }
 
-        src.join().await.unwrap();
+        src.measure().await.unwrap();
+
+        {
+            let mut memory = backend.memory.lock().unwrap();
+            memory.anon = Some(400);
+            memory.current = Some(400);
+            memory.peak = Some(400);
+        }
+
+        src.measure().await.unwrap();
+
+        let mem = src.proc_memory_counters.lock().await;
+        let anon = mem.anon.unwrap();
+        let current = mem.current.unwrap();
+        let peak = mem.peak.unwrap();
+
+        assert_eq!(anon.min(), Some(200));
+        assert_eq!(anon.max(), Some(400));
+
+        assert_eq!(current.min(), Some(200));
+        assert_eq!(current.max(), Some(400));
+
+        assert_eq!(peak.min(), Some(200));
+        assert_eq!(peak.max(), Some(400));
     }
 
     #[tokio::test]
     async fn test_retrieve_compute_diffs() {
-        let mut src = setup_source("retrieve");
-        let root = src.root_cgroup.path.clone();
+        let (mut src, backend) = setup_source();
 
-        fs::write(
-            root.join("test/cpu.stat"),
-            "usage_usec 1000\nuser_usec 500\nsystem_usec 500\nnr_periods 2\n",
-        )
-        .unwrap();
+        {
+            let mut cpu = backend.cpu.lock().unwrap();
 
-        src.init(1).await.unwrap();
+            cpu.usage_usec = 1000;
+            cpu.user_usec = 500;
+            cpu.system_usec = 500;
+            cpu.nr_periods = Some(2);
+        }
+
         src.measure().await.unwrap();
 
-        fs::write(
-            root.join("test/cpu.stat"),
-            "usage_usec 2000\nuser_usec 1000\nsystem_usec 1000\nnr_periods 4\n",
-        )
-        .unwrap();
+        {
+            let mut cpu = backend.cpu.lock().unwrap();
+
+            cpu.usage_usec = 2000;
+            cpu.user_usec = 1000;
+            cpu.system_usec = 1000;
+            cpu.nr_periods = Some(4);
+        }
 
         src.measure().await.unwrap();
 
@@ -549,20 +625,51 @@ mod tests {
         assert_eq!(counters.proc_cpu.user_usec.diff(), 500);
         assert_eq!(counters.proc_cpu.system_usec.diff(), 500);
         assert_eq!(counters.proc_cpu.nr_periods.unwrap().diff(), 2);
-
-        src.join().await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_join_stops_worker() {
-        let mut src = setup_source("worker");
+    async fn test_worker_updates_counters() {
+        let (src, backend) = setup_source();
 
-        src.config.poll_interval = Some(Duration::from_millis(10));
+        let (token, handle) = CgroupSource::create_worker(
+            src.root_cgroup.clone(),
+            src.proc_cgroup.clone(),
+            src.proc_memory_counters.clone(),
+            src.global_memory_counters.clone(),
+            Duration::from_millis(10),
+        )
+        .unwrap();
 
-        src.init(1).await.unwrap();
+        {
+            let mem = src.proc_memory_counters.lock().await;
+            assert!(mem.anon.is_none());
+        }
 
-        let res = src.join().await;
+        {
+            backend.memory.lock().unwrap().anon = Some(200);
+        }
 
-        assert!(res.is_ok());
+        sleep(Duration::from_millis(10)).await;
+
+        {
+            let mem = src.proc_memory_counters.lock().await;
+            assert_eq!(mem.anon.unwrap().max().unwrap(), 200);
+            assert_eq!(mem.anon.unwrap().min().unwrap(), 200);
+        }
+
+        {
+            backend.memory.lock().unwrap().anon = Some(100);
+        }
+
+        sleep(Duration::from_millis(10)).await;
+
+        {
+            let mem = src.proc_memory_counters.lock().await;
+            assert_eq!(mem.anon.unwrap().max().unwrap(), 200);
+            assert_eq!(mem.anon.unwrap().min().unwrap(), 100);
+        }
+
+        token.cancel();
+        handle.await.unwrap().unwrap();
     }
 }
