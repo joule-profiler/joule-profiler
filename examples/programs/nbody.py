@@ -1,3 +1,12 @@
+# The Computer Language Benchmarks Game
+# https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+#
+# originally by Kevin Carson
+# modified by Tupteq, Fredrik Johansson, and Daniel Nanz
+# modified by Maciej Fijalkowski
+# 2to3
+# source: https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-python3-1.html
+
 import sys 
 
 def combinations(l):
