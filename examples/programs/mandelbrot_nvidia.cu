@@ -1,8 +1,8 @@
 /*
   Source: https://github.com/canonizer/mandelbrot-dyn
 
-  Compile: nvcc -O3 -Xcompiler -fopenmp mandelbrot.cu -o mandelbrot
-  Usage: joule-profiler --gpu profile -- ./mandelbrot {n}
+  Compile: nvcc -O3 -Xcompiler -fopenmp mandelbrot_nvidia.cu -o mandelbrot_nvidia
+  Usage: joule-profiler --gpu profile -- ./mandelbrot_nvidia {n}
 */
 
 /*
