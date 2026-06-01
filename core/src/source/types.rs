@@ -7,11 +7,10 @@ use std::fmt::Debug;
 /// Trait for types returned by a [`MetricReader`](`super::MetricReader`).
 ///
 /// Any type implementing this trait represents the result of a metric measurement.
-/// It must implement `Debug` for logging and debugging, `Send` to be safely
-/// transferred across threads, and `Default` for easy initialization.
-pub trait MetricReaderTypeBound: Debug + Send + Default {}
+/// It must implement `Send` to be safely.
+pub trait MetricReaderTypeBound: Send {}
 
-impl<T> MetricReaderTypeBound for T where T: Debug + Default + Send {}
+impl<T> MetricReaderTypeBound for T where T: Send {}
 
 /// Trait for errors produced by a [`MetricReader`](`super::MetricReader`).
 ///

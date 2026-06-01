@@ -1,0 +1,26 @@
+[package]
+name = "joule-profiler-source-cgroup"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CGroup v2 metrics source for joule-profiler"
+keywords = ["cgroup", "memory", "profiling", "linux", "process"]
+readme = "README.md"
+
+
+[dependencies]
+joule-profiler-core.workspace = true
+futures.workspace = true
+log.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-timerfd = "0.2.0"
+tokio-util = "0.7.18"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
