@@ -14,6 +14,7 @@
  * https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
  *
  * contributed by Miles
+ * source: https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-gcc-9.html
  */
 
 #include <stdio.h>
