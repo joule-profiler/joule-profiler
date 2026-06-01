@@ -6,7 +6,12 @@
 //! - process attachment to cgroups;
 //! - CPU, memory, and I/O statistics collection.
 
-use std::{collections::HashSet, fmt::Display, fs, path::PathBuf};
+use std::{
+    collections::HashSet,
+    fmt::Display,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use log::{debug, warn};
 
@@ -43,117 +48,40 @@ impl Display for Controller {
 /// Interface for reading cgroup statistics.
 pub trait CgroupBackend: Send + Sync + 'static {
     /// Initializes the backend.
-    fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()>;
-
-    /// Returns memory statistics.
-    fn memory(&self) -> Result<MemorySnapshot>;
-
-    /// Returns CPU statistics.
-    fn cpu(&self) -> Result<CpuSnapshot>;
-
-    /// Returns I/O statistics.
-    fn io(&self) -> Result<IoSnapshot>;
+    fn initialize(
+        &self,
+        path: &Path,
+        root: &Path,
+        pid: i32,
+        controllers: &HashSet<Controller>,
+    ) -> Result<()>;
 
     /// Cleanup the backend.
-    fn cleanup(&self) -> Result<()>;
+    fn cleanup(&self, path: &Path, root: &Path) -> Result<()>;
+
+    /// Returns memory statistics.
+    fn memory(&self, path: &Path) -> Result<MemorySnapshot>;
+
+    /// Returns CPU statistics.
+    fn cpu(&self, path: &Path) -> Result<CpuSnapshot>;
+
+    /// Returns I/O statistics.
+    fn io(&self, path: &Path) -> Result<IoSnapshot>;
 }
 
-/// A cgroup node. If `parent` is `None`, this is the root cgroup.
-pub struct Cgroup<B: CgroupBackend = SysFsBackend> {
-    pub path: PathBuf,
-    parent: Option<PathBuf>,
-    backend: B,
-}
-
-impl Cgroup {
-    /// Gets the root cgroup in sys fs `/sys/fs/cgroup`.
-    pub fn root() -> Self {
-        let path = PathBuf::from("/sys/fs/cgroup");
-        Self::at(path)
-    }
-
-    /// Builds a cgroup handle based on the provided directory.
-    pub fn at(path: PathBuf) -> Self {
-        let backend = SysFsBackend {
-            path: path.clone(),
-            root: path.clone(),
-        };
-        Self {
-            path,
-            parent: None,
-            backend,
-        }
-    }
-
-    /// Gets a child handle of the current cgroup based on its name.
-    pub fn child(&self, name: &str) -> Cgroup {
-        let child_path = self.path.join(name);
-        Cgroup {
-            parent: Some(self.path.clone()),
-            backend: SysFsBackend {
-                root: self.path.clone(),
-                path: child_path.clone(),
-            },
-            path: child_path,
-        }
-    }
-}
-
-impl<B: CgroupBackend> Cgroup<B> {
-    pub fn new(path: PathBuf, parent: Option<PathBuf>, backend: B) -> Self {
-        Self {
-            path,
-            parent,
-            backend,
-        }
-    }
-
-    /// True if the cgroup is the root cgroup, else false.
-    pub fn is_root(&self) -> bool {
-        self.parent.is_none()
-    }
-
-    /// Return the backend for stats querying.
-    pub fn stats(&self) -> &B {
-        &self.backend
-    }
-
-    /// Initializes the cgroup backend.
-    pub fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()> {
-        self.backend.initialize(pid, controllers)
-    }
-
-    /// Cleanup the cgroup backend.
-    pub fn cleanup(&self) -> Result<()> {
-        self.backend.cleanup()
-    }
-}
-
-/// Cleans up the cgroup if not done already (cleanup not called or error).
-impl<B: CgroupBackend> Drop for Cgroup<B> {
-    fn drop(&mut self) {
-        if self.parent.is_some() && self.path.exists() {
-            let _ = self.backend.cleanup();
-        }
-    }
-}
-
-/// cgroup statistics accessor.
-pub struct SysFsBackend {
-    path: PathBuf,
-    root: PathBuf,
-}
+/// Cgroup sysfs backend.
+pub struct SysFsBackend;
 
 impl SysFsBackend {
     /// Enables a controller in `cgroup.subtree_control`.
     ///
     /// If the provided controller is already activated, then nothing happens.
-    pub fn activate_controller(&self, controller: Controller) -> Result<()> {
+    fn activate_controller(root_path: &Path, controller: Controller) -> Result<()> {
         debug!(
             "Activating controller for root cgroup `{}`.",
-            self.path.display()
+            root_path.display()
         );
-        let subtree_control_path = self.root.join("cgroup.subtree_control");
+        let subtree_control_path = root_path.join("cgroup.subtree_control");
         fs::write(&subtree_control_path, format!("+{controller}")).map_err(|err| {
             CgroupError::FailedToCreateController {
                 controller,
@@ -165,21 +93,21 @@ impl SysFsBackend {
     }
 
     /// Attaches a process PID to the cgroup.
-    pub fn attach_pid(&self, pid: i32) -> Result<()> {
-        let procs_path = self.path.join("cgroup.procs");
+    fn attach_pid(path: &Path, pid: i32) -> Result<()> {
+        let procs_path = path.join("cgroup.procs");
         fs::write(&procs_path, pid.to_string()).map_err(|err| CgroupError::FailedToAttachPid {
             pid,
             path: procs_path,
             source: err,
         })?;
-        debug!("Attached PID {pid} to cgroup {}", self.path.display());
+        debug!("Attached PID {pid} to cgroup {}", path.display());
         Ok(())
     }
 
     /// Returns all PIDs attached to the cgroup.
-    fn pids(&self) -> Result<Vec<i32>> {
-        debug!("Retrieving cgroup `{}` PIDs.", self.path.display());
-        let path = self.path.join("cgroup.procs");
+    fn pids(path: &Path) -> Result<Vec<i32>> {
+        debug!("Retrieving cgroup `{}` PIDs.", path.display());
+        let path = path.join("cgroup.procs");
         let content = fs::read_to_string(&path)?;
         Ok(content
             .lines()
@@ -190,101 +118,191 @@ impl SysFsBackend {
 
 impl CgroupBackend for SysFsBackend {
     /// Creates the cgroup directory on disk.
-    fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()> {
-        debug!("Initializing cgroup at \"{}\"", self.path.display());
+    fn initialize(
+        &self,
+        path: &Path,
+        root: &Path,
+        pid: i32,
+        controllers: &HashSet<Controller>,
+    ) -> Result<()> {
+        debug!("Initializing cgroup at \"{}\"", path.display());
 
-        fs::create_dir_all(&self.path)?;
+        fs::create_dir_all(path)?;
 
         for controller in controllers {
-            self.activate_controller(*controller)?;
+            Self::activate_controller(root, *controller)?;
         }
 
-        self.attach_pid(pid)?;
+        Self::attach_pid(path, pid)?;
 
         Ok(())
     }
 
     /// Moves processes back to the root cgroup and removes the directory.
-    fn cleanup(&self) -> Result<()> {
-        debug!("Cleaning cgroup `{}`.", self.path.display());
+    fn cleanup(&self, path: &Path, root: &Path) -> Result<()> {
+        debug!("Cleaning cgroup `{}`.", path.display());
 
-        let root_procs = self.root.join("cgroup.procs");
-        for pid in self.pids()? {
+        let root_procs = root.join("cgroup.procs");
+        for pid in Self::pids(path)? {
             if let Err(e) = fs::write(&root_procs, pid.to_string()) {
                 warn!("Could not move PID {pid} back to root cgroup: {e}");
             }
         }
-        if self.path.exists() {
-            if let Err(e) = fs::remove_dir(&self.path) {
+        if path.exists() {
+            if let Err(e) = fs::remove_dir(path) {
                 warn!(
                     "Could not remove cgroup {} (may still have live tasks): {e}",
-                    self.path.display()
+                    path.display()
                 );
             } else {
-                debug!("Removed cgroup {}", self.path.display());
+                debug!("Removed cgroup {}", path.display());
             }
         }
         Ok(())
     }
 
     /// Reads memory statistics from cgroup memory files.
-    fn memory(&self) -> Result<MemorySnapshot> {
-        debug!(
-            "Reading memory metrics for cgroup `{}`.",
-            self.path.display()
-        );
-
-        let mut memory_stat = read_flat_keyed_file(&self.path.join("memory.stat"))?;
-        let current = read_u64_opt(&self.path.join("memory.current"))?;
-        let swap_current = read_u64_opt(&self.path.join("memory.swap.current"))?;
-        let peak = read_u64_opt(&self.path.join("memory.peak"))?;
-
+    fn memory(&self, path: &Path) -> Result<MemorySnapshot> {
+        let mut stat = read_flat_keyed_file(&path.join("memory.stat"))?;
         Ok(MemorySnapshot {
-            current,
-            swap_current,
-            peak,
-            anon: memory_stat.remove("anon"),
-            file: memory_stat.remove("file"),
-            shmem: memory_stat.remove("shmem"),
-            kernel: memory_stat.remove("kernel"),
-            kernel_stack: memory_stat.remove("kernel_stack"),
-            slab: memory_stat.remove("slab"),
+            current: read_u64_opt(&path.join("memory.current"))?,
+            swap_current: read_u64_opt(&path.join("memory.swap.current"))?,
+            peak: read_u64_opt(&path.join("memory.peak"))?,
+            anon: stat.remove("anon"),
+            file: stat.remove("file"),
+            shmem: stat.remove("shmem"),
+            kernel: stat.remove("kernel"),
+            kernel_stack: stat.remove("kernel_stack"),
+            slab: stat.remove("slab"),
+        })
+    }
+
+    /// Reads CPU statistics from `cpu.stat`.
+    fn cpu(&self, path: &Path) -> Result<CpuSnapshot> {
+        let mut stat = read_flat_keyed_file(&path.join("cpu.stat"))?;
+
+        Ok(CpuSnapshot {
+            usage_usec: stat
+                .remove("usage_usec")
+                .ok_or(CgroupError::MissingAlwaysPresentMetric("usage_usec"))?,
+            user_usec: stat
+                .remove("user_usec")
+                .ok_or(CgroupError::MissingAlwaysPresentMetric("user_usec"))?,
+            system_usec: stat
+                .remove("system_usec")
+                .ok_or(CgroupError::MissingAlwaysPresentMetric("system_usec"))?,
+            nr_periods: stat.remove("nr_periods"),
+            nr_throttled: stat.remove("nr_throttled"),
+            throttled_usec: stat.remove("throttled_usec"),
+            nr_bursts: stat.remove("nr_bursts"),
+            burst_usec: stat.remove("burst_usec"),
         })
     }
 
     /// Reads I/O statistics from `io.stat`.
-    fn io(&self) -> Result<IoSnapshot> {
-        debug!("Reading I/O metrics for cgroup `{}`.", self.path.display());
-        let (rbytes, wbytes) = read_io_stat(&self.path.join("io.stat"))?;
+    fn io(&self, path: &Path) -> Result<IoSnapshot> {
+        let (rbytes, wbytes) = read_io_stat(&path.join("io.stat"))?;
         Ok(IoSnapshot { rbytes, wbytes })
     }
+}
 
-    /// Reads CPU statistics from `cpu.stat`.
-    fn cpu(&self) -> Result<CpuSnapshot> {
-        debug!("Reading cpu metrics for cgroup `{}`.", self.path.display());
+/// Structure representing the root cgroup.
+pub struct RootCgroup<B: CgroupBackend = SysFsBackend> {
+    /// The path to the cgroup.
+    path: PathBuf,
 
-        let mut cpu_stat = read_flat_keyed_file(&self.path.join("cpu.stat"))?;
+    /// The backend to use to query cgroup interface (used mainly for testing).
+    backend: B,
+}
 
-        let usage_usec = cpu_stat
-            .remove("usage_usec")
-            .ok_or(CgroupError::MissingAlwaysPresentMetric("usage_usec"))?;
-        let user_usec = cpu_stat
-            .remove("user_usec")
-            .ok_or(CgroupError::MissingAlwaysPresentMetric("user_usec"))?;
-        let system_usec = cpu_stat
-            .remove("system_usec")
-            .ok_or(CgroupError::MissingAlwaysPresentMetric("system_usec"))?;
+impl RootCgroup {
+    /// Builds a cgroup handle based on the provided directory.
+    pub fn at(path: PathBuf) -> Self {
+        Self {
+            path,
+            backend: SysFsBackend,
+        }
+    }
 
-        Ok(CpuSnapshot {
-            usage_usec,
-            user_usec,
-            system_usec,
-            nr_periods: cpu_stat.remove("nr_periods"),
-            nr_throttled: cpu_stat.remove("nr_throttled"),
-            throttled_usec: cpu_stat.remove("throttled_usec"),
-            nr_bursts: cpu_stat.remove("nr_bursts"),
-            burst_usec: cpu_stat.remove("burst_usec"),
-        })
+    /// Gets a child handle of the current cgroup based on its name.
+    pub fn child(&self, name: &str) -> ChildCgroup {
+        let child_path = self.path.join(name);
+        ChildCgroup::new(child_path.clone(), self.path.clone(), SysFsBackend)
+    }
+}
+
+impl<B: CgroupBackend> RootCgroup<B> {
+    pub fn new(path: PathBuf, backend: B) -> Self {
+        Self { path, backend }
+    }
+
+    /// Get memory stats.
+    pub fn memory(&self) -> Result<MemorySnapshot> {
+        self.backend.memory(&self.path)
+    }
+
+    /// Get CPU stats.
+    pub fn cpu(&self) -> Result<CpuSnapshot> {
+        self.backend.cpu(&self.path)
+    }
+
+    /// Get I/O stats.
+    pub fn io(&self) -> Result<IoSnapshot> {
+        self.backend.io(&self.path)
+    }
+}
+
+impl Default for RootCgroup {
+    fn default() -> Self {
+        Self::at(PathBuf::from("/sys/fs/cgroup"))
+    }
+}
+
+/// Structure representing a child cgroup.
+pub struct ChildCgroup<B: CgroupBackend = SysFsBackend> {
+    /// The path to the cgroup.
+    path: PathBuf,
+
+    /// The path to the root cgroup.
+    root: PathBuf,
+
+    /// The backend to use to query cgroup interface (used mainly for testing).
+    backend: B,
+}
+
+impl<B: CgroupBackend> ChildCgroup<B> {
+    pub fn new(path: PathBuf, root: PathBuf, backend: B) -> Self {
+        Self {
+            path,
+            root,
+            backend,
+        }
+    }
+
+    /// Get memory stats.
+    pub fn memory(&self) -> Result<MemorySnapshot> {
+        self.backend.memory(&self.path)
+    }
+
+    /// Get CPU stats.
+    pub fn cpu(&self) -> Result<CpuSnapshot> {
+        self.backend.cpu(&self.path)
+    }
+
+    /// Get I/O stats.
+    pub fn io(&self) -> Result<IoSnapshot> {
+        self.backend.io(&self.path)
+    }
+
+    /// Initializes the cgroup backend.
+    pub fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()> {
+        self.backend
+            .initialize(&self.path, &self.root, pid, controllers)
+    }
+
+    /// Cleanup the cgroup backend.
+    pub fn cleanup(&self) -> Result<()> {
+        self.backend.cleanup(&self.path, &self.root)
     }
 }
 
@@ -300,32 +318,38 @@ mod tests {
     }
 
     impl CgroupBackend for MockCgroupBackend {
-        fn memory(&self) -> Result<MemorySnapshot> {
+        fn memory(&self, _path: &Path) -> Result<MemorySnapshot> {
             Ok(self.memory.clone())
         }
 
-        fn cpu(&self) -> Result<CpuSnapshot> {
+        fn cpu(&self, _path: &Path) -> Result<CpuSnapshot> {
             Ok(self.cpu.clone())
         }
 
-        fn io(&self) -> Result<IoSnapshot> {
+        fn io(&self, _path: &Path) -> Result<IoSnapshot> {
             Ok(self.io.clone())
         }
 
-        fn initialize(&self, _pid: i32, _controllers: &HashSet<Controller>) -> Result<()> {
+        fn initialize(
+            &self,
+            _path: &Path,
+            _root: &Path,
+            _pid: i32,
+            _controllers: &HashSet<Controller>,
+        ) -> Result<()> {
             Ok(())
         }
 
-        fn cleanup(&self) -> Result<()> {
+        fn cleanup(&self, _path: &Path, _root: &Path) -> Result<()> {
             Ok(())
         }
     }
 
-    fn mock_cgroup(name: &str, backend: MockCgroupBackend) -> Cgroup<MockCgroupBackend> {
-        let path = std::env::temp_dir().join(format!("cgroup_test_{name}"));
-        Cgroup {
+    fn mock_cgroup(name: &str, backend: MockCgroupBackend) -> ChildCgroup<MockCgroupBackend> {
+        let path = PathBuf::from(name);
+        ChildCgroup {
             path: path.clone(),
-            parent: Some(path),
+            root: path,
             backend,
         }
     }
@@ -347,9 +371,9 @@ mod tests {
             ..Default::default()
         };
 
-        let cg = mock_cgroup("mock_mem", backend);
+        let cg = mock_cgroup("memory", backend);
 
-        let stats = cg.stats().memory().unwrap();
+        let stats = cg.memory().unwrap();
 
         assert_eq!(stats.current, Some(123));
         assert_eq!(stats.swap_current, Some(456));
@@ -375,9 +399,9 @@ mod tests {
             ..Default::default()
         };
 
-        let cg = mock_cgroup("mock_cpu", backend);
+        let cg = mock_cgroup("cpu", backend);
 
-        let stats = cg.stats().cpu().unwrap();
+        let stats = cg.cpu().unwrap();
 
         assert_eq!(stats.usage_usec, 1000);
         assert_eq!(stats.user_usec, 400);
@@ -396,9 +420,9 @@ mod tests {
             ..Default::default()
         };
 
-        let cg = mock_cgroup("mock_io", backend);
+        let cg = mock_cgroup("io", backend);
 
-        let stats = cg.stats().io().unwrap();
+        let stats = cg.io().unwrap();
 
         assert_eq!(stats.rbytes, Some(120));
         assert_eq!(stats.wbytes, Some(80));
