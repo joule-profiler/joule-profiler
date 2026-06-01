@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
-use crate::cgroup::{Cgroup, CgroupBackend, SysFsBackend};
+use crate::cgroup::{CgroupBackend, ChildCgroup, RootCgroup, SysFsBackend};
 use crate::counters::{Counters, CpuCounters, IoCounters, MemoryCounters};
 use crate::error::CgroupError;
 
@@ -62,8 +62,8 @@ where
 {
     config: CgroupConfig,
     handle: Option<WorkerHandle>,
-    pub proc_cgroup: Arc<Cgroup<B>>,
-    pub root_cgroup: Arc<Cgroup<B>>,
+    pub proc_cgroup: Arc<ChildCgroup<B>>,
+    pub root_cgroup: Arc<RootCgroup<B>>,
     proc_memory_counters: Arc<Mutex<MemoryCounters>>,
     global_memory_counters: Arc<Mutex<MemoryCounters>>,
     proc_cpu_counters: CpuCounters,
@@ -80,9 +80,9 @@ impl CgroupSource {
     /// Initializes internal cgroup handles but does initialize and attach any PID yet.
     pub fn new(config: CgroupConfig) -> Result<Self> {
         let root_cgroup = if let Some(cgroup_root) = &config.cgroup_root {
-            Cgroup::at(cgroup_root.clone())
+            RootCgroup::at(cgroup_root.clone())
         } else {
-            Cgroup::root()
+            RootCgroup::default()
         };
         let proc_cgroup = root_cgroup.child(&config.cgroup_name);
 
@@ -109,8 +109,8 @@ impl<B: CgroupBackend> CgroupSource<B> {
     /// This worker updates process and global memory counters at a fixed interval.
     /// It can be cancelled using the returned `CancellationToken`.
     pub fn create_worker(
-        root_cgroup: Arc<Cgroup<B>>,
-        proc_cgroup: Arc<Cgroup<B>>,
+        proc_cgroup: Arc<ChildCgroup<B>>,
+        root_cgroup: Arc<RootCgroup<B>>,
         proc_memory_counters: Arc<Mutex<MemoryCounters>>,
         global_memory_counters: Arc<Mutex<MemoryCounters>>,
         poll_interval: Duration,
@@ -128,12 +128,12 @@ impl<B: CgroupBackend> CgroupSource<B> {
                     _ = ticker.next() => {
                         trace!("Polled cgroup source.");
                         {
-                            let snapshot = proc_cgroup.stats().memory()?;
+                            let snapshot = proc_cgroup.memory()?;
                             let mut lock = proc_memory_counters.lock().await;
                             lock.update(&snapshot);
                         }
                         {
-                            let snapshot = root_cgroup.stats().memory()?;
+                            let snapshot = root_cgroup.memory()?;
                             let mut lock = global_memory_counters.lock().await;
                             lock.update(&snapshot);
                         }
@@ -168,8 +168,8 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
 
         if let Some(poll_interval) = self.config.poll_interval {
             self.handle = Some(Self::create_worker(
-                self.root_cgroup.clone(),
                 self.proc_cgroup.clone(),
+                self.root_cgroup.clone(),
                 self.proc_memory_counters.clone(),
                 self.global_memory_counters.clone(),
                 poll_interval,
@@ -190,24 +190,20 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
 
         self.end_timestamp = get_timestamp_micros();
         {
-            let snapshot = self.proc_cgroup.stats().memory()?;
+            let snapshot = self.proc_cgroup.memory()?;
             let mut lock = self.proc_memory_counters.lock().await;
             lock.update(&snapshot);
         }
-        self.proc_cpu_counters
-            .update(&self.proc_cgroup.stats().cpu()?);
-        self.proc_io_counters
-            .update(&self.proc_cgroup.stats().io()?);
+        self.proc_cpu_counters.update(&self.proc_cgroup.cpu()?);
+        self.proc_io_counters.update(&self.proc_cgroup.io()?);
 
         {
-            let snapshot = self.root_cgroup.stats().memory()?;
+            let snapshot = self.root_cgroup.memory()?;
             let mut lock = self.global_memory_counters.lock().await;
             lock.update(&snapshot);
         }
-        self.global_cpu_counters
-            .update(&self.root_cgroup.stats().cpu()?);
-        self.global_io_counters
-            .update(&self.root_cgroup.stats().io()?);
+        self.global_cpu_counters.update(&self.root_cgroup.cpu()?);
+        self.global_io_counters.update(&self.root_cgroup.io()?);
 
         Ok(())
     }
@@ -466,7 +462,7 @@ mod tests {
     use crate::cgroup::Controller;
     use crate::snapshot::{CpuSnapshot, IoSnapshot, MemorySnapshot};
     use std::collections::HashSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tokio::time::{Duration, sleep};
 
@@ -478,23 +474,29 @@ mod tests {
     }
 
     impl CgroupBackend for MockCgroupBackend {
-        fn memory(&self) -> Result<MemorySnapshot> {
+        fn memory(&self, _path: &Path) -> Result<MemorySnapshot> {
             Ok(self.memory.lock().unwrap().clone())
         }
 
-        fn cpu(&self) -> Result<CpuSnapshot> {
+        fn cpu(&self, _path: &Path) -> Result<CpuSnapshot> {
             Ok(self.cpu.lock().unwrap().clone())
         }
 
-        fn io(&self) -> Result<IoSnapshot> {
+        fn io(&self, _path: &Path) -> Result<IoSnapshot> {
             Ok(self.io.lock().unwrap().clone())
         }
 
-        fn cleanup(&self) -> Result<()> {
+        fn cleanup(&self, _path: &Path, _root: &Path) -> Result<()> {
             Ok(())
         }
 
-        fn initialize(&self, _pid: i32, _controllers: &HashSet<Controller>) -> Result<()> {
+        fn initialize(
+            &self,
+            _path: &Path,
+            _root: &Path,
+            _pid: i32,
+            _controllers: &HashSet<Controller>,
+        ) -> Result<()> {
             Ok(())
         }
     }
@@ -502,15 +504,11 @@ mod tests {
     fn setup_source() -> (CgroupSource<MockCgroupBackend>, MockCgroupBackend) {
         let backend = MockCgroupBackend::default();
 
-        let root = Arc::new(Cgroup::new(
-            PathBuf::from("/tmp/root"),
-            None,
-            backend.clone(),
-        ));
+        let root = Arc::new(RootCgroup::new(PathBuf::from("/tmp/root"), backend.clone()));
 
-        let proc = Arc::new(Cgroup::new(
-            PathBuf::from("/tmp/proc"),
-            Some(PathBuf::from("/tmp/root")),
+        let proc = Arc::new(ChildCgroup::new(
+            PathBuf::from("/tmp/cgroup"),
+            PathBuf::from("/tmp/root"),
             backend.clone(),
         ));
 
@@ -632,8 +630,8 @@ mod tests {
         let (src, backend) = setup_source();
 
         let (token, handle) = CgroupSource::create_worker(
-            src.root_cgroup.clone(),
             src.proc_cgroup.clone(),
+            src.root_cgroup.clone(),
             src.proc_memory_counters.clone(),
             src.global_memory_counters.clone(),
             Duration::from_millis(10),
