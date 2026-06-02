@@ -1,0 +1,1 @@
+# Joule Profiler Source AMD SMI
