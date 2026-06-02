@@ -57,9 +57,13 @@ pub struct CliArgs {
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
-    /// GPU support
+    /// Nvidia GPU support
     #[arg(long)]
-    pub gpu: bool,
+    pub nvml: bool,
+
+    /// AMD GPU support
+    #[arg(long)]
+    pub amdsmi: bool,
 
     /// `perf_event` counters support
     #[arg(long)]

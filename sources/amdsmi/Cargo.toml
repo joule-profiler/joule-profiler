@@ -1,0 +1,24 @@
+[package]
+name = "joule-profiler-source-amdsmi"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AMD AMI GPU energy measurement source for joule-profiler"
+keywords = ["energy", "amdsmi", "AMD", "GPU", "hardware"]
+readme = "README.md"
+
+[dependencies]
+joule-profiler-core.workspace = true
+log.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+futures.workspace = true
+amdsmi = { path = "../../../amdsmi-wrapper/amdsmi" }
+tokio-timerfd = "0.2.0"
+tokio-util = "0.7.18"
+bitflags = "2.11.1"
+
+[lints]
+workspace = true

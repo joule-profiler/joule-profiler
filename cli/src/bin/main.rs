@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, init_logging, output_format_to_displayer,
@@ -5,6 +7,8 @@ use joule_profiler_cli::{
 };
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
+use joule_profiler_source_amdsmi::AmdSmiSource;
+use joule_profiler_source_amdsmi::config::AmdSmiConfig;
 use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_rapl::{perf, powercap};
@@ -46,11 +50,23 @@ async fn main() -> Result<()> {
         }
     }
 
-    if cli.gpu {
+    if cli.nvml {
         match Nvml::new() {
             Ok(nvml) => {
                 trace!("Using NVML for Nvidia GPU profiling");
                 profiler.add_source(nvml);
+            }
+            Err(err) => warn!("{err}"),
+        }
+    }
+
+    if cli.amdsmi {
+        match AmdSmiSource::new(AmdSmiConfig {
+            poll_interval: Some(Duration::from_millis(1)),
+        }) {
+            Ok(amdsmi) => {
+                trace!("Using AMD SMI for AMD GPU profiling");
+                profiler.add_source(amdsmi);
             }
             Err(err) => warn!("{err}"),
         }
