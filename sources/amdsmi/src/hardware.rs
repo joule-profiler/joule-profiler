@@ -76,12 +76,13 @@ impl Hardware for AmdSmi {
 
                 if support.is_empty() {
                     trace!("No support detected for device {uuid}, ignored.");
+                    None
+                } else {
+                    Some(Processor {
+                        uuid: uuid.clone(),
+                        support,
+                    })
                 }
-
-                Ok::<Processor, AmdSmiError>(Processor {
-                    uuid: uuid.clone(),
-                    support,
-                })
             })
             .collect())
     }
