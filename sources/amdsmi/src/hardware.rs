@@ -60,7 +60,7 @@ impl Hardware for AmdSmi {
         Ok(self
             .processor_handles
             .iter()
-            .flat_map(|(uuid, handle)| {
+            .filter_map(|(uuid, handle)| {
                 let mut support = ProcessorSupport::empty();
 
                 if handle.get_energy_count().is_ok() {
