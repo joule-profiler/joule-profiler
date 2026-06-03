@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use bitflags::bitflags;
 use futures::StreamExt;
 use joule_profiler_core::{
-    sensor::Sensors,
+    sensor::{Sensor, Sensors},
     source::MetricReader,
     types::{Metric, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
@@ -29,6 +29,16 @@ pub type UUID = String;
 
 type Result<T> = std::result::Result<T, AmdSmiError>;
 pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
+
+const MICRO_JOULE_UNIT: MetricUnit = MetricUnit {
+    prefix: UnitPrefix::Micro,
+    unit: Unit::Joule,
+};
+
+const BYTE_UNIT: MetricUnit = MetricUnit {
+    prefix: UnitPrefix::None,
+    unit: Unit::Byte,
+};
 
 bitflags! {
     #[derive(Debug, Clone, Copy)]
@@ -114,19 +124,32 @@ impl<H: Hardware> AmdSmiSource<H> {
         power_counters: &Arc<Mutex<HashMap<usize, PowerCounter>>>,
         vram_counters: &Arc<Mutex<HashMap<usize, VramCounter>>>,
     ) -> Result<()> {
+        let mut vram_updates = Vec::new();
+        let mut power_updates = Vec::new();
+
         for (index, processor) in processors.iter() {
             if processor.support.contains(ProcessorSupport::Vram) {
-                let mut lock = vram_counters.lock().await;
-                let vram_usage = hardware.get_vram_usage(processor)?;
-                lock.entry(*index).and_modify(|c| c.update(vram_usage));
+                vram_updates.push((*index, hardware.get_vram_usage(processor)?));
             }
-
-            if processor.support.contains(ProcessorSupport::Vram) {
-                let mut lock = power_counters.lock().await;
-                let power = hardware.get_power(processor)?;
-                lock.entry(*index).and_modify(|c| c.update(power));
+            if processor.support.contains(ProcessorSupport::Power) {
+                power_updates.push((*index, hardware.get_power(processor)?));
             }
         }
+
+        {
+            let mut lock = vram_counters.lock().await;
+            for (index, vram_usage) in vram_updates {
+                lock.entry(index).and_modify(|c| c.update(vram_usage));
+            }
+        }
+
+        {
+            let mut lock = power_counters.lock().await;
+            for (index, power) in power_updates {
+                lock.entry(index).and_modify(|c| c.update(power));
+            }
+        }
+
         Ok(())
     }
 }
@@ -144,19 +167,15 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                     .entry(*index)
                     .or_default()
                     .update(energy);
-            } else if processor.support.contains(ProcessorSupport::Power) {
-                let mut lock = self.power_counters.lock().await;
-                let power = self.hardware.get_power(processor)?;
-                lock.entry(*index).or_default().update(power);
-            }
-
-            if processor.support.contains(ProcessorSupport::Vram) {
-                let mut lock = self.vram_counters.lock().await;
-                let vram_usage = self.hardware.get_vram_usage(processor)?;
-                lock.entry(*index).or_default().update(vram_usage);
             }
         }
-
+        Self::read_polled_counters(
+            &self.hardware,
+            &self.processors,
+            &self.power_counters,
+            &self.vram_counters,
+        )
+        .await?;
         Ok(())
     }
 
@@ -222,7 +241,40 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
     }
 
     fn get_sensors(&self) -> Result<Sensors> {
-        todo!()
+        let sensors = self
+            .processors
+            .values()
+            .flat_map(|p| {
+                let mut processor_sensors = Vec::new();
+                let uuid = &p.uuid;
+
+                if p.support.contains(ProcessorSupport::Energy)
+                    || p.support.contains(ProcessorSupport::Power)
+                {
+                    processor_sensors.push(Sensor::new(
+                        format!("GPU-{uuid}-energy"),
+                        MICRO_JOULE_UNIT,
+                        Self::get_name(),
+                    ));
+                }
+
+                if p.support.contains(ProcessorSupport::Vram) {
+                    processor_sensors.push(Sensor::new(
+                        format!("GPU-{uuid}-vram_min"),
+                        BYTE_UNIT,
+                        Self::get_name(),
+                    ));
+                    processor_sensors.push(Sensor::new(
+                        format!("GPU-{uuid}-vram_max"),
+                        BYTE_UNIT,
+                        Self::get_name(),
+                    ));
+                }
+
+                processor_sensors
+            })
+            .collect();
+        Ok(sensors)
     }
 
     fn to_metrics(&self, result: Self::Type) -> Result<Metrics> {
@@ -236,27 +288,16 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                     .uuid;
 
                 let mut processor_metrics = Vec::new();
-                if let Some(energy) = counter.energy
-                    && let Some(energy) = energy.diff()
-                {
+
+                let energy = counter
+                    .energy
+                    .map_or_else(|| counter.power.map(|c| c.compute_energy()), |c| c.diff());
+
+                if let Some(energy) = energy {
                     processor_metrics.push(Metric::new(
                         format!("GPU-{uuid}-energy"),
                         energy,
-                        MetricUnit {
-                            prefix: UnitPrefix::Micro,
-                            unit: Unit::Joule,
-                        },
-                        Self::get_name(),
-                    ));
-                } else if let Some(power) = counter.power {
-                    let energy = power.compute_energy();
-                    processor_metrics.push(Metric::new(
-                        format!("GPU-{uuid}-energy"),
-                        energy,
-                        MetricUnit {
-                            prefix: UnitPrefix::Micro,
-                            unit: Unit::Joule,
-                        },
+                        MICRO_JOULE_UNIT,
                         Self::get_name(),
                     ));
                 }
@@ -268,20 +309,14 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                     processor_metrics.push(Metric::new(
                         format!("GPU-{uuid}-vram_min"),
                         min,
-                        MetricUnit {
-                            prefix: UnitPrefix::None,
-                            unit: Unit::Byte,
-                        },
+                        BYTE_UNIT,
                         Self::get_name(),
                     ));
 
                     processor_metrics.push(Metric::new(
                         format!("GPU-{uuid}-vram_max"),
                         max,
-                        MetricUnit {
-                            prefix: UnitPrefix::None,
-                            unit: Unit::Byte,
-                        },
+                        BYTE_UNIT,
                         Self::get_name(),
                     ));
                 }
