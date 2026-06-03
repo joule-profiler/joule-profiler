@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use amdsmi::types::EnergyCount;
 use joule_profiler_core::time::get_timestamp_micros;
-use log::{debug, info, trace};
+use log::{debug, trace};
 
 use crate::{
     Processor, ProcessorSupport, Result, UUID, counters::PowerMeasurement, error::AmdSmiError,
@@ -24,21 +24,21 @@ impl AmdSmi {
         let amdsmi = amdsmi::AmdSmi::init()?;
         let (major, minor, patch) = amdsmi.get_lib_version()?;
 
-        info!("amdsmi driver detected, version v{major}.{minor}.{patch}");
+        debug!("AMD SMI driver detected, version v{major}.{minor}.{patch}");
 
         let sockets = amdsmi.get_socket_handles()?;
 
         let processor_handles: HashMap<_, _> = sockets
             .into_iter()
             .flat_map(|s| {
-                debug!("Socket {} detected.", s.get_socket_info()?);
+                trace!("Socket {} detected.", s.get_socket_info()?);
                 s.get_processor_handles()
             })
             .flatten()
             .flat_map(|p| {
                 let board_info = p.get_board_info()?;
                 let uuid = p.get_uuid()?;
-                debug!("Discovered GPU device {board_info}, UUID: {uuid}.");
+                trace!("Discovered GPU device {board_info}, UUID: {uuid}.");
                 Ok::<(UUID, amdsmi::Processor), AmdSmiError>((uuid, p))
             })
             .collect();
