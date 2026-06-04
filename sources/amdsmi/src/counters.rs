@@ -30,17 +30,9 @@ impl EnergyCounter {
     ///
     /// Returns `None` if either measurement is missing.
     pub fn diff(&self) -> Option<u64> {
-        if let Some(begin) = &self.begin
-            && let Some(end) = &self.end
-        {
-            let energy = ((end.energy_accumulator as f64 * f64::from(end.counter_resolution))
-                as u64)
-                .saturating_sub(
-                    (begin.energy_accumulator as f64 * f64::from(begin.counter_resolution)) as u64,
-                );
-            Some(energy)
-        } else {
-            None
+        match (self.begin, self.end) {
+            (Some(begin), Some(end)) => Some(energy(&end).saturating_sub(energy(&begin))),
+            _ => None,
         }
     }
 }
@@ -121,7 +113,7 @@ impl PowerCounter {
         for power in self.0.windows(2) {
             let p1 = power[0];
             let p2 = power[1];
-            let duration_us = (p2.timestamp - p1.timestamp) as u64;
+            let duration_us = u64::try_from(p2.timestamp - p1.timestamp).unwrap_or(u64::MAX);
 
             let avg_power = u64::from(p1.power.midpoint(p2.power));
             energy += avg_power * duration_us;
@@ -141,4 +133,13 @@ pub struct Counter {
 
     /// Power draw samples.
     pub power: Option<PowerCounter>,
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn energy(count: &EnergyCount) -> u64 {
+    (count.energy_accumulator as f64 * f64::from(count.counter_resolution)) as u64
 }
