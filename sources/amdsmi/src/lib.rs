@@ -28,7 +28,9 @@ mod hardware;
 pub type UUID = String;
 
 type Result<T> = std::result::Result<T, AmdSmiError>;
-pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
+
+/// Polling task handle and its cancellation token.
+type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 
 const MICRO_JOULE_UNIT: MetricUnit = MetricUnit {
     prefix: UnitPrefix::Micro,
@@ -41,6 +43,7 @@ const BYTE_UNIT: MetricUnit = MetricUnit {
 };
 
 bitflags! {
+    /// The supports of a device.
     #[derive(Debug, Clone, Copy)]
     struct ProcessorSupport: u8 {
         const Energy = 1;
@@ -51,25 +54,42 @@ bitflags! {
 
 #[derive(Debug, Clone)]
 pub struct Processor {
+    /// The UUID of the device.
     uuid: UUID,
+
+    /// The supports of the device (e.g., Energy, Power, VRAM).
     support: ProcessorSupport,
 }
 
 pub struct AmdSmiSource<H: Hardware> {
+    /// Source configuration.
     config: AmdSmiConfig,
+
+    /// The hardware used for querying AMD SMI lib. Used for testing.
     hardware: Arc<H>,
+
+    /// The handle to the polling task and its cancellation token.
     handle: Option<WorkerHandle>,
+
+    /// Map of GPU devices, the key is an index to avoid cloning the devices UUID.
     processors: Arc<HashMap<usize, Processor>>,
+
+    /// The current energy counters.
     energy_counters: HashMap<usize, EnergyCounter>,
+
+    /// The current vram counters.
     vram_counters: Arc<Mutex<HashMap<usize, VramCounter>>>,
+
+    /// The current power counters.
     power_counters: Arc<Mutex<HashMap<usize, PowerCounter>>>,
 }
 
 impl AmdSmiSource<AmdSmi> {
+    /// Initializes the AMD SMI source and retrieve the GPU devices.
     pub fn new(config: AmdSmiConfig) -> Result<Self> {
-        let amdsmi = AmdSmi::new()?;
+        let mut amdsmi = AmdSmi::new()?;
         let processors = amdsmi
-            .get_processors(config.gpus_spec.as_ref())?
+            .init_processors(config.gpus_spec.as_ref())?
             .into_iter()
             .enumerate()
             .collect();
@@ -87,6 +107,7 @@ impl AmdSmiSource<AmdSmi> {
 }
 
 impl<H: Hardware> AmdSmiSource<H> {
+    /// Creates the worker task for power and vram polling at the specified polling interval.
     pub fn create_worker(
         hardware: Arc<H>,
         processors: Arc<HashMap<usize, Processor>>,
@@ -122,6 +143,7 @@ impl<H: Hardware> AmdSmiSource<H> {
         Ok((cancellation_token_clone, handle))
     }
 
+    /// Reads the power and vram counters for each processors and updates the current counters.
     async fn read_polled_counters(
         hardware: &Arc<H>,
         processors: &Arc<HashMap<usize, Processor>>,
@@ -150,7 +172,7 @@ impl<H: Hardware> AmdSmiSource<H> {
         {
             let mut lock = power_counters.lock().await;
             for (index, power) in power_updates {
-                lock.entry(index).and_modify(|c| c.update(power));
+                lock.entry(index).and_modify(|c| c.push(power));
             }
         }
 
@@ -163,6 +185,7 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
 
     type Error = AmdSmiError;
 
+    /// Makes a measurement for every devices.
     async fn measure(&mut self) -> Result<()> {
         for (index, processor) in self.processors.iter() {
             if processor.support.contains(ProcessorSupport::Energy) {
@@ -183,6 +206,7 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
         Ok(())
     }
 
+    /// Retrieve the current counters and reset them for the next phase.
     async fn retrieve(&mut self) -> Result<Self::Type> {
         let mut energy_counters = self.energy_counters.clone();
         for counter in self.energy_counters.values_mut() {
@@ -220,6 +244,7 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
         Ok(map)
     }
 
+    /// Creates the polling task if a polling interval has been configured.
     async fn init(&mut self, _pid: i32) -> Result<()> {
         if let Some(poll_interval) = self.config.poll_interval {
             self.handle = Some(Self::create_worker(
@@ -235,6 +260,7 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
         Ok(())
     }
 
+    /// Joins the polling task if it exists.
     async fn join(&mut self) -> Result<()> {
         if let Some((cancellation_token, handle)) = self.handle.take() {
             debug!("Joining AMD SMI source polling task.");
