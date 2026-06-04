@@ -69,7 +69,10 @@ async fn main() -> Result<()> {
     }
 
     if cli.sources.contains(&Source::AmdSmi) {
-        match AmdSmiSource::new(AmdSmiConfig { poll_interval: Some(Duration::from_millis(1)) }) {
+        match AmdSmiSource::new(AmdSmiConfig {
+            poll_interval: Some(Duration::from_millis(1)),
+            ..Default::default()
+        }) {
             Ok(amdsmi) => {
                 trace!("Using AMD SMI for AMD GPU profiling");
                 profiler.add_source(amdsmi);
