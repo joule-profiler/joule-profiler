@@ -68,7 +68,11 @@ pub struct AmdSmiSource<H: Hardware> {
 impl AmdSmiSource<AmdSmi> {
     pub fn new(config: AmdSmiConfig) -> Result<Self> {
         let amdsmi = AmdSmi::new()?;
-        let processors = amdsmi.get_processors()?.into_iter().enumerate().collect();
+        let processors = amdsmi
+            .get_processors(config.gpus_spec.as_ref())?
+            .into_iter()
+            .enumerate()
+            .collect();
 
         Ok(Self {
             config,
