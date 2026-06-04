@@ -8,14 +8,27 @@ use crate::{
     Processor, ProcessorSupport, Result, UUID, counters::PowerMeasurement, error::AmdSmiError,
 };
 
+/// Trait for abstracting the backend of AMD SMI library. Used for testing.
 pub trait Hardware: Send + Sync + 'static {
-    fn get_processors(&self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>>;
+    /// Init all GPU devices specicied by the provided specification.
+    fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>>;
+
+    /// Retrieve the energy count of a device.
     fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount>;
+
+    /// Retrieve the instantaneous power of a device.
     fn get_power(&self, processor: &Processor) -> Result<PowerMeasurement>;
+
+    /// Retrieve the current vram usage of a device.
     fn get_vram_usage(&self, processor: &Processor) -> Result<u64>;
 }
 
+/// Backend for interacting with AMD SMI library.
 pub struct AmdSmi {
+    /// Handle to the AMD SMI wrapper library.
+    amdsmi: amdsmi::AmdSmi,
+
+    /// The handles to the GPU devices.
     processor_handles: HashMap<UUID, amdsmi::Processor>,
 }
 
@@ -26,26 +39,10 @@ impl AmdSmi {
 
         debug!("AMD SMI driver detected, version v{major}.{minor}.{patch}");
 
-        let sockets = amdsmi.get_socket_handles()?;
-
-        let processor_handles: HashMap<_, _> = sockets
-            .into_iter()
-            .flat_map(|s| {
-                trace!("Socket {} detected.", s.get_socket_info()?);
-                s.get_processor_handles()
-            })
-            .flatten()
-            .flat_map(|p| {
-                let board_info = p.get_board_info()?;
-                let uuid = p.get_uuid()?;
-                trace!("Discovered GPU device {board_info}, UUID: {uuid}.");
-                Ok::<(UUID, amdsmi::Processor), AmdSmiError>((uuid, p))
-            })
-            .collect();
-
-        debug!("Discovered {} gpus.", processor_handles.len());
-
-        Ok(Self { processor_handles })
+        Ok(Self {
+            amdsmi,
+            processor_handles: HashMap::new(),
+        })
     }
 
     fn get_device_handle(&self, processor: &Processor) -> Result<&amdsmi::Processor> {
@@ -56,26 +53,35 @@ impl AmdSmi {
 }
 
 impl Hardware for AmdSmi {
-    fn get_processors(&self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
-        Ok(self
-            .processor_handles
-            .iter()
-            .filter_map(|(uuid, handle)| {
+    fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
+        let sockets = self.amdsmi.get_socket_handles()?;
+
+        let processors: Vec<_> = sockets
+            .into_iter()
+            .flat_map(|s| {
+                trace!("Socket {} detected.", s.get_socket_info()?);
+                s.get_processor_handles()
+            })
+            .flatten()
+            .flat_map(|p| {
+                let uuid = p.get_uuid()?;
+                trace!("Discovered GPU device {uuid}.");
+
                 if let Some(spec) = &spec
-                    && !spec.contains(uuid)
+                    && !spec.contains(&uuid)
                 {
                     trace!("Ignoring device {uuid}.");
-                    return None;
+                    return Ok::<Option<Processor>, AmdSmiError>(None);
                 }
 
                 let mut support = ProcessorSupport::empty();
 
-                if handle.get_energy_count().is_ok() {
+                if p.get_energy_count().is_ok() {
                     support |= ProcessorSupport::Energy;
-                } else if handle.get_power().is_ok() {
+                } else if p.get_power().is_ok() {
                     support |= ProcessorSupport::Power;
                 }
-                if handle.get_vram_usage().is_ok() {
+                if p.get_vram_usage().is_ok() {
                     support |= ProcessorSupport::Vram;
                 }
 
@@ -83,15 +89,21 @@ impl Hardware for AmdSmi {
 
                 if support.is_empty() {
                     trace!("No support detected for device {uuid}, ignored.");
-                    None
+                    Ok(None)
                 } else {
-                    Some(Processor {
+                    self.processor_handles.insert(uuid.clone(), p);
+                    Ok(Some(Processor {
                         uuid: uuid.clone(),
                         support,
-                    })
+                    }))
                 }
             })
-            .collect())
+            .flatten()
+            .collect();
+
+        debug!("Discovered {} gpus.", processors.len());
+
+        Ok(processors)
     }
 
     fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount> {
