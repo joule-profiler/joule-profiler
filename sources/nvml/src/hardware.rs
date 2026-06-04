@@ -1,49 +1,116 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
-use joule_profiler_core::sensor::{Sensor, Sensors};
+use joule_profiler_core::time::get_timestamp_micros;
+use log::{debug, trace};
 
-use crate::{MILLI_JOULE_UNIT, NVML_SOURCE_NAME, Result, snapshot::NvmlSnapshot};
+use crate::{Device, DeviceSupport, Result, UUID, counters::PowerMeasurement, error::NvmlError};
 
 /// Trait abstracting NVML hardware access for testability.
 #[cfg_attr(test, mockall::automock)]
-pub trait NvmlHardware: Send {
-    fn read_snapshot(&self) -> Result<NvmlSnapshot>;
-    fn get_sensors(&self) -> Result<Sensors>;
+pub trait NvmlHardware: Send + Sync + 'static {
+    fn init_devices(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Device>>;
+    fn get_energy(&self, device: &Device) -> Result<u64>;
+    fn get_power(&self, device: &Device) -> Result<PowerMeasurement>;
+    fn get_vram_usage(&self, device: &Device) -> Result<u64>;
+    fn get_utilization(&self, device: &Device) -> Result<u32>;
 }
 
 /// Hardware adapter for NVML library.
 pub struct NvmlWrapperHardware {
     /// The NVML wrapper instance for interacting with the NVIDIA driver.
     pub nvml: nvml_wrapper::Nvml,
+}
 
-    /// The total number of GPU devices detected.
-    pub devices_max_index: u32,
+impl NvmlWrapperHardware {
+    pub fn new() -> Result<Self> {
+        debug!("Attempting to initialize NVML reader");
+        let nvml = nvml_wrapper::Nvml::init().map_err(|err| match err {
+            nvml_wrapper::error::NvmlError::DriverNotLoaded => NvmlError::NoDriverLoaded,
+            nvml_wrapper::error::NvmlError::NoPermission => NvmlError::NoPermission,
+            _ => err.into(),
+        })?;
+
+        Ok(Self { nvml })
+    }
 }
 
 impl NvmlHardware for NvmlWrapperHardware {
-    /// Reads the current energy consumption snapshot for all GPU devices.
-    ///
-    /// This queries each GPU device and retrieves its total energy consumption counter
-    /// value in millijoules.
-    fn read_snapshot(&self) -> Result<NvmlSnapshot> {
-        let mut gpus_energy = HashMap::with_capacity(self.devices_max_index as usize);
-        for i in 0..self.devices_max_index {
-            let device = self.nvml.device_by_index(i)?;
-            let energy = device.total_energy_consumption()?;
-            gpus_energy.insert(i, energy);
-        }
-        Ok(NvmlSnapshot { gpus_energy })
+    fn init_devices(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Device>> {
+        let device_count = self.nvml.device_count()?;
+
+        let devices: Vec<_> = (0..device_count)
+            .flat_map(|i| {
+                let device = self.nvml.device_by_index(i)?;
+                let uuid = device.uuid()?;
+                trace!("Discovered GPU device {uuid}.");
+
+                if let Some(spec) = &spec
+                    && !spec.contains(&uuid)
+                {
+                    trace!("Ignoring device {uuid}.");
+                    return Ok::<Option<Device>, NvmlError>(None);
+                }
+
+                let mut support = DeviceSupport::empty();
+
+                if device.total_energy_consumption().is_ok() {
+                    support |= DeviceSupport::Energy;
+                } else if device.power_usage().is_ok() {
+                    support |= DeviceSupport::Power;
+                }
+                if device.memory_info().is_ok() {
+                    support |= DeviceSupport::Vram;
+                }
+                if device.utilization_rates().is_ok() {
+                    support |= DeviceSupport::Utilization;
+                }
+
+                debug!("Device {uuid}, compatibility: {support:?}");
+
+                if support.is_empty() {
+                    trace!("No support detected for device {uuid}, ignored.");
+                    Ok::<Option<Device>, NvmlError>(None)
+                } else {
+                    Ok(Some(Device {
+                        index: i,
+                        uuid: uuid.clone(),
+                        support,
+                    }))
+                }
+            })
+            .flatten()
+            .collect();
+
+        Ok(devices)
     }
 
-    fn get_sensors(&self) -> Result<Sensors> {
-        (0..self.devices_max_index)
-            .map(|i| {
-                Ok(Sensor::new(
-                    format!("GPU-{i}"),
-                    MILLI_JOULE_UNIT,
-                    NVML_SOURCE_NAME,
-                ))
-            })
-            .collect::<Result<_>>()
+    fn get_energy(&self, device: &Device) -> Result<u64> {
+        Ok(self
+            .nvml
+            .device_by_index(device.index)?
+            .total_energy_consumption()?)
+    }
+
+    fn get_power(&self, device: &Device) -> Result<PowerMeasurement> {
+        Ok(self
+            .nvml
+            .device_by_index(device.index)?
+            .power_usage()
+            .map(|power| PowerMeasurement {
+                timestamp: get_timestamp_micros(),
+                power,
+            })?)
+    }
+
+    fn get_vram_usage(&self, device: &Device) -> Result<u64> {
+        Ok(self.nvml.device_by_index(device.index)?.memory_info()?.used)
+    }
+
+    fn get_utilization(&self, device: &Device) -> Result<u32> {
+        Ok(self
+            .nvml
+            .device_by_index(device.index)?
+            .utilization_rates()?
+            .gpu)
     }
 }
