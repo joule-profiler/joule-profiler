@@ -13,8 +13,13 @@ readme = "README.md"
 joule-profiler-core.workspace = true
 log.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+futures.workspace = true
 
 nvml-wrapper = "0.12.0"
+tokio-timerfd = "0.2.0"
+tokio-util = "0.7.18"
+bitflags = "2.11.1"
 
 [dev-dependencies]
 tokio.workspace = true

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, Source, init_logging, output_format_to_displayer,
@@ -7,6 +9,7 @@ use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
 use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 use joule_profiler_source_nvml::Nvml;
+use joule_profiler_source_nvml::config::NvmlConfig;
 use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_procfs::Procfs;
 use joule_profiler_source_procfs::config::ProcfsConfig;
@@ -54,7 +57,10 @@ async fn main() -> Result<()> {
     }
 
     if cli.sources.contains(&Source::Nvml) {
-        match Nvml::new() {
+        match Nvml::new(NvmlConfig {
+            poll_interval: Some(Duration::from_millis(1)),
+            ..Default::default()
+        }) {
             Ok(nvml) => {
                 trace!("Using NVML for Nvidia GPU profiling");
                 profiler.add_source(nvml);
