@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use amdsmi::types::EnergyCount;
 use joule_profiler_core::time::get_timestamp_micros;
@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub trait Hardware: Send + Sync + 'static {
-    fn get_processors(&self) -> Result<Vec<Processor>>;
+    fn get_processors(&self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>>;
     fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount>;
     fn get_power(&self, processor: &Processor) -> Result<PowerMeasurement>;
     fn get_vram_usage(&self, processor: &Processor) -> Result<u64>;
@@ -56,11 +56,18 @@ impl AmdSmi {
 }
 
 impl Hardware for AmdSmi {
-    fn get_processors(&self) -> Result<Vec<Processor>> {
+    fn get_processors(&self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
         Ok(self
             .processor_handles
             .iter()
             .filter_map(|(uuid, handle)| {
+                if let Some(spec) = &spec
+                    && !spec.contains(uuid)
+                {
+                    trace!("Ignoring device {uuid}.");
+                    return None;
+                }
+
                 let mut support = ProcessorSupport::empty();
 
                 if handle.get_energy_count().is_ok() {

@@ -5,9 +5,11 @@ use crate::Processor;
 
 #[derive(Debug, Error)]
 pub enum AmdSmiError {
+    /// Unknown device.
     #[error("Device {0:?} not found.")]
     NoSuchDevice(Processor),
 
+    /// No device with that index found in the devices list.
     #[error("Device with index {0} not found.")]
     NoSuchDeviceFromIndex(usize),
 
