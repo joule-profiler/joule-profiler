@@ -122,6 +122,39 @@ impl PowerCounter {
     }
 }
 
+/// Tracks the minimum and maximum GPU usage observed during a measurement interval.
+#[derive(Default, Clone, Copy)]
+pub struct UtilizationCounter {
+    /// Lowest GPU usage observed.
+    pub min: Option<u32>,
+
+    /// Highest GPU usage observed.
+    pub max: Option<u32>,
+}
+
+impl UtilizationCounter {
+    /// Updates the tracked minimum and maximum GPU usage values.
+    pub fn update(&mut self, value: u32) {
+        self.min = Some(if let Some(min) = self.min {
+            min.min(value)
+        } else {
+            value
+        });
+
+        self.max = Some(if let Some(max) = self.max {
+            max.max(value)
+        } else {
+            value
+        });
+    }
+
+    /// Resets the VRAM usage counters.
+    pub fn reset(&mut self) {
+        self.min = None;
+        self.max = None;
+    }
+}
+
 /// Available measurement counters for a device.
 #[derive(Default, Clone)]
 pub struct Counter {
@@ -133,6 +166,9 @@ pub struct Counter {
 
     /// Power draw samples.
     pub power: Option<PowerCounter>,
+
+    /// GPU usage counter.
+    pub utilization: Option<UtilizationCounter>,
 }
 
 #[allow(
