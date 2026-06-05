@@ -22,6 +22,7 @@ tokio-util = "0.7.18"
 [dev-dependencies]
 mockall.workspace = true
 tokio.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
