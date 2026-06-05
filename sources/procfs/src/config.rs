@@ -8,6 +8,7 @@ pub struct ProcfsConfig {
     /// Polling interval. If `None`, metrics are only captured on phase boundaries.
     pub poll_interval: Option<Duration>,
 
+    /// Interval at which the process hierarchy is built from the profiled process PID.
     pub process_detection_poll_interval: Option<Duration>,
 
     /// Memory unit for process metrics (default: `Mega`).
