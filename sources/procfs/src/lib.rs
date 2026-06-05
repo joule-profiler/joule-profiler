@@ -11,21 +11,22 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use log::{debug, trace};
-use procfs::{Current, FromRead, Meminfo};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    backend::{Backend, ProcfsBackend},
     config::ProcfsConfig,
     counters::{Counters, compute_mem_used},
     error::ProcfsError,
-    snapshot::{ProcSnapshot, measure_global, measure_proc},
+    snapshot::ProcSnapshot,
     utils::make_conversion,
 };
 
+mod backend;
 pub mod config;
 pub mod counters;
 pub mod error;
@@ -59,10 +60,13 @@ type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 ///
 /// let source = Procfs::new(ProcfsConfig::default()).unwrap();
 /// ```
-#[derive(Debug, Default)]
-pub struct Procfs {
+#[derive(Debug)]
+pub struct Procfs<B: Backend = ProcfsBackend> {
     /// procfs source configuration.
     config: ProcfsConfig,
+
+    /// The backend used to interract with procfs. Used for testing.
+    backend: Arc<B>,
 
     /// pid of the profiled process, initialized at -1.
     pid: i32,
@@ -71,10 +75,16 @@ pub struct Procfs {
     counters: Arc<Mutex<Counters>>,
 
     /// The handle to the polling task and it's cancellation token.
-    handle: Option<WorkerHandle>,
+    polling_task_handle: Option<WorkerHandle>,
+
+    /// The handle to the polling task and it's cancellation token.
+    process_discovery_task_handle: Option<WorkerHandle>,
 
     /// Total physical memory in bytes, read once at construction from `/proc/meminfo`.
     mem_total: u64,
+
+    /// The current processes to be measured, updated at each poll from the process discovery task.
+    detected_processes: Arc<Mutex<HashSet<i32>>>,
 }
 
 impl Procfs {
@@ -82,18 +92,26 @@ impl Procfs {
     ///
     /// Reads `MemTotal` from `/proc/meminfo` at construction time.
     pub fn new(config: ProcfsConfig) -> Result<Self> {
-        let mem_total = Meminfo::from_file(Meminfo::PATH)?.mem_total;
+        let backend = ProcfsBackend;
+        let mem_total = backend.mem_total()?;
         Ok(Self {
             config,
             pid: -1,
             mem_total,
-            ..Default::default()
+            backend: Arc::new(backend),
+            counters: Arc::default(),
+            detected_processes: Arc::default(),
+            polling_task_handle: None,
+            process_discovery_task_handle: None,
         })
     }
+}
 
-    fn spawn_worker(
-        pid: i32,
+impl<B: Backend> Procfs<B> {
+    fn spawn_polling_worker(
+        backend: Arc<B>,
         counters: Arc<Mutex<Counters>>,
+        detected_processes: Arc<Mutex<HashSet<i32>>>,
         poll_interval: Duration,
     ) -> Result<WorkerHandle> {
         let mut ticker = Interval::new_interval(poll_interval)?;
@@ -107,20 +125,10 @@ impl Procfs {
                 tokio::select! {
                     _ = ticker.next() => {
                         trace!("Polled procfs source.");
-
-                        let proc = match measure_proc(pid) {
-                            Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => {
-                                Ok(ProcSnapshot::default())
-                            }
-                            r => r,
-                        }?;
-
-                        let global = measure_global()?;
-                        let mut counters = counters.lock().await;
-                        counters.update(&proc, &global);
+                        Self::measure_and_update_pids(&backend, &counters, &detected_processes).await?;
                     }
                     () = cancellation_token.cancelled() => {
-                        debug!("Cgroup worker stopped.");
+                        debug!("procfs worker stopped.");
                         break;
                     }
                 }
@@ -129,20 +137,104 @@ impl Procfs {
         });
         Ok((cancellation_token_clone, handle))
     }
+
+    fn spawn_process_discovery_worker(
+        backend: Arc<B>,
+        pid: i32,
+        detected_processes: Arc<Mutex<HashSet<i32>>>,
+        poll_interval: Duration,
+    ) -> Result<WorkerHandle> {
+        let mut ticker = Interval::new_interval(poll_interval)?;
+        let cancellation_token = CancellationToken::new();
+        let cancellation_token_clone = cancellation_token.clone();
+
+        let handle = tokio::spawn(async move {
+            debug!("Starting procfs process discovery worker.");
+
+            loop {
+                tokio::select! {
+                    _ = ticker.next() => {
+                        trace!("Polled procfs discovery task.");
+                        *detected_processes.lock().await = backend.collect_children(pid);
+                    }
+                    () = cancellation_token.cancelled() => {
+                        debug!("procfs process discovery worker stopped.");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        });
+        Ok((cancellation_token_clone, handle))
+    }
+
+    async fn measure_and_update_pids(
+        backend: &B,
+        counters: &Arc<Mutex<Counters>>,
+        detected_processes: &Arc<Mutex<HashSet<i32>>>,
+    ) -> Result<()> {
+        let mut present_pids = HashSet::new();
+        let pids = detected_processes.lock().await.clone();
+        let mut snapshot = ProcSnapshot::default();
+        let mut pids_updated = false;
+
+        for pid in pids {
+            match backend.read_proc(pid, &mut snapshot) {
+                Ok(()) => {
+                    present_pids.insert(pid);
+                    Ok(())
+                }
+                Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => {
+                    trace!("PID {pid} not present, removing it from processes list.");
+                    pids_updated = true;
+                    Ok(())
+                }
+                r => r,
+            }?;
+        }
+
+        let global = backend.measure_global()?;
+        let mut counters = counters.lock().await;
+        counters.update(&snapshot, &global);
+
+        if pids_updated {
+            trace!("Updating processes list: {present_pids:?}");
+            *detected_processes.lock().await = present_pids;
+        }
+
+        Ok(())
+    }
 }
 
-impl MetricReader for Procfs {
+impl<B: Backend> MetricReader for Procfs<B> {
     type Type = Counters;
     type Error = ProcfsError;
 
     /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
         self.pid = pid;
+        *self.detected_processes.lock().await = self.backend.collect_children(pid);
+
+        if let Some(detection_poll_interval) = self.config.process_detection_poll_interval {
+            let process_discovery_handle = Self::spawn_process_discovery_worker(
+                self.backend.clone(),
+                pid,
+                self.detected_processes.clone(),
+                detection_poll_interval,
+            )?;
+            self.process_discovery_task_handle = Some(process_discovery_handle);
+        }
 
         if let Some(poll_interval) = self.config.poll_interval {
             let counters = self.counters.clone();
-            let handle = Self::spawn_worker(pid, counters, poll_interval)?;
-            self.handle = Some(handle);
+
+            let handle = Self::spawn_polling_worker(
+                self.backend.clone(),
+                counters,
+                self.detected_processes.clone(),
+                poll_interval,
+            )?;
+            self.polling_task_handle = Some(handle);
         }
 
         Ok(())
@@ -150,7 +242,7 @@ impl MetricReader for Procfs {
 
     /// Aborts the background poller if still running, or propagates its error if it already finished.
     async fn join(&mut self) -> Result<()> {
-        if let Some((cancellation_token, handle)) = self.handle.take() {
+        if let Some((cancellation_token, handle)) = self.polling_task_handle.take() {
             cancellation_token.cancel();
             handle.await??;
         }
@@ -161,16 +253,8 @@ impl MetricReader for Procfs {
     ///
     /// If the process is not found, an empty snapshot is used.
     async fn measure(&mut self) -> Result<()> {
-        let proc = match measure_proc(self.pid) {
-            Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => Ok(ProcSnapshot::default()),
-            r => r,
-        }?;
-
-        let global = measure_global()?;
-
-        let mut counters = self.counters.lock().await;
-        counters.update(&proc, &global);
-
+        Self::measure_and_update_pids(&self.backend, &self.counters, &self.detected_processes)
+            .await?;
         Ok(())
     }
 
