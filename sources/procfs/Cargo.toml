@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "procfs source for joule-profiler"
-keywords = ["procfs"]
+keywords = ["procfs", "Linux", "io", "memory"]
 
 [dependencies]
 joule-profiler-core.workspace = true
@@ -22,7 +22,6 @@ tokio-util = "0.7.18"
 [dev-dependencies]
 mockall.workspace = true
 tokio.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

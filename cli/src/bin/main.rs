@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, Source, init_logging, output_format_to_displayer,
@@ -72,11 +70,7 @@ async fn main() -> Result<()> {
 
     if cli.sources.contains(&Source::Procfs) {
         trace!("Initializing procfs source");
-        let config = ProcfsConfig {
-            poll_interval: Some(Duration::from_millis(1)),
-            ..Default::default()
-        };
-        let procfs = Procfs::new(config)?;
+        let procfs = Procfs::new(ProcfsConfig::default())?;
         profiler.add_source(procfs);
     }
 

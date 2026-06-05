@@ -92,13 +92,11 @@ impl Procfs {
     ///
     /// Reads `MemTotal` from `/proc/meminfo` at construction time.
     pub fn new(config: ProcfsConfig) -> Result<Self> {
-        let backend = ProcfsBackend;
-        let mem_total = backend.mem_total()?;
         Ok(Self {
             config,
             pid: -1,
-            mem_total,
-            backend: Arc::new(backend),
+            mem_total: 0,
+            backend: Arc::new(ProcfsBackend),
             counters: Arc::default(),
             detected_processes: Arc::default(),
             polling_task_handle: None,
@@ -213,6 +211,7 @@ impl<B: Backend> MetricReader for Procfs<B> {
     /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
         self.pid = pid;
+        self.mem_total = self.backend.mem_total()?;
         *self.detected_processes.lock().await = self.backend.collect_children(pid);
 
         if let Some(detection_poll_interval) = self.config.process_detection_poll_interval {
@@ -428,5 +427,276 @@ impl<B: Backend> MetricReader for Procfs<B> {
 
     fn get_name() -> &'static str {
         "procfs"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+
+    use joule_profiler_core::source::MetricReader;
+    use tokio::time::sleep;
+
+    use crate::{
+        Procfs, backend::MockBackend, config::ProcfsConfig, error::ProcfsError,
+        snapshot::GlobalSnapshot,
+    };
+
+    fn create_source(backend: MockBackend) -> Procfs<MockBackend> {
+        let source = Procfs {
+            backend: Arc::new(backend),
+            pid: 1,
+            config: ProcfsConfig::default(),
+            mem_total: 0,
+            counters: Arc::default(),
+            detected_processes: Arc::default(),
+            polling_task_handle: None,
+            process_discovery_task_handle: None,
+        };
+        source
+    }
+
+    #[tokio::test]
+    async fn test_init_function_initializes_field_correctly() {
+        let mem_total = 4096;
+        let pid = 1;
+        let children: HashSet<_> = vec![pid, 2].into_iter().collect();
+
+        let mut backend = MockBackend::new();
+
+        backend
+            .expect_collect_children()
+            .returning(move |_| vec![pid, 2].into_iter().collect());
+
+        backend
+            .expect_mem_total()
+            .once()
+            .returning(move || Ok(mem_total));
+
+        let mut source = create_source(backend);
+
+        source.init(pid).await.unwrap();
+
+        assert_eq!(source.mem_total, mem_total);
+        assert!(source.detected_processes.lock().await.eq(&children));
+        assert_eq!(source.pid, pid);
+    }
+
+    #[tokio::test]
+    async fn test_process_detection_polling_updates_processes_list() {
+        let children: HashSet<_> = vec![1, 2, 3, 4].into_iter().collect();
+
+        let mut backend = MockBackend::new();
+        backend
+            .expect_collect_children()
+            .once()
+            .returning(|_| HashSet::new());
+
+        backend
+            .expect_collect_children()
+            .returning(|_| vec![1, 2, 3, 4].into_iter().collect());
+
+        backend.expect_mem_total().once().returning(|| Ok(0));
+        let mut source = create_source(backend);
+        source.config.process_detection_poll_interval = Some(Duration::from_millis(1));
+        assert!(source.detected_processes.lock().await.eq(&HashSet::new()));
+
+        source.init(1).await.unwrap();
+
+        sleep(Duration::from_millis(5)).await;
+
+        assert!(source.detected_processes.lock().await.eq(&children));
+    }
+
+    #[tokio::test]
+    async fn test_polling_task_updates_counters() {
+        let mut backend = MockBackend::new();
+        backend
+            .expect_collect_children()
+            .returning(|_| vec![1].into_iter().collect());
+
+        backend.expect_measure_global().once().returning(|| {
+            Ok(GlobalSnapshot {
+                anon: Some(100),
+                cached: 200,
+                mem_available: Some(300),
+                mem_free: 400,
+                swap_free: 500,
+            })
+        });
+
+        backend.expect_read_proc().returning(|_, _| Ok(()));
+
+        backend.expect_measure_global().once().returning(|| {
+            Ok(GlobalSnapshot {
+                anon: Some(200),
+                cached: 400,
+                mem_available: Some(600),
+                mem_free: 800,
+                swap_free: 1000,
+            })
+        });
+
+        backend.expect_mem_total().once().returning(|| Ok(0));
+
+        let mut source = create_source(backend);
+        let global_counters = source.counters.lock().await.global;
+        assert!(global_counters.anon.is_none());
+        assert!(global_counters.cached.min().is_none());
+        assert!(global_counters.cached.max().is_none());
+        assert!(global_counters.mem_available.is_none());
+        assert!(global_counters.mem_free.min().is_none());
+        assert!(global_counters.mem_free.max().is_none());
+        assert!(global_counters.swap_free.min().is_none());
+        assert!(global_counters.swap_free.max().is_none());
+
+        source.config.poll_interval = Some(Duration::from_millis(10));
+        source.init(1).await.unwrap();
+
+        sleep(Duration::from_millis(20)).await;
+
+        let global_counters = source.counters.lock().await.global;
+
+        assert_eq!(global_counters.anon.unwrap().min(), Some(100));
+        assert_eq!(global_counters.anon.unwrap().max(), Some(200));
+        assert_eq!(global_counters.cached.min(), Some(200));
+        assert_eq!(global_counters.cached.max(), Some(400));
+        assert_eq!(global_counters.mem_available.unwrap().min(), Some(300));
+        assert_eq!(global_counters.mem_available.unwrap().max(), Some(600));
+        assert_eq!(global_counters.mem_free.min(), Some(400));
+        assert_eq!(global_counters.mem_free.max(), Some(800));
+        assert_eq!(global_counters.swap_free.min(), Some(500));
+        assert_eq!(global_counters.swap_free.max(), Some(1000));
+    }
+
+    #[tokio::test]
+    async fn test_measure_updates_counters_once() {
+        let mut backend = MockBackend::new();
+
+        backend
+            .expect_collect_children()
+            .returning(|_| vec![1].into_iter().collect());
+
+        backend.expect_read_proc().returning(|_, _| Ok(()));
+
+        backend.expect_measure_global().returning(|| {
+            Ok(GlobalSnapshot {
+                anon: Some(100),
+                cached: 200,
+                mem_available: Some(300),
+                mem_free: 400,
+                swap_free: 500,
+            })
+        });
+
+        backend.expect_mem_total().once().returning(|| Ok(1000));
+
+        let mut source = create_source(backend);
+
+        source.init(1).await.unwrap();
+        source.measure().await.unwrap();
+
+        let counters = source.counters.lock().await;
+
+        assert_eq!(counters.global.cached.max(), Some(200));
+        assert_eq!(counters.global.cached.max(), Some(200));
+        assert_eq!(counters.global.mem_available.unwrap().max(), Some(300));
+        assert_eq!(counters.global.mem_free.max(), Some(400));
+        assert_eq!(counters.global.swap_free.max(), Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_resets_counters() {
+        let mut backend = MockBackend::new();
+
+        backend
+            .expect_collect_children()
+            .returning(|_| vec![1].into_iter().collect());
+
+        backend.expect_read_proc().returning(|_, _| Ok(()));
+
+        backend.expect_measure_global().returning(|| {
+            Ok(GlobalSnapshot {
+                anon: Some(10),
+                cached: 20,
+                mem_available: Some(30),
+                mem_free: 40,
+                swap_free: 50,
+            })
+        });
+
+        backend.expect_mem_total().once().returning(|| Ok(1000));
+
+        let mut source = create_source(backend);
+        source.init(1).await.unwrap();
+
+        source.measure().await.unwrap();
+
+        let first = source.retrieve().await.unwrap();
+        let second = source.retrieve().await.unwrap();
+
+        assert!(first.global.cached.max().is_some());
+        assert!(second.global.cached.max().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dead_pid_removed_from_detected_processes() {
+        use procfs::ProcError;
+
+        let mut backend = MockBackend::new();
+
+        backend
+            .expect_collect_children()
+            .returning(|_| vec![1, 2].into_iter().collect());
+
+        backend.expect_read_proc().returning(|pid, _| {
+            if pid == 2 {
+                Err(ProcfsError::Procfs(ProcError::NotFound(Some(
+                    PathBuf::new(),
+                ))))
+            } else {
+                Ok(())
+            }
+        });
+
+        backend
+            .expect_measure_global()
+            .returning(|| Ok(GlobalSnapshot::default()));
+
+        backend.expect_mem_total().once().returning(|| Ok(1000));
+
+        let mut source = create_source(backend);
+        source.init(1).await.unwrap();
+
+        source.measure().await.unwrap();
+
+        let processes = source.detected_processes.lock().await;
+
+        assert!(processes.contains(&1));
+        assert!(!processes.contains(&2));
+    }
+
+    #[tokio::test]
+    async fn test_join_stops_polling_task() {
+        let mut backend = MockBackend::new();
+
+        backend
+            .expect_collect_children()
+            .returning(|_| vec![1].into_iter().collect());
+
+        backend.expect_mem_total().once().returning(|| Ok(0));
+
+        backend.expect_read_proc().returning(|_, _| Ok(()));
+
+        backend
+            .expect_measure_global()
+            .returning(|| Ok(GlobalSnapshot::default()));
+
+        let mut source = create_source(backend);
+        source.config.poll_interval = Some(Duration::from_millis(5));
+        source.init(1).await.unwrap();
+        sleep(Duration::from_millis(15)).await;
+
+        source.join().await.unwrap();
     }
 }

@@ -20,8 +20,8 @@ pub struct ProcfsConfig {
 impl Default for ProcfsConfig {
     fn default() -> Self {
         Self {
-            poll_interval: None,
-            process_detection_poll_interval: None,
+            poll_interval: Some(Duration::from_millis(10)),
+            process_detection_poll_interval: Some(Duration::from_secs(1)),
             proc_memory_unit: MemoryUnit::Mega,
             global_memory_unit: MemoryUnit::Giga,
         }
