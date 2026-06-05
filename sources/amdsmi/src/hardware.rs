@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use amdsmi::types::EnergyCount;
+use amdsmi::types::{EnergyCount, GpuUsageInfo};
 use joule_profiler_core::time::get_timestamp_micros;
 use log::{debug, trace};
 
@@ -21,6 +21,9 @@ pub trait Hardware: Send + Sync + 'static {
 
     /// Retrieve the current vram usage of a device.
     fn get_vram_usage(&self, processor: &Processor) -> Result<u64>;
+
+    /// Retrieve the current GPU utilization info.
+    fn get_gpu_activity(&self, processor: &Processor) -> Result<GpuUsageInfo>;
 }
 
 /// Backend for interacting with AMD SMI library.
@@ -84,6 +87,9 @@ impl Hardware for AmdSmi {
                 if p.get_vram_usage().is_ok() {
                     support |= ProcessorSupport::Vram;
                 }
+                if p.get_gpu_activity().is_ok() {
+                    support |= ProcessorSupport::Utilization;
+                }
 
                 debug!("Device {uuid} compatibility: {support:?}");
 
@@ -119,5 +125,9 @@ impl Hardware for AmdSmi {
 
     fn get_vram_usage(&self, processor: &Processor) -> Result<u64> {
         Ok(self.get_device_handle(processor)?.get_vram_usage()?)
+    }
+
+    fn get_gpu_activity(&self, processor: &Processor) -> Result<GpuUsageInfo> {
+        Ok(self.get_device_handle(processor)?.get_gpu_activity()?)
     }
 }

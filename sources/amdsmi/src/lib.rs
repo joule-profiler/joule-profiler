@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::AmdSmiConfig,
-    counters::{Counter, EnergyCounter, PowerCounter, VramCounter},
+    counters::{Counter, EnergyCounter, PowerCounter, UtilizationCounter, VramCounter},
     error::AmdSmiError::{self},
     hardware::{AmdSmi, Hardware},
 };
@@ -42,6 +42,11 @@ const BYTE_UNIT: MetricUnit = MetricUnit {
     unit: Unit::Byte,
 };
 
+const PERCENT_UNIT: MetricUnit = MetricUnit {
+    prefix: UnitPrefix::None,
+    unit: Unit::Percent,
+};
+
 bitflags! {
     /// The supports of a device.
     #[derive(Debug, Clone, Copy)]
@@ -49,6 +54,7 @@ bitflags! {
         const Energy = 1;
         const Power = 1 << 1;
         const Vram = 1 << 2;
+        const Utilization = 1 << 3;
     }
 }
 
@@ -82,6 +88,9 @@ pub struct AmdSmiSource<H: Hardware> {
 
     /// The current power counters.
     power_counters: Arc<Mutex<HashMap<usize, PowerCounter>>>,
+
+    /// The current GPU utilization counters.
+    utilization_counters: Arc<Mutex<HashMap<usize, UtilizationCounter>>>,
 }
 
 impl AmdSmiSource<AmdSmi> {
@@ -102,6 +111,7 @@ impl AmdSmiSource<AmdSmi> {
             energy_counters: HashMap::new(),
             vram_counters: Arc::default(),
             power_counters: Arc::default(),
+            utilization_counters: Arc::default(),
         })
     }
 }
@@ -113,6 +123,7 @@ impl<H: Hardware> AmdSmiSource<H> {
         processors: Arc<HashMap<usize, Processor>>,
         power_counters: Arc<Mutex<HashMap<usize, PowerCounter>>>,
         vram_counters: Arc<Mutex<HashMap<usize, VramCounter>>>,
+        usage_counters: Arc<Mutex<HashMap<usize, UtilizationCounter>>>,
         poll_interval: Duration,
     ) -> Result<WorkerHandle> {
         let mut ticker = Interval::new_interval(poll_interval)?;
@@ -127,7 +138,7 @@ impl<H: Hardware> AmdSmiSource<H> {
                 tokio::select! {
                     _ = ticker.next() => {
                         trace!("Polled AMD SMI source.");
-                        Self::read_polled_counters(&hardware, &processors, &power_counters, &vram_counters).await?;
+                        Self::read_polled_counters(&hardware, &processors, &power_counters, &vram_counters, &usage_counters).await?;
                     }
 
                     () = cancellation_token.cancelled() => {
@@ -149,9 +160,11 @@ impl<H: Hardware> AmdSmiSource<H> {
         processors: &Arc<HashMap<usize, Processor>>,
         power_counters: &Arc<Mutex<HashMap<usize, PowerCounter>>>,
         vram_counters: &Arc<Mutex<HashMap<usize, VramCounter>>>,
+        utilization_counters: &Arc<Mutex<HashMap<usize, UtilizationCounter>>>,
     ) -> Result<()> {
         let mut vram_updates = Vec::new();
         let mut power_updates = Vec::new();
+        let mut utilization_updates = Vec::new();
 
         for (index, processor) in processors.iter() {
             if processor.support.contains(ProcessorSupport::Vram) {
@@ -160,19 +173,29 @@ impl<H: Hardware> AmdSmiSource<H> {
             if processor.support.contains(ProcessorSupport::Power) {
                 power_updates.push((*index, hardware.get_power(processor)?));
             }
+            if processor.support.contains(ProcessorSupport::Utilization) {
+                utilization_updates.push((*index, hardware.get_gpu_activity(processor)?.gpu_usage));
+            }
         }
 
         {
             let mut lock = vram_counters.lock().await;
             for (index, vram_usage) in vram_updates {
-                lock.entry(index).and_modify(|c| c.update(vram_usage));
+                lock.entry(index).or_default().update(vram_usage);
             }
         }
 
         {
             let mut lock = power_counters.lock().await;
             for (index, power) in power_updates {
-                lock.entry(index).and_modify(|c| c.push(power));
+                lock.entry(index).or_default().push(power);
+            }
+        }
+
+        {
+            let mut lock = utilization_counters.lock().await;
+            for (index, utilization) in utilization_updates {
+                lock.entry(index).or_default().update(utilization);
             }
         }
 
@@ -201,6 +224,7 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
             &self.processors,
             &self.power_counters,
             &self.vram_counters,
+            &self.utilization_counters,
         )
         .await?;
         Ok(())
@@ -225,6 +249,12 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
             counter.reset();
         }
 
+        let mut lock = self.utilization_counters.lock().await;
+        let mut utilization_counters = lock.clone();
+        for counter in lock.values_mut() {
+            counter.reset();
+        }
+
         let map = self
             .processors
             .keys()
@@ -232,10 +262,12 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                 let energy = energy_counters.remove(index);
                 let vram = vram_counters.remove(index);
                 let power = power_counters.remove(index);
+                let utilization = utilization_counters.remove(index);
                 let counter = Counter {
                     energy,
                     vram,
                     power,
+                    utilization,
                 };
                 (*index, counter)
             })
@@ -252,6 +284,7 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                 self.processors.clone(),
                 self.power_counters.clone(),
                 self.vram_counters.clone(),
+                self.utilization_counters.clone(),
                 poll_interval,
             )?);
         }
@@ -297,6 +330,19 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                     processor_sensors.push(Sensor::new(
                         format!("GPU-{uuid}-vram_max"),
                         BYTE_UNIT,
+                        Self::get_name(),
+                    ));
+                }
+
+                if p.support.contains(ProcessorSupport::Utilization) {
+                    processor_sensors.push(Sensor::new(
+                        format!("GPU-{uuid}-utilization_min"),
+                        PERCENT_UNIT,
+                        Self::get_name(),
+                    ));
+                    processor_sensors.push(Sensor::new(
+                        format!("GPU-{uuid}-utilization_max"),
+                        PERCENT_UNIT,
                         Self::get_name(),
                     ));
                 }
@@ -347,6 +393,25 @@ impl<H: Hardware> MetricReader for AmdSmiSource<H> {
                         format!("GPU-{uuid}-vram_max"),
                         max,
                         BYTE_UNIT,
+                        Self::get_name(),
+                    ));
+                }
+
+                if let Some(utilization) = counter.utilization
+                    && let Some(min) = utilization.min
+                    && let Some(max) = utilization.max
+                {
+                    processor_metrics.push(Metric::new(
+                        format!("GPU-{uuid}-utilization_min"),
+                        u64::from(min),
+                        PERCENT_UNIT,
+                        Self::get_name(),
+                    ));
+
+                    processor_metrics.push(Metric::new(
+                        format!("GPU-{uuid}-utilization_max"),
+                        u64::from(max),
+                        PERCENT_UNIT,
                         Self::get_name(),
                     ));
                 }
