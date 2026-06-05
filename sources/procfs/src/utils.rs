@@ -3,13 +3,12 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use procfs::process::Process;
-use std::collections::VecDeque;
 
 /// Reads direct child of pid (threads excluded).
 ///
 /// Reads `/proc/{pid}/task/{tid}/children` for each thread of the process,
 /// then filters out threads by keeping only processes.
-fn read_child_processes(pid: i32) -> Vec<i32> {
+pub fn read_child_processes(pid: i32) -> Vec<i32> {
     let Ok(process) = Process::new(pid) else {
         return vec![];
     };
@@ -39,23 +38,6 @@ fn is_process(pid: i32) -> bool {
     Process::new(pid)
         .and_then(|p| p.status())
         .is_ok_and(|s| s.pid == s.tgid)
-}
-
-/// Collects `root_pid` and all its descendant recursively.
-/// Threads are excluded, only process leaders are returned.
-pub fn collect_all_children(root_pid: i32) -> Vec<i32> {
-    let mut pids: Vec<i32> = vec![root_pid];
-    let mut queue: VecDeque<i32> = VecDeque::from([root_pid]);
-
-    while let Some(pid) = queue.pop_front() {
-        for child_pid in read_child_processes(pid) {
-            if !pids.contains(&child_pid) {
-                pids.push(child_pid);
-                queue.push_back(child_pid);
-            }
-        }
-    }
-    pids
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
