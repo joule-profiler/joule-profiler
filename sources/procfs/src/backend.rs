@@ -10,6 +10,7 @@ use crate::{
 };
 
 /// Trait abstracting procfs for testing efficiently.
+#[cfg_attr(test, mockall::automock)]
 pub trait Backend: Send + Sync + 'static {
     fn read_proc(&self, pid: i32, snapshot: &mut ProcSnapshot) -> Result<()>;
     fn measure_global(&self) -> Result<GlobalSnapshot>;
