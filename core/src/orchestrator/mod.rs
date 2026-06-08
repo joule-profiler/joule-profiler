@@ -2,6 +2,8 @@
 //!
 //! This module defines the core logic for metric sources orchestration through [`SourceOrchestrator`] structure.
 
+use std::time::Duration;
+
 use crate::aggregate::sensor_result::SensorResult;
 use crate::orchestrator::error::OrchestratorError;
 use crate::source::types::SourceEvent;
@@ -38,10 +40,14 @@ pub struct SourceOrchestrator {
 impl SourceOrchestrator {
     /// Starts all the metric sources.
     ///
-    /// The function shares the atomic integer representing the profiled program's pid, used by some sources for per-process profiling (e.g. `perf_event`).
+    /// The function uses a one shot sender to forward the profiled program's pid to the sources, used by some for per-process profiling (e.g. `perf_event`).
     /// Stores the sources handles and the channels senders to be able to gracefully join the sources and send events.
     #[inline]
-    pub fn run(&mut self, sources: Vec<Box<dyn MetricSource>>) -> Result<(), OrchestratorError> {
+    pub fn run(
+        &mut self,
+        sources: Vec<Box<dyn MetricSource>>,
+        init_timeout: Duration,
+    ) -> Result<(), OrchestratorError> {
         if sources.is_empty() {
             return Err(OrchestratorError::NoSourceConfigured);
         }
@@ -50,7 +56,7 @@ impl SourceOrchestrator {
         let mut handles = Vec::with_capacity(nb_sources);
 
         for source in sources {
-            let (handle, control_sender, init_sender) = source.run();
+            let (handle, control_sender, init_sender) = source.run(init_timeout);
             handles.push(SourceHandle {
                 handle,
                 control_sender,
@@ -263,7 +269,9 @@ mod tests {
     async fn finalize_without_measurements_returns_not_enough_snapshots() {
         let mut orchestrator = SourceOrchestrator::default();
         let (source, _) = mock_source();
-        orchestrator.run(vec![source]).unwrap();
+        orchestrator
+            .run(vec![source], Duration::from_secs(1))
+            .unwrap();
         orchestrator.init(0).unwrap();
 
         assert!(matches!(
@@ -277,7 +285,7 @@ mod tests {
         let mut orchestrator = SourceOrchestrator::default();
 
         assert!(matches!(
-            orchestrator.run(vec![]),
+            orchestrator.run(vec![], Duration::from_secs(1)),
             Err(OrchestratorError::NoSourceConfigured)
         ));
     }
@@ -286,7 +294,9 @@ mod tests {
     async fn event_reaches_worker() {
         let (source, state) = mock_source();
         let mut orchestrator = SourceOrchestrator::default();
-        orchestrator.run(vec![source]).unwrap();
+        orchestrator
+            .run(vec![source], Duration::from_secs(1))
+            .unwrap();
 
         let _ = orchestrator.measure().await;
         let _ = orchestrator.init(0);
@@ -306,7 +316,9 @@ mod tests {
         let (source, state) = mock_source();
 
         let mut orchestrator = SourceOrchestrator::default();
-        orchestrator.run(vec![source]).unwrap();
+        orchestrator
+            .run(vec![source], Duration::from_secs(1))
+            .unwrap();
 
         orchestrator.init(42).unwrap();
 
@@ -324,7 +336,9 @@ mod tests {
         let source: Box<dyn MetricSource> = reader.into();
         let mut orchestrator = SourceOrchestrator::default();
 
-        orchestrator.run(vec![source]).unwrap();
+        orchestrator
+            .run(vec![source], Duration::from_secs(1))
+            .unwrap();
         orchestrator.init(0).unwrap();
         orchestrator.measure().await.unwrap();
         let result = orchestrator.finalize().await;

@@ -4,7 +4,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 
 use anyhow::Result;
 pub use commands::ProfilerCommand;
-use joule_profiler_core::config::{Command, Config, ProfileConfig};
+use joule_profiler_core::config::{Command, Config, ProfileConfigBuilder};
 
 use crate::output::{
     displayer::Displayer,
@@ -80,23 +80,35 @@ impl CliArgs {
     }
 }
 
-impl From<CliArgs> for Config {
-    fn from(cli_args: CliArgs) -> Self {
+impl TryFrom<CliArgs> for Config {
+    type Error = anyhow::Error;
+
+    fn try_from(cli_args: CliArgs) -> Result<Self, anyhow::Error> {
         let command = match cli_args.command {
-            ProfilerCommand::Profile(profile_args) => Command::Profile(ProfileConfig {
-                stdout_file: profile_args.stdout_file,
-                cmd: profile_args.cmd,
-                token_pattern: profile_args.token_pattern,
-                use_root: profile_args.use_root,
-            }),
+            ProfilerCommand::Profile(profile_args) => {
+                let mut builder = ProfileConfigBuilder::default();
+                if let Some(stdout_file) = profile_args.stdout_file {
+                    builder.stdout_file(stdout_file);
+                }
+                builder.cmd(profile_args.cmd);
+                if let Some(token_pattern) = profile_args.token_pattern {
+                    builder.token_pattern(token_pattern);
+                }
+                builder.use_root(profile_args.use_root);
+                if let Some(init_timeout) = profile_args.init_timeout {
+                    builder.init_timeout(init_timeout);
+                }
+
+                Command::Profile(builder.build()?)
+            }
 
             ProfilerCommand::ListSensors => Command::ListSensors,
         };
 
-        Config {
+        Ok(Config {
             command,
             rapl_path: cli_args.rapl_path,
-        }
+        })
     }
 }
 

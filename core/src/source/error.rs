@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 use thiserror::Error;
 
 /// Errors that can occur when reading or aggregating metrics from a source.
@@ -12,8 +12,10 @@ pub enum MetricSourceError {
     ErrorRetrievingCounters,
 
     /// The initialization of the source lasted more than the authorized time.
-    #[error("Source initialization timeout.")]
-    InitTimeout,
+    #[error(
+        "source initialization timed out after {0:?}. Use --init-timeout to increase the limit."
+    )]
+    InitTimeout(Duration),
 
     /// Error propagated from a custom metric source.
     #[error(transparent)]

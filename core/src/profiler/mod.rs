@@ -114,7 +114,7 @@ impl JouleProfiler {
 
         let sources = std::mem::take(&mut self.sources);
         trace!("Starting orchestrator with {} source(s)", sources.len());
-        self.orchestrator.run(sources)?;
+        self.orchestrator.run(sources, config.init_timeout)?;
 
         info!("Starting measurements");
         let (command_duration_ms, timestamp, exit_code, detected_phases) =
@@ -433,6 +433,7 @@ mod tests {
     use regex::Regex;
     use std::fs;
     use std::io::{BufReader, Cursor, Read};
+    use std::time::Duration;
     use tempfile::TempDir;
 
     fn joule_profiler() -> JouleProfiler {
@@ -448,6 +449,7 @@ mod tests {
             token_pattern: "__PHASE__".to_string(),
             stdout_file: None,
             use_root: false,
+            init_timeout: Duration::from_secs(1),
         }
     }
 
@@ -676,6 +678,7 @@ mod tests {
             token_pattern: "[[invalid[[[regex[[".to_string(),
             stdout_file: None,
             use_root: false,
+            init_timeout: Duration::from_secs(1),
         };
         profiler.add_source(MockMetricReader::new());
         let result = profiler.profile(&config).await;

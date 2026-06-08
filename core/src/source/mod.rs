@@ -5,6 +5,8 @@
 //! Implementations are boxed for flexibility, while internally resolving
 //! concrete types to minimize the profiler overhead.
 
+use std::time::Duration;
+
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) mod accumulator;
@@ -29,6 +31,7 @@ pub(crate) trait MetricSource: Send {
     /// Spawn the source worker and return its handle, control channel and initialization channel.
     fn run(
         self: Box<Self>,
+        init_timeout: Duration,
     ) -> (
         SourceWorkerHandle,
         mpsc::Sender<SourceEvent>,
@@ -49,6 +52,7 @@ where
     /// This transformation allows to monomorphize the metric source and discover its type after its launch.
     fn run(
         self: Box<Self>,
+        init_timeout: Duration,
     ) -> (
         SourceWorkerHandle,
         mpsc::Sender<SourceEvent>,
@@ -56,8 +60,10 @@ where
     ) {
         let (control_sender, control_receiver) = mpsc::channel(4);
         let (init_sender, init_receiver) = oneshot::channel();
-        let handle =
-            tokio::spawn(async move { self.run_worker(control_receiver, init_receiver).await });
+        let handle = tokio::spawn(async move {
+            self.run_worker(control_receiver, init_receiver, init_timeout)
+                .await
+        });
         (handle, control_sender, init_sender)
     }
 
