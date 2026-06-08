@@ -13,6 +13,7 @@
 //!     cmd: vec!["sleep".into(), "1".into()],
 //!     token_pattern: "__[A-Z0-9_]+__".into(),
 //!     use_root: false,
+//!     init_timeout: std::time::Duration::from_secs(1),
 //! };
 //!
 //! let config = Config {
