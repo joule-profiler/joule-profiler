@@ -53,7 +53,6 @@ pub enum Command {
 #[derive(Debug, Clone, Builder)]
 pub struct ProfileConfig {
     /// Optional file to redirect the profiled program stdout.
-    #[builder(default, setter(strip_option))]
     pub stdout_file: Option<String>,
 
     /// Command and arguments to execute.
