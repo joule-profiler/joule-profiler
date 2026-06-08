@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use joule_profiler_core::{
     JouleProfiler,
     config::ProfileConfig,
@@ -53,6 +55,7 @@ fn config(cmd: Vec<String>, pattern: &str) -> ProfileConfig {
         token_pattern: pattern.to_string(),
         stdout_file: None,
         use_root: false,
+        init_timeout: Duration::from_secs(1),
     }
 }
 

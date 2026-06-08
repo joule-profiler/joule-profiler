@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use clap::Parser;
 
 /// Arguments for profiling mode.
@@ -11,12 +13,8 @@ pub struct ProfileArgs {
     ///   - START -> `first_token`
     ///   - `token_i` -> `token_i+1`
     ///   - `last_token` -> END
-    #[arg(
-        long = "token-pattern",
-        default_value = "__[A-Z0-9_]+__",
-        value_name = "REGEX"
-    )]
-    pub token_pattern: String,
+    #[arg(long = "token-pattern", value_name = "REGEX")]
+    pub token_pattern: Option<String>,
 
     /// Redirect profiled program stdout to this file.
     #[arg(short = 'o', long = "stdout-file")]
@@ -33,4 +31,9 @@ pub struct ProfileArgs {
     /// Executes the profiled command with root privileges if true and Joule Profiler is launched as root.
     #[arg(long = "use-root")]
     pub use_root: bool,
+
+    /// Duration before aborting sources initialization.
+    #[clap(value_parser = humantime::parse_duration)]
+    #[arg(long = "init-timeout")]
+    pub init_timeout: Option<Duration>,
 }

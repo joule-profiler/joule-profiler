@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         profiler.add_source(perf_event);
     }
 
-    let config = Config::from(cli);
+    let config = Config::try_from(cli)?;
 
     match config.command {
         Command::Profile(profile_config) => {

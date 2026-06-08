@@ -39,11 +39,12 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
         mut self,
         mut receiver: mpsc::Receiver<SourceEvent>,
         init_receiver: oneshot::Receiver<i32>,
+        init_timeout: Duration,
     ) -> Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError> {
-        let pid = timeout(Duration::from_secs(1), init_receiver)
+        let pid = timeout(init_timeout, init_receiver)
             .await
             .map_err(IntoMetricSourceError::into_metric_source_error)?
-            .map_err(|_| MetricSourceError::InitTimeout)?;
+            .map_err(|_| MetricSourceError::InitTimeout(init_timeout))?;
 
         self.init_source(pid).await?;
 
@@ -217,7 +218,9 @@ mod tests {
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        rt.run_worker(rx, pid(0)).await.unwrap();
+        rt.run_worker(rx, pid(0), Duration::from_secs(1))
+            .await
+            .unwrap();
 
         assert_eq!(counts.lock().unwrap().measure, 2);
     }
@@ -229,7 +232,9 @@ mod tests {
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::JoinWorker).await.unwrap();
-        rt.run_worker(rx, pid(42)).await.unwrap();
+        rt.run_worker(rx, pid(42), Duration::from_secs(1))
+            .await
+            .unwrap();
 
         assert_eq!(counts.lock().unwrap().init, 1);
     }
@@ -247,7 +252,11 @@ mod tests {
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        assert!(rt.run_worker(rx, pid(0)).await.is_err());
+        assert!(
+            rt.run_worker(rx, pid(0), Duration::from_secs(1))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -259,7 +268,9 @@ mod tests {
         tx.send(SourceEvent::NewPhase).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        rt.run_worker(rx, pid(0)).await.unwrap();
+        rt.run_worker(rx, pid(0), Duration::from_secs(1))
+            .await
+            .unwrap();
 
         assert_eq!(counts.lock().unwrap().retrieve, 1);
     }
@@ -271,7 +282,9 @@ mod tests {
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::JoinWorker).await.unwrap();
-        rt.run_worker(rx, pid(0)).await.unwrap();
+        rt.run_worker(rx, pid(0), Duration::from_secs(1))
+            .await
+            .unwrap();
 
         assert_eq!(counts.lock().unwrap().join, 1);
     }
@@ -287,7 +300,11 @@ mod tests {
         tx.send(SourceEvent::NewPhase).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        assert!(rt.run_worker(rx, pid(0)).await.is_ok());
+        assert!(
+            rt.run_worker(rx, pid(0), Duration::from_secs(1))
+                .await
+                .is_ok()
+        );
 
         let c = counts.lock().unwrap();
         assert_eq!(c.measure, 2);
