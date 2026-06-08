@@ -91,13 +91,9 @@ impl TryFrom<CliArgs> for Config {
                     builder.stdout_file(stdout_file);
                 }
                 builder.cmd(profile_args.cmd);
-                if let Some(token_pattern) = profile_args.token_pattern {
-                    builder.token_pattern(token_pattern);
-                }
+                builder.token_pattern(profile_args.token_pattern);
                 builder.use_root(profile_args.use_root);
-                if let Some(init_timeout) = profile_args.init_timeout {
-                    builder.init_timeout(init_timeout);
-                }
+                builder.init_timeout(profile_args.init_timeout);
 
                 Command::Profile(builder.build()?)
             }

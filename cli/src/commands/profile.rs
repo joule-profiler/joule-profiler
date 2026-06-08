@@ -13,8 +13,12 @@ pub struct ProfileArgs {
     ///   - START -> `first_token`
     ///   - `token_i` -> `token_i+1`
     ///   - `last_token` -> END
-    #[arg(long = "token-pattern", value_name = "REGEX")]
-    pub token_pattern: Option<String>,
+    #[arg(
+        long = "token-pattern",
+        default_value = "__[A-Z0-9_]+__",
+        value_name = "REGEX"
+    )]
+    pub token_pattern: String,
 
     /// Redirect profiled program stdout to this file.
     #[arg(short = 'o', long = "stdout-file")]
@@ -34,6 +38,6 @@ pub struct ProfileArgs {
 
     /// Duration before aborting sources initialization.
     #[clap(value_parser = humantime::parse_duration)]
-    #[arg(long = "init-timeout")]
-    pub init_timeout: Option<Duration>,
+    #[arg(long = "init-timeout", default_value = "1s")]
+    pub init_timeout: Duration,
 }
