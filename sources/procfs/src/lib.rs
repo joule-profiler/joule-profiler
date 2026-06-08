@@ -38,6 +38,8 @@ const IO_COUNTERS_METRIC_UNIT: MetricUnit = MetricUnit {
     unit: Unit::Byte,
 };
 
+const PROCFS_SOURCE_NAME: &str = "procfs";
+
 type Result<T> = std::result::Result<T, ProcfsError>;
 type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 
@@ -210,6 +212,7 @@ impl<B: Backend> MetricReader for Procfs<B> {
 
     /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
+        debug!("Initializing procfs source.");
         self.pid = pid;
         self.mem_total = self.backend.mem_total()?;
         *self.detected_processes.lock().await = self.backend.collect_children(pid);
@@ -241,6 +244,7 @@ impl<B: Backend> MetricReader for Procfs<B> {
 
     /// Aborts the background poller if still running, or propagates its error if it already finished.
     async fn join(&mut self) -> Result<()> {
+        debug!("Joining procfs source.");
         if let Some((cancellation_token, handle)) = self.polling_task_handle.take() {
             cancellation_token.cancel();
             handle.await??;
@@ -426,7 +430,7 @@ impl<B: Backend> MetricReader for Procfs<B> {
     }
 
     fn get_name() -> &'static str {
-        "procfs"
+        PROCFS_SOURCE_NAME
     }
 }
 
