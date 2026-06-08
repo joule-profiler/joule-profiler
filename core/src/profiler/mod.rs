@@ -53,6 +53,7 @@ pub mod types;
 ///     token_pattern: "__PHASE__".to_string(),
 ///     stdout_file: None,
 ///     use_root: false,
+///     init_timeout: std::time::Duration::from_secs(1),
 /// };
 ///
 /// let results = profiler.profile(&config).await.unwrap();
