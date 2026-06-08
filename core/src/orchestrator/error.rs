@@ -6,10 +6,6 @@ use tokio::{sync::mpsc::error::SendError, task::JoinError};
 /// Errors that can occur during orchestration.
 #[derive(Debug, Error)]
 pub enum OrchestratorError {
-    /// Returned when the snapshot buffer contains fewer entries than required to create results.
-    #[error("Not enough snapshots to retrieve.")]
-    NotEnoughSnapshots,
-
     /// Returned when there's no metric sources configured to profile the program with.
     #[error("No metric sources configured.")]
     NoSourceConfigured,
@@ -33,6 +29,21 @@ pub enum OrchestratorError {
     /// Returned when an error occured while sending the initialization event.
     #[error("Cannot initialize {0} source.")]
     InitializationError(String),
+
+    /// Phase count mismatch between two sensor sources during aggregation.
+    #[error(
+        "Cannot aggregate sensor results: phase count mismatch (lhs={lhs}, rhs={rhs}). \
+        Sources must produce the same number of phases."
+    )]
+    PhaseMismatch { lhs: usize, rhs: usize },
+
+    /// All sources returned zero phases.
+    #[error("All sensor sources produced zero phases.")]
+    AllSourcesEmpty,
+
+    /// No results to merge.
+    #[error("No sensor results to merge.")]
+    NoSensorResults,
 
     /// An error thrown by a metric source.
     #[error(transparent)]

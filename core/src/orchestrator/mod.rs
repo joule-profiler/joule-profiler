@@ -103,7 +103,7 @@ impl SourceOrchestrator {
         &mut self,
     ) -> Result<(SensorResult, Vec<Box<dyn MetricSource>>), OrchestratorError> {
         let (results, sources) = self.join_all().await?;
-        let merged = SensorResult::merge(results).ok_or(OrchestratorError::NotEnoughSnapshots)?;
+        let merged = SensorResult::merge(results)?;
         Ok((merged, sources))
     }
 
@@ -268,7 +268,7 @@ mod tests {
 
         assert!(matches!(
             orchestrator.finalize().await,
-            Err(OrchestratorError::NotEnoughSnapshots)
+            Err(OrchestratorError::AllSourcesEmpty)
         ));
     }
 

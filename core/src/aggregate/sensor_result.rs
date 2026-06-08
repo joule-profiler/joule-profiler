@@ -1,5 +1,4 @@
-use crate::aggregate::phase::SensorPhase;
-use std::ops::Add;
+use crate::{aggregate::phase::SensorPhase, orchestrator::error::OrchestratorError};
 
 /// Aggregated results of sensors.
 #[derive(Debug)]
@@ -10,27 +9,60 @@ pub struct SensorResult {
 
 impl SensorResult {
     /// Merge multiple sensor results into one.
-    pub fn merge(results: Vec<Self>) -> Option<SensorResult> {
-        if results.is_empty() || results.iter().any(|result| result.phases.is_empty()) {
-            None
-        } else {
-            results.into_iter().reduce(|acc, result| acc + result)
+    ///
+    /// Returns an error if the results are empty and ignore the sources that produced zero phases.
+    pub fn merge(results: Vec<Self>) -> Result<SensorResult, OrchestratorError> {
+        if results.is_empty() {
+            return Err(OrchestratorError::NoSensorResults);
+        }
+
+        let mut valid_results = Vec::with_capacity(results.len());
+        let mut empty_results_count = 0;
+
+        for result in results {
+            if result.phases.is_empty() {
+                empty_results_count += 1;
+            } else {
+                valid_results.push(result);
+            }
+        }
+
+        if empty_results_count > 0 {
+            log::warn!(
+                "SensorResult::merge: {empty_results_count} source(s) produced zero phases and were skipped."
+            );
+        }
+
+        let mut iter = valid_results.into_iter();
+
+        match iter.next() {
+            None => Err(OrchestratorError::AllSourcesEmpty),
+            Some(first) => iter.try_fold(first, SensorResult::try_add),
         }
     }
-}
-
-impl Add for SensorResult {
-    type Output = SensorResult;
-
     /// Combine two sensor results by adding corresponding phases.
-    fn add(self, rhs: Self) -> Self::Output {
+    ///
+    /// Returns an error if the two results have a different number of phases,
+    /// since combining misaligned phases would produce incorrect results.
+    pub fn try_add(self, rhs: Self) -> Result<Self, OrchestratorError> {
+        let lhs_len = self.phases.len();
+        let rhs_len = rhs.phases.len();
+
+        if lhs_len != rhs_len {
+            return Err(OrchestratorError::PhaseMismatch {
+                lhs: lhs_len,
+                rhs: rhs_len,
+            });
+        }
+
         let phases = self
             .phases
             .into_iter()
             .zip(rhs.phases)
-            .map(|(self_iter, rhs_iter)| self_iter + rhs_iter)
+            .map(|(l, r)| l + r)
             .collect();
-        Self::Output { phases }
+
+        Ok(Self { phases })
     }
 }
 
@@ -58,8 +90,11 @@ mod tests {
     }
 
     #[test]
-    fn merge_empty_vec_returns_none() {
-        assert!(SensorResult::merge(vec![]).is_none());
+    fn merge_empty_vec_returns_error() {
+        assert!(matches!(
+            SensorResult::merge(vec![]),
+            Err(OrchestratorError::NoSensorResults)
+        ));
     }
 
     #[test]
@@ -78,7 +113,6 @@ mod tests {
         let r1 = result(vec![phase(vec![metric(100)])]);
         let r2 = result(vec![phase(vec![metric(200)])]);
         let merged = SensorResult::merge(vec![r1, r2]).unwrap();
-
         assert_eq!(merged.phases[0].metrics.len(), 2);
         assert_eq!(
             merged.phases[0].metrics[0].value,
@@ -88,5 +122,35 @@ mod tests {
             merged.phases[0].metrics[1].value,
             MetricValue::UnsignedInteger(200)
         );
+    }
+
+    #[test]
+    fn merge_skips_empty_sources_and_warns() {
+        let r1 = result(vec![phase(vec![metric(100)])]);
+        let r2 = result(vec![]);
+        let merged = SensorResult::merge(vec![r1, r2]).unwrap();
+        assert_eq!(merged.phases.len(), 1);
+        assert_eq!(
+            merged.phases[0].metrics[0].value,
+            MetricValue::UnsignedInteger(100)
+        );
+    }
+
+    #[test]
+    fn merge_all_empty_sources_returns_error() {
+        assert!(matches!(
+            SensorResult::merge(vec![result(vec![]), result(vec![])]),
+            Err(OrchestratorError::AllSourcesEmpty)
+        ));
+    }
+
+    #[test]
+    fn merge_returns_error_on_phase_mismatch() {
+        let r1 = result(vec![phase(vec![metric(100)]), phase(vec![metric(200)])]);
+        let r2 = result(vec![phase(vec![metric(300)])]);
+        assert!(matches!(
+            SensorResult::merge(vec![r1, r2]),
+            Err(OrchestratorError::PhaseMismatch { .. })
+        ));
     }
 }
