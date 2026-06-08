@@ -59,7 +59,7 @@ impl Backend for ProcfsBackend {
     /// Reads system-wide memory statistics from `/proc/meminfo`.
     fn measure_global(&self) -> Result<GlobalSnapshot> {
         let meminfo = Meminfo::from_file(Meminfo::PATH)?;
-        trace!("Querying global meminfo from {}", procfs::Meminfo::PATH);
+        trace!("Querying global meminfo from {}.", procfs::Meminfo::PATH);
 
         Ok(GlobalSnapshot {
             mem_available: meminfo.mem_available,
@@ -90,6 +90,7 @@ impl Backend for ProcfsBackend {
 
     /// Retrieve the total memory of the hardware.
     fn mem_total(&self) -> Result<u64> {
+        trace!("Retrieving Meminfo from {}.", Meminfo::PATH);
         Ok(Meminfo::from_file(Meminfo::PATH)?.mem_total)
     }
 }
