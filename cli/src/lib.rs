@@ -87,17 +87,17 @@ impl TryFrom<CliArgs> for Config {
         let command = match cli_args.command {
             ProfilerCommand::Profile(profile_args) => {
                 let mut builder = ProfileConfigBuilder::default();
-                if let Some(stdout_file) = profile_args.stdout_file {
-                    builder.stdout_file(stdout_file);
-                }
-                builder.cmd(profile_args.cmd);
-                builder.token_pattern(profile_args.token_pattern);
-                builder.use_root(profile_args.use_root);
-                builder.init_timeout(profile_args.init_timeout);
 
-                Command::Profile(builder.build()?)
+                let config = builder
+                    .cmd(profile_args.cmd)
+                    .stdout_file(profile_args.stdout_file)
+                    .token_pattern(profile_args.token_pattern)
+                    .use_root(profile_args.use_root)
+                    .init_timeout(profile_args.init_timeout)
+                    .build()?;
+
+                Command::Profile(config)
             }
-
             ProfilerCommand::ListSensors => Command::ListSensors,
         };
 
