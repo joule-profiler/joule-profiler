@@ -26,9 +26,6 @@ use std::time::Duration;
 
 use derive_builder::Builder;
 
-const PHASE_TOKEN_DEFAULT_REGEX_PATTERN: &str = "__[A-Z0-9_]+__";
-const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(1);
-
 /// Top-level configuration for Joule Profiler.
 #[derive(Debug)]
 pub struct Config {
@@ -59,13 +56,11 @@ pub struct ProfileConfig {
     pub cmd: Vec<String>,
 
     /// Regex used to detect phase tokens in program output.
-    #[builder(default = PHASE_TOKEN_DEFAULT_REGEX_PATTERN.to_string())]
     pub token_pattern: String,
 
     /// Executes the profiled command with root privileges if true and Joule Profiler is launched as root.
     pub use_root: bool,
 
     /// Duration before aborting sources initialization.
-    #[builder(default = DEFAULT_INIT_TIMEOUT)]
     pub init_timeout: Duration,
 }
