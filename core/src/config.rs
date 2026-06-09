@@ -31,9 +31,6 @@ use derive_builder::Builder;
 pub struct Config {
     /// Action to run (profile a program or list sensors).
     pub command: Command,
-
-    /// Override the base path used to read Intel RAPL counters.
-    pub rapl_path: Option<String>,
 }
 
 /// Command executed by the profiler.

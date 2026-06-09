@@ -25,13 +25,17 @@ joule-profiler-core.workspace = true
 log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+serde.workspace = true
 
 anyhow = "1.0.100"
 env_logger = "0.11.8"
 clap = { version = "4.5.53", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
+toml = "1.1.2"
+humantime-serde = "1.1.1"
 humantime = "2.3.0"
 csv = "1.4.0"
+
 
 [dev-dependencies]
 tempfile.workspace = true

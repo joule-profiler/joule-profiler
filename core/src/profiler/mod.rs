@@ -482,7 +482,8 @@ mod tests {
         impl MetricReader for MetricReader {
             type Type = ();
             type Error = MockError;
-
+            type Config = ();
+            fn from_config(config: ()) -> Result<Self, MockError>;
             async fn init(&mut self, pid: i32) -> Result<(), MockError>;
             async fn join(&mut self) -> Result<(), MockError>;
             async fn measure(&mut self) -> Result<(), MockError>;
@@ -490,6 +491,7 @@ mod tests {
             fn get_sensors(&self) -> Result<Sensors, MockError>;
             fn to_metrics(&self, v: ()) -> Result<Metrics, MockError>;
             fn get_name() -> &'static str;
+            fn get_id() -> &'static str;
         }
     }
 

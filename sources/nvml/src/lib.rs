@@ -224,6 +224,12 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
 
     type Error = NvmlError;
 
+    type Config = ();
+
+    fn from_config(_config: Self::Config) -> Result<Self> {
+        Self::new()
+    }
+
     async fn measure(&mut self) -> Result<()> {
         debug!("NVML measure triggered.");
         for device in self.devices.iter() {
@@ -421,6 +427,10 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
 
     fn get_name() -> &'static str {
         NVML_SOURCE_NAME
+    }
+
+    fn get_id() -> &'static str {
+        "nvml"
     }
 }
 

@@ -182,6 +182,11 @@ impl Rapl {
 impl MetricReader for Rapl {
     type Type = Snapshot;
     type Error = RaplError;
+    type Config = ();
+
+    fn from_config(_config: Self::Config) -> Result<Self> {
+        Self::try_default()
+    }
 
     async fn init(&mut self, _: i32) -> Result<()> {
         check_rapl_access(&self.rapl_path)?;
@@ -298,6 +303,10 @@ impl MetricReader for Rapl {
 
     fn get_name() -> &'static str {
         POWERCAP_SOURCE_NAME
+    }
+
+    fn get_id() -> &'static str {
+        "powercap_rapl"
     }
 }
 
