@@ -122,6 +122,11 @@ impl Rapl {
 impl MetricReader for Rapl {
     type Type = Phase;
     type Error = RaplError;
+    type Config = ();
+
+    fn from_config(_config: Self::Config) -> Result<Self> {
+        Self::new(None)
+    }
 
     /// Enable the `perf_event` counters.
     async fn init(&mut self, _: i32) -> Result<()> {
@@ -206,6 +211,10 @@ impl MetricReader for Rapl {
 
     fn get_name() -> &'static str {
         PERF_SOURCE_NAME
+    }
+
+    fn get_id() -> &'static str {
+        "perf_rapl"
     }
 }
 

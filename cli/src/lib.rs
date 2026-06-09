@@ -1,19 +1,20 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 use clap::{ArgAction, Parser, ValueEnum};
 
 use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
-use joule_profiler_core::config::{Command, Config, ProfileConfigBuilder};
 
-use crate::output::{
-    displayer::Displayer,
-    formats::{
-        OutputFormat, csv::CsvOutput, json::JsonOutput, output_format, terminal::TerminalOutput,
+use crate::{
+    config::table::ConfigTable,
+    output::{
+        displayer::Displayer,
+        formats::{OutputFormat, csv::CsvOutput, json::JsonOutput, terminal::TerminalOutput},
     },
 };
 
 mod commands;
+pub mod config;
 mod logging;
 mod output;
 
@@ -65,6 +66,9 @@ pub struct CliArgs {
     #[arg(long, value_delimiter = ',', default_value = "rapl")]
     pub sources: Vec<Source>,
 
+    #[arg(long = "config")]
+    pub config_file: Option<PathBuf>,
+
     /// The command to execute
     #[command(subcommand)]
     pub command: ProfilerCommand,
@@ -85,34 +89,6 @@ impl CliArgs {
         }
 
         Ok(())
-    }
-}
-
-impl TryFrom<CliArgs> for Config {
-    type Error = anyhow::Error;
-
-    fn try_from(cli_args: CliArgs) -> Result<Self, anyhow::Error> {
-        let command = match cli_args.command {
-            ProfilerCommand::Profile(profile_args) => {
-                let mut builder = ProfileConfigBuilder::default();
-
-                let config = builder
-                    .cmd(profile_args.cmd)
-                    .stdout_file(profile_args.stdout_file)
-                    .token_pattern(profile_args.token_pattern)
-                    .use_root(profile_args.use_root)
-                    .init_timeout(profile_args.init_timeout)
-                    .build()?;
-
-                Command::Profile(config)
-            }
-            ProfilerCommand::ListSensors => Command::ListSensors,
-        };
-
-        Ok(Config {
-            command,
-            rapl_path: cli_args.rapl_path,
-        })
     }
 }
 
@@ -148,9 +124,20 @@ pub enum RaplBackend {
     Powercap,
 }
 
-pub fn output_format_to_displayer(cli: &CliArgs) -> Result<Box<dyn Displayer>> {
-    let output_format = output_format(cli.json, cli.csv);
-    let output_file = cli.output_file.clone();
+pub fn config_to_displayer(config_table: &ConfigTable) -> Result<Box<dyn Displayer>> {
+    let output_format = if config_table.cli.json {
+        OutputFormat::Json
+    } else if config_table.cli.csv {
+        OutputFormat::Csv
+    } else {
+        config_table.config.profiler.output_format
+    };
+    let output_file = config_table
+        .cli
+        .output_file
+        .as_ref()
+        .or(config_table.config.profiler.output_file.as_ref())
+        .cloned();
 
     let displayer = match output_format {
         OutputFormat::Terminal => TerminalOutput.into(),

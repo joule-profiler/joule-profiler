@@ -11,6 +11,8 @@
 
 use std::fmt::{Display, Formatter, Result};
 
+use serde::Deserialize;
+
 pub mod csv;
 pub mod json;
 pub mod terminal;
@@ -27,13 +29,16 @@ pub mod terminal;
 /// - `Terminal` — Display metrics directly in the terminal (default).
 /// - `Json` — Export metrics as JSON for easy parsing or integration.
 /// - `Csv` — Export metrics in CSV format for spreadsheets or analysis.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
 pub enum OutputFormat {
     #[default]
+    #[serde(alias = "terminal", alias = "term", alias = "TERM")]
     Terminal,
 
+    #[serde(alias = "json", alias = "JSON")]
     Json,
 
+    #[serde(alias = "csv", alias = "CSV")]
     Csv,
 }
 
@@ -45,16 +50,5 @@ impl Display for OutputFormat {
             OutputFormat::Csv => "CSV",
         })?;
         Ok(())
-    }
-}
-
-/// Determine output format from flags
-pub fn output_format(json: bool, csv: bool) -> OutputFormat {
-    if json {
-        OutputFormat::Json
-    } else if csv {
-        OutputFormat::Csv
-    } else {
-        OutputFormat::Terminal
     }
 }

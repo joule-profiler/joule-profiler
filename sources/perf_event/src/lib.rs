@@ -15,12 +15,14 @@ use joule_profiler_core::{
 use log::{debug, info, trace};
 
 use crate::{
+    config::PerfConfig,
     error::PerfEventError,
-    event::EVENTS,
+    event::{EVENTS, Event},
     hardware::{PerfEventCounters, PerfEventHardware},
     snapshot::{Phase, Snapshot},
 };
 
+pub mod config;
 mod error;
 mod event;
 mod hardware;
@@ -42,30 +44,32 @@ const PERF_EVENT_METRIC_UNIT: MetricUnit = MetricUnit {
 /// used to interact with `perf_event`. The default adapter use the `perf_event2` library.
 pub struct PerfEvent<H: PerfEventHardware = PerfEventCounters> {
     hardware: H,
+    events: Vec<Event>,
     begin_snapshot: Option<Snapshot>,
     last_snapshot: Option<Snapshot>,
-}
-
-impl PerfEvent {
-    /// Creates a new uninitialized `perf_event` source with the `perf_event2` backend.
-    pub fn new() -> Result<Self> {
-        debug!("Creating new perf_event source");
-        Ok(Self {
-            hardware: PerfEventCounters::new(),
-            begin_snapshot: None,
-            last_snapshot: None,
-        })
-    }
 }
 
 impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     type Type = Phase;
     type Error = PerfEventError;
 
+    type Config = PerfConfig;
+
+    fn from_config(config: PerfConfig) -> Result<Self> {
+        Ok(Self {
+            events: config
+                .events
+                .map_or(EVENTS.to_vec(), |e| e.into_iter().collect()),
+            hardware: H::default(),
+            begin_snapshot: None,
+            last_snapshot: None,
+        })
+    }
+
     /// Initialize counters for a specific process and start monitoring.
     async fn init(&mut self, pid: i32) -> Result<()> {
         info!("Initializing perf_event source for PID {pid}");
-        self.hardware.init_counters(pid)
+        self.hardware.init_counters(&self.events, pid)
     }
 
     /// Read current counter values and compute delta since last measurement.
@@ -126,6 +130,10 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     fn get_name() -> &'static str {
         "perf_event"
     }
+
+    fn get_id() -> &'static str {
+        "perf_event"
+    }
 }
 
 #[cfg(test)]
@@ -141,9 +149,10 @@ mod tests {
         }
     }
 
-    fn nvml_with_hardware(hardware: MockPerfEventHardware) -> PerfEvent<MockPerfEventHardware> {
+    fn with_hardware(hardware: MockPerfEventHardware) -> PerfEvent<MockPerfEventHardware> {
         PerfEvent {
             hardware,
+            events: EVENTS.to_vec(),
             begin_snapshot: None,
             last_snapshot: None,
         }
@@ -156,7 +165,7 @@ mod tests {
             .expect_read_snapshot()
             .returning(|| Ok(snapshot(vec![(Event::CpuCycles, 100)])));
 
-        let mut source = nvml_with_hardware(hardware);
+        let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
 
         assert!(source.begin_snapshot.is_some());
@@ -175,7 +184,7 @@ mod tests {
             )]))
         });
 
-        let mut source = nvml_with_hardware(hardware);
+        let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
         source.measure().await.unwrap();
 
@@ -190,7 +199,7 @@ mod tests {
             .expect_read_snapshot()
             .returning(|| Ok(snapshot(vec![(Event::CpuCycles, 100)])));
 
-        let mut source = nvml_with_hardware(hardware);
+        let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
 
         assert!(matches!(
@@ -211,7 +220,7 @@ mod tests {
             )]))
         });
 
-        let mut source = nvml_with_hardware(hardware);
+        let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
         source.measure().await.unwrap();
         let phase = source.retrieve().await.unwrap();
@@ -232,7 +241,7 @@ mod tests {
             )]))
         });
 
-        let mut source = nvml_with_hardware(hardware);
+        let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
         source.measure().await.unwrap();
         source.retrieve().await.unwrap();
@@ -255,7 +264,7 @@ mod tests {
             })
         });
 
-        let mut source = nvml_with_hardware(hardware);
+        let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
         source.measure().await.unwrap();
         let phase = source.retrieve().await.unwrap();

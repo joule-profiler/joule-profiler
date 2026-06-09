@@ -1,8 +1,8 @@
 use anyhow::Result;
-use joule_profiler_cli::{
-    CliArgs, ProfilerCommand, RaplBackend, Source, init_logging, output_format_to_displayer,
-    parse_sockets_spec,
-};
+use joule_profiler_cli::config::GlobalConfig;
+use joule_profiler_cli::config::source::register_source;
+use joule_profiler_cli::config::table::ConfigTable;
+use joule_profiler_cli::{CliArgs, config_to_displayer, init_logging, register_sources};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
 use joule_profiler_source_amdsmi::AmdSmi;
@@ -14,7 +14,6 @@ use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_procfs::Procfs;
 use joule_profiler_source_procfs::config::ProcfsConfig;
 use joule_profiler_source_rapl::{perf, powercap};
-use log::{trace, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,78 +22,24 @@ async fn main() -> Result<()> {
 
     init_logging(cli.verbose);
 
-    let mut displayer = output_format_to_displayer(&cli)?;
     let mut profiler = JouleProfiler::new();
 
-    let rapl_path = cli.rapl_path.as_deref();
-    let rapl_sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
-    let rapl_polling = match &cli.command {
-        ProfilerCommand::Profile(profile_args) => profile_args.rapl_polling,
-        ProfilerCommand::ListSensors => None,
+    let mut config_table = if let Some(config_file) = &cli.config_file {
+        let content = std::fs::read_to_string(config_file)?;
+        let value: GlobalConfig = toml::from_str(&content)?;
+        ConfigTable::new(value, cli)
+    } else {
+        ConfigTable::new(GlobalConfig::default(), cli)
     };
 
-    if cli.sources.contains(&Source::Rapl) {
-        match cli.rapl_backend {
-            RaplBackend::Perf => {
-                if let Err(err) = perf::Rapl::check_perf_access() {
-                    warn!("Cannot initialize RAPL with perf_event, switching to powercap: {err}");
-                    let rapl_powercap =
-                        powercap::Rapl::new(rapl_path, rapl_sockets_spec.as_ref(), rapl_polling)?;
-                    profiler.add_source(rapl_powercap);
-                } else {
-                    trace!("Using perf_event for RAPL profiling");
-                    let perf_rapl = perf::Rapl::new(rapl_sockets_spec.as_ref())?;
-                    profiler.add_source(perf_rapl);
-                }
-            }
-            RaplBackend::Powercap => {
-                trace!("Using Powercap for RAPL profiling");
-                let rapl_powercap =
-                    powercap::Rapl::new(rapl_path, rapl_sockets_spec.as_ref(), rapl_polling)?;
-                profiler.add_source(rapl_powercap);
-            }
-        }
-    }
+    register_sources!(
+        &mut profiler,
+        &mut config_table,
+        [PerfEvent, Nvml, perf::Rapl, powercap::Rapl, CgroupSource, AmdSmi, Procfs]
+    );
 
-    if cli.sources.contains(&Source::Nvml) {
-        match Nvml::new(NvmlConfig::default()) {
-            Ok(nvml) => {
-                trace!("Using NVML for Nvidia GPU profiling");
-                profiler.add_source(nvml);
-            }
-            Err(err) => warn!("{err}"),
-        }
-    }
-
-    if cli.sources.contains(&Source::AmdSmi) {
-        match AmdSmi::new(AmdSmiConfig::default()) {
-            Ok(amdsmi) => {
-                trace!("Using AMD SMI for AMD GPU profiling");
-                profiler.add_source(amdsmi);
-            }
-            Err(err) => warn!("{err}"),
-        }
-    }
-
-    if cli.sources.contains(&Source::Perf) {
-        trace!("Initializing perf_event source");
-        let perf_event = PerfEvent::new()?;
-        profiler.add_source(perf_event);
-    }
-
-    if cli.sources.contains(&Source::Procfs) {
-        trace!("Initializing procfs source");
-        let procfs = Procfs::new(ProcfsConfig::default())?;
-        profiler.add_source(procfs);
-    }
-
-    if cli.sources.contains(&Source::Cgroup) {
-        trace!("Initializing CGroup v2 source");
-        let cgroup = CgroupSource::new(CgroupConfig::default())?;
-        profiler.add_source(cgroup);
-    }
-
-    let config = Config::try_from(cli)?;
+    let mut displayer = config_to_displayer(&config_table)?;
+    let config: Config = config_table.try_into()?;
 
     match config.command {
         Command::Profile(profile_config) => {
