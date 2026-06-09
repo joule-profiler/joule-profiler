@@ -5,7 +5,7 @@ use clap::Parser;
 /// Arguments for profiling mode.
 #[derive(Parser, Debug)]
 pub struct ProfileArgs {
-    /// Regex pattern to detect phase tokens in program output.
+    /// Regex pattern to detect phase tokens in program output. (default: __[A-Z0-9_]+__)
     ///
     /// Matches tokens in stdout; if the pattern has a capture group, the
     /// captured text is used as the token name. Energy phases computed:
@@ -15,10 +15,10 @@ pub struct ProfileArgs {
     ///   - `last_token` -> END
     #[arg(
         long = "token-pattern",
-        default_value = "__[A-Z0-9_]+__",
+        // default_value = "__[A-Z0-9_]+__",
         value_name = "REGEX"
     )]
-    pub token_pattern: String,
+    pub token_pattern: Option<String>,
 
     /// Redirect profiled program stdout to this file.
     #[arg(short = 'o', long = "stdout-file")]
@@ -36,8 +36,9 @@ pub struct ProfileArgs {
     #[arg(long = "use-root")]
     pub use_root: bool,
 
-    /// Duration before aborting sources initialization.
+    /// Duration before aborting sources initialization. (default: 1s)
     #[clap(value_parser = humantime::parse_duration)]
-    #[arg(long = "init-timeout", default_value = "1s")]
-    pub init_timeout: Duration,
+    // #[arg(long = "init-timeout", default_value = "1s")]
+    #[arg(long = "init-timeout")]
+    pub init_timeout: Option<Duration>,
 }

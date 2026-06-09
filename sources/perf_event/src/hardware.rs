@@ -1,16 +1,11 @@
-use crate::{
-    Result,
-    error::PerfEventError,
-    event::{EVENTS, Event},
-    snapshot::Snapshot,
-};
+use crate::{Result, error::PerfEventError, event::Event, snapshot::Snapshot};
 use log::{debug, info, trace};
 use perf_event::{Builder, Counter, events::Hardware};
 use std::collections::HashMap;
 
 #[cfg_attr(test, mockall::automock)]
-pub trait PerfEventHardware: Send {
-    fn init_counters(&mut self, pid: i32) -> Result<()>;
+pub trait PerfEventHardware: Send + Default {
+    fn init_counters(&mut self, events: &[Event], pid: i32) -> Result<()>;
     fn read_snapshot(&mut self) -> Result<Snapshot>;
 }
 
@@ -24,9 +19,9 @@ impl PerfEventHardware for PerfEventCounters {
     ///
     /// Each counter is built separately with `inherit(true)` and `observe_pid`,
     /// since grouped counters do not support inheritance.
-    fn init_counters(&mut self, pid: i32) -> Result<()> {
-        debug!("Adding {} individual performance counters", EVENTS.len());
-        for event in EVENTS {
+    fn init_counters(&mut self, events: &[Event], pid: i32) -> Result<()> {
+        debug!("Adding {} individual performance counters", events.len());
+        for event in events {
             trace!("Building counter: {event:?}");
             let counter = Builder::new(Hardware::from(*event))
                 .inherit(true)
@@ -36,7 +31,7 @@ impl PerfEventHardware for PerfEventCounters {
                 .build()?;
             self.counters.insert(*event, counter);
         }
-        info!("Initialized {} hardware performance counters", EVENTS.len());
+        info!("Initialized {} hardware performance counters", events.len());
         for (event, counter) in &mut self.counters {
             trace!("Enabling counter: {event:?}");
             counter.enable()?;
@@ -60,11 +55,5 @@ impl PerfEventHardware for PerfEventCounters {
             })
             .collect::<Result<HashMap<_, _>>>()?;
         Ok(Snapshot { metrics })
-    }
-}
-
-impl PerfEventCounters {
-    pub fn new() -> Self {
-        Self::default()
     }
 }

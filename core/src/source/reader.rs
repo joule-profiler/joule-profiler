@@ -1,3 +1,5 @@
+use serde::de::DeserializeOwned;
+
 use crate::aggregate::Metrics;
 use crate::sensor::Sensors;
 use crate::source::{MetricReaderErrorBound, MetricReaderTypeBound};
@@ -34,6 +36,13 @@ pub trait MetricReader: Send + 'static {
     /// Error type produced by the reader.
     type Error: MetricReaderErrorBound;
 
+    /// Config type for configuring the source.
+    type Config: Default + DeserializeOwned;
+
+    fn from_config(config: Self::Config) -> Result<Self, Self::Error>
+    where
+        Self: Sized;
+
     /// Init the source if it implements custom logic underneath.
     fn init(&mut self, _pid: i32) -> impl Future<Output = Result<(), Self::Error>> + Send {
         async { Ok(()) }
@@ -58,4 +67,7 @@ pub trait MetricReader: Send + 'static {
 
     /// Get the name of the metric source.
     fn get_name() -> &'static str;
+
+    /// Get the id of the metric source.
+    fn get_id() -> &'static str;
 }
