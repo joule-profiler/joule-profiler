@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::output::formats::OutputFormat;
 
-mod cli_override;
 pub mod source;
 pub mod table;
 

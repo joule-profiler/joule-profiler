@@ -124,16 +124,18 @@ pub enum RaplBackend {
     Powercap,
 }
 
-pub fn config_to_displayer(config_table: &ConfigTable) -> Result<Box<dyn Displayer>> {
-    let output_format = if config_table.cli.json {
+pub fn config_to_displayer(
+    config_table: &ConfigTable,
+    cli: &CliArgs,
+) -> Result<Box<dyn Displayer>> {
+    let output_format = if cli.json {
         OutputFormat::Json
-    } else if config_table.cli.csv {
+    } else if cli.csv {
         OutputFormat::Csv
     } else {
         config_table.config.profiler.output_format
     };
-    let output_file = config_table
-        .cli
+    let output_file = cli
         .output_file
         .as_ref()
         .or(config_table.config.profiler.output_file.as_ref())

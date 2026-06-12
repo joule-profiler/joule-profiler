@@ -8,44 +8,36 @@ use joule_profiler_core::{
 use log::warn;
 
 use crate::{
-    CliArgs, ProfilerCommand,
+    CliArgs, ProfilerCommand, Source,
     config::{GlobalConfig, source::MetricSourceConfig},
+    config_to_displayer,
+    output::displayer::Displayer,
 };
 
 pub struct ConfigTable {
-    pub cli: CliArgs,
     pub config: GlobalConfig,
     enabled_sources: HashSet<String>,
 }
 
 impl ConfigTable {
-    pub fn new(mut config: GlobalConfig, cli: CliArgs) -> Self {
-        if let Some(output_file) = &cli.output_file {
-            config.profiler.output_file = Some(output_file.clone());
-        }
-
-        let sources: HashSet<_> = config
+    pub fn new(config: GlobalConfig, sources: &[Source]) -> Self {
+        let enabled_sources: HashSet<_> = config
             .sources
             .keys()
             .cloned()
-            .chain(cli.sources.iter().map(|s| s.to_string()))
+            .chain(sources.iter().map(|s| s.to_string()))
             .collect();
-
-        println!("{:?}", sources);
-
-        println!("{config:?}");
 
         Self {
             config,
-            cli,
-            enabled_sources: sources,
+            enabled_sources,
         }
     }
 
     pub fn build_source_override<R, O>(
         &mut self,
-        config_override: &O,
-        config_override_fn: impl FnOnce(&O, &mut R::Config),
+        config_override: &mut O,
+        config_override_fn: impl FnOnce(&mut O, &mut R::Config),
     ) -> Result<Option<R>>
     where
         R: MetricReader,
@@ -61,7 +53,7 @@ impl ConfigTable {
 
         let mut config = config_wrapper.inner;
 
-        config_override_fn(&config_override, &mut config);
+        config_override_fn(config_override, &mut config);
 
         match R::from_config(config) {
             Ok(reader) => Ok(Some(reader)),
@@ -111,24 +103,26 @@ impl ConfigTable {
     }
 }
 
-impl TryFrom<ConfigTable> for Config {
-    type Error = anyhow::Error;
+impl ConfigTable {
+    pub fn to_config(self, cli: CliArgs) -> Result<(Config, Box<dyn Displayer>)> {
+        let displayer = config_to_displayer(&self, &cli)?;
 
-    fn try_from(config_table: ConfigTable) -> Result<Self> {
-        let command = match config_table.cli.command {
+        let command = match cli.command {
             ProfilerCommand::Profile(profile_args) => {
-                let profiler_config = config_table.config.profiler;
-                let mut builder = ProfileConfigBuilder::default();
-
+                let profiler_config = self.config.profiler;
                 let stdout_file = profile_args.stdout_file.or(profiler_config.stdout_file);
+
                 let use_root = profile_args.use_root || profiler_config.use_root;
+
                 let init_timeout = profile_args
                     .init_timeout
                     .unwrap_or(profiler_config.init_timeout);
-                println!("\ntimeout: {init_timeout:?}\n");
+
                 let token_pattern = profile_args
                     .token_pattern
                     .unwrap_or(profiler_config.token_pattern);
+
+                let mut builder = ProfileConfigBuilder::default();
 
                 let config = builder
                     .cmd(profile_args.cmd)
@@ -142,6 +136,7 @@ impl TryFrom<ConfigTable> for Config {
             }
             ProfilerCommand::ListSensors => Command::ListSensors,
         };
-        Ok(Self { command })
+
+        Ok((Config { command }, displayer))
     }
 }
