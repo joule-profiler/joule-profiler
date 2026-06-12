@@ -104,32 +104,6 @@ pub struct Nvml<H: NvmlHardware = NvmlWrapperHardware> {
     power_counters: Arc<Mutex<HashMap<u32, PowerCounter>>>,
 }
 
-impl Nvml {
-    /// Creates a new NVML source instance.
-    /// This initializes the NVML hardware with the specified devices specification.
-    ///
-    /// This function will return an error if:
-    /// - The NVML library cannot be initialized (driver not installed, incompatible version, etc.)
-    /// - Device information cannot be queried.
-    /// - No GPU devices are detected.
-    /// - The permissions are insufficient to be able to query the NVML driver.
-    pub fn new(config: NvmlConfig) -> Result<Self> {
-        let mut hardware = NvmlWrapperHardware::new()?;
-        let devices = hardware.init_devices(config.gpus_spec.as_ref())?;
-
-        Ok(Self {
-            config,
-            hardware: Arc::new(hardware),
-            devices: Arc::new(devices),
-            handle: None,
-            energy_counters: HashMap::default(),
-            power_counters: Arc::default(),
-            utilization_counters: Arc::default(),
-            vram_counters: Arc::default(),
-        })
-    }
-}
-
 impl<H: NvmlHardware> Nvml<H> {
     /// Creates the worker task for power and vram polling at the specified polling interval.
     pub fn create_worker(
@@ -224,10 +198,24 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
 
     type Error = NvmlError;
 
-    type Config = ();
+    type Config = NvmlConfig;
 
-    fn from_config(_config: Self::Config) -> Result<Self> {
-        Self::new()
+    /// Creates a new NVML source instance.
+    /// This initializes the NVML hardware with the specified devices specification.
+    fn from_config(config: NvmlConfig) -> Result<Self> {
+        let mut hardware = H::new()?;
+        let devices = hardware.init_devices(config.gpus_spec.as_ref())?;
+
+        Ok(Self {
+            config,
+            hardware: Arc::new(hardware),
+            devices: Arc::new(devices),
+            handle: None,
+            energy_counters: HashMap::default(),
+            power_counters: Arc::default(),
+            utilization_counters: Arc::default(),
+            vram_counters: Arc::default(),
+        })
     }
 
     async fn measure(&mut self) -> Result<()> {
@@ -443,11 +431,7 @@ mod tests {
     use tokio::time::sleep;
 
     use crate::{
-        Device, DeviceSupport, Nvml,
-        config::NvmlConfig,
-        counters::{Counter, PowerMeasurement},
-        error::NvmlError,
-        hardware::MockNvmlHardware,
+        Device, DeviceSupport, Nvml, config::NvmlConfig, counters::{Counter, PowerMeasurement}, error::NvmlError, hardware::{MockNvmlHardware, NvmlHardware},
     };
 
     fn make_device(index: u32, support: DeviceSupport) -> Device {
@@ -485,7 +469,7 @@ mod tests {
     async fn measure_reads_energy_for_energy_capable_device() {
         let device = make_device(0, DeviceSupport::Energy);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_energy()
             .with(predicate::function(move |d: &Device| {
                 d.index == device.index
@@ -503,7 +487,7 @@ mod tests {
     async fn measure_reads_power_for_power_only_device() {
         let device = make_device(0, DeviceSupport::Power);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_power()
             .with(predicate::function(move |d: &Device| {
                 d.index == device.index
@@ -521,7 +505,7 @@ mod tests {
     async fn measure_reads_vram_for_vram_capable_device() {
         let device = make_device(0, DeviceSupport::Vram);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_vram_usage()
             .with(predicate::function(move |d: &Device| {
                 d.index == device.index
@@ -539,7 +523,7 @@ mod tests {
     async fn measure_reads_utilization_for_utilization_capable_device() {
         let device = make_device(0, DeviceSupport::Utilization);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_utilization()
             .with(predicate::function(|d: &Device| d.index == 0))
             .once()
@@ -555,7 +539,7 @@ mod tests {
     async fn measure_skips_energy_and_power_for_vram_only_device() {
         let device = make_device(0, DeviceSupport::Vram);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_energy().never();
         hw.expect_get_power().never();
         hw.expect_get_vram_usage()
@@ -573,7 +557,7 @@ mod tests {
     async fn measure_propagates_energy_error() {
         let device = make_device(0, DeviceSupport::Energy);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_energy()
             .once()
             .returning(|_| Err(NvmlError::NoPermission));
@@ -586,7 +570,7 @@ mod tests {
     async fn measure_propagates_power_error() {
         let device = make_device(0, DeviceSupport::Power);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_power()
             .once()
             .returning(|_| Err(NvmlError::NoPermission));
@@ -599,7 +583,7 @@ mod tests {
     async fn retrieve_returns_counters_and_resets_them() {
         let device = make_device(0, DeviceSupport::Energy | DeviceSupport::Vram);
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_energy().returning(|_| Ok(10_000));
         hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
 
@@ -629,7 +613,7 @@ mod tests {
             make_device(2, DeviceSupport::Vram),
         ];
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_energy().returning(|_| Ok(1_000));
         hw.expect_get_power()
             .returning(|_| Ok(power_measurement(5_000)));
@@ -647,7 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn init_does_not_spawn_worker_without_poll_interval() {
-        let mut nvml = build_nvml(MockNvmlHardware::new(), vec![], None);
+        let mut nvml = build_nvml(MockNvmlHardware::new().unwrap(), vec![], None);
         nvml.init(1234).await.unwrap();
         assert!(nvml.handle.is_none());
     }
@@ -655,7 +639,7 @@ mod tests {
     #[tokio::test]
     async fn init_spawns_worker_with_poll_interval() {
         let mut nvml = build_nvml(
-            MockNvmlHardware::new(),
+            MockNvmlHardware::new().unwrap(),
             vec![],
             Some(Duration::from_millis(50)),
         );
@@ -671,7 +655,7 @@ mod tests {
             DeviceSupport::Power | DeviceSupport::Vram | DeviceSupport::Utilization,
         );
 
-        let mut hw = MockNvmlHardware::new();
+        let mut hw = MockNvmlHardware::new().unwrap();
         hw.expect_get_power()
             .returning(|_| Ok(power_measurement(5_000)));
         hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));

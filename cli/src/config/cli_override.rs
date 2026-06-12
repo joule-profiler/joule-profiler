@@ -1,3 +1,4 @@
+use joule_profiler_source_nvml::config::NvmlConfig;
 use joule_profiler_source_perf_event::config::PerfConfig;
 
 use crate::CliArgs;
@@ -7,8 +8,8 @@ pub trait CliOverride: Sized {
     fn apply_override(self, cli: &CliArgs, config: &mut Self) {}
 }
 
-impl CliOverride for () {
-    fn apply_override(self, _cli: &crate::CliArgs, _config: &mut Self) {}
-}
+impl CliOverride for () {}
 
 impl CliOverride for PerfConfig {}
+
+impl CliOverride for NvmlConfig {}

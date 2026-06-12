@@ -18,6 +18,10 @@ pub enum NvmlError {
     #[error("Insufficient permissions to access NVML. Try running with sudo")]
     NoPermission,
 
+    /// The NVML library detected no device.
+    #[error("No GPU device detected.")]
+    NoDeviceDetected,
+
     /// Error propagated from the underlying `nvml_wrapper` library.
     #[error("NVML error: {0}")]
     NvmlError(
