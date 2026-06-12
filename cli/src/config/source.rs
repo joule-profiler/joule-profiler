@@ -33,3 +33,22 @@ where
 
     Ok(())
 }
+
+pub fn register_source_override<R, O>(
+    profiler: &mut JouleProfiler,
+    config_table: &mut ConfigTable,
+    config_override: &O,
+    config_override_fn: impl FnOnce(&O, &mut R::Config),
+) -> Result<()>
+where
+    R: MetricReader,
+    R::Config: CliOverride,
+{
+    if let Some(reader) =
+        config_table.build_source_override::<R, O>(config_override, config_override_fn)?
+    {
+        profiler.add_source(reader);
+    }
+
+    Ok(())
+}

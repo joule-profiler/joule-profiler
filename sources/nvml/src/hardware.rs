@@ -8,6 +8,9 @@ use crate::{Device, DeviceSupport, Result, counters::PowerMeasurement, error::Nv
 /// Trait for abstracting the backend of NVML library. Used for testing.
 #[cfg_attr(test, mockall::automock)]
 pub trait NvmlHardware: Send + Sync + 'static {
+    /// Creates an hardware instance.
+    fn new() -> Result<Self> where Self: Sized;
+
     /// Init all GPU devices specicied by the provided specification.
     // Automock needs lifetime and clippy wants it erased.
     #[allow(clippy::needless_lifetimes)]
@@ -32,13 +35,13 @@ pub struct NvmlWrapperHardware {
     pub nvml: nvml_wrapper::Nvml,
 }
 
-impl NvmlWrapperHardware {
+impl NvmlHardware for NvmlWrapperHardware {
     /// Creates a new NVML hardware instance.
     ///
     /// This function will return an error if:
     /// - The NVML library cannot be initialized (driver not installed, incompatible version, etc.)
     /// - The permissions are insufficient to be able to query the NVML driver.
-    pub fn new() -> Result<Self> {
+    fn new() -> Result<Self> {
         debug!("Attempting to initialize NVML reader");
         let nvml = nvml_wrapper::Nvml::init().map_err(|err| match err {
             nvml_wrapper::error::NvmlError::DriverNotLoaded => NvmlError::NoDriverLoaded,
@@ -48,9 +51,7 @@ impl NvmlWrapperHardware {
 
         Ok(Self { nvml })
     }
-}
 
-impl NvmlHardware for NvmlWrapperHardware {
     /// Initializes devices with the specified devices specification.
     /// Check the compatibility of each device and determine which metrics can be queried.
     fn init_devices(&mut self, spec: Option<&HashSet<u32>>) -> Result<Vec<Device>> {

@@ -1,7 +1,9 @@
 use std::{collections::HashSet, time::Duration};
 
+use serde::Deserialize;
+
 /// Configuration of the NVML source.
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct NvmlConfig {
     /// Optional background polling interval.
     pub poll_interval: Option<Duration>,
