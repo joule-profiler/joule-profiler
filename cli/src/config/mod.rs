@@ -8,12 +8,15 @@ mod cli_override;
 pub mod source;
 pub mod table;
 
+const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(1);
+const DEFAULT_TOKEN_PATTERN: &str = "__[A-Z0-9_]+__";
+
 fn default_timeout() -> Duration {
-    Duration::from_secs(1)
+    DEFAULT_INIT_TIMEOUT
 }
 
 fn default_token_pattern() -> String {
-    String::from("__[A-Z0-9_]+__")
+    DEFAULT_TOKEN_PATTERN.to_owned()
 }
 
 #[derive(Debug, Default, Deserialize)]

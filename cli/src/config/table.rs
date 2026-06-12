@@ -42,6 +42,43 @@ impl ConfigTable {
         }
     }
 
+    pub fn build_source_override<R, O>(
+        &mut self,
+        config_override: &O,
+        config_override_fn: impl FnOnce(&O, &mut R::Config),
+    ) -> Result<Option<R>>
+    where
+        R: MetricReader,
+    {
+        if !self.enabled_sources.contains(R::get_id()) {
+            return Ok(None);
+        }
+
+        let config_wrapper = match self.config.sources.remove(R::get_id()) {
+            Some(v) => v.try_into(),
+            None => Ok(MetricSourceConfig::default()),
+        }?;
+
+        let mut config = config_wrapper.inner;
+
+        config_override_fn(&config_override, &mut config);
+
+        match R::from_config(config) {
+            Ok(reader) => Ok(Some(reader)),
+            Err(e) => {
+                if config_wrapper.ignore_on_failure {
+                    warn!(
+                        "Failed to initialize source {}, skipping. Cause: {e}.",
+                        R::get_name()
+                    );
+                    Ok(None)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
+    }
+
     pub fn build_source<R>(&mut self) -> Result<Option<R>>
     where
         R: MetricReader,
@@ -88,6 +125,7 @@ impl TryFrom<ConfigTable> for Config {
                 let init_timeout = profile_args
                     .init_timeout
                     .unwrap_or(profiler_config.init_timeout);
+                println!("\ntimeout: {init_timeout:?}\n");
                 let token_pattern = profile_args
                     .token_pattern
                     .unwrap_or(profiler_config.token_pattern);
