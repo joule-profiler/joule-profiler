@@ -1,13 +1,14 @@
 use anyhow::Result;
 use joule_profiler_cli::config::GlobalConfig;
-use joule_profiler_cli::config::source::register_source;
+use joule_profiler_cli::config::source::{register_source, register_source_override};
 use joule_profiler_cli::config::table::ConfigTable;
-use joule_profiler_cli::{CliArgs, config_to_displayer, init_logging, register_sources};
+use joule_profiler_cli::{CliArgs, ProfilerCommand, RaplBackend, init_logging, parse_sockets_spec};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
 use joule_profiler_source_amdsmi::AmdSmi;
 use joule_profiler_source_amdsmi::config::AmdSmiConfig;
 use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
+use joule_profiler_core::config::Command;
 use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_nvml::config::NvmlConfig;
 use joule_profiler_source_perf_event::PerfEvent;
@@ -17,7 +18,7 @@ use joule_profiler_source_rapl::{perf, powercap};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = CliArgs::from_args();
+    let mut cli = CliArgs::from_args();
     cli.validate()?;
 
     init_logging(cli.verbose);
@@ -27,19 +28,42 @@ async fn main() -> Result<()> {
     let mut config_table = if let Some(config_file) = &cli.config_file {
         let content = std::fs::read_to_string(config_file)?;
         let value: GlobalConfig = toml::from_str(&content)?;
-        ConfigTable::new(value, cli)
+        ConfigTable::new(value, &cli.sources)
     } else {
-        ConfigTable::new(GlobalConfig::default(), cli)
+        ConfigTable::new(GlobalConfig::default(), &cli.sources)
     };
 
-    register_sources!(
-        &mut profiler,
-        &mut config_table,
-        [PerfEvent, Nvml, perf::Rapl, powercap::Rapl, CgroupSource, AmdSmi, Procfs]
-    );
+    match cli.rapl_backend {
+        RaplBackend::Perf => register_source_override::<perf::Rapl, CliArgs>(
+            &mut profiler,
+            &mut config_table,
+            &mut cli,
+            |cli, config| {
+                config.sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
+            },
+        ),
 
-    let mut displayer = config_to_displayer(&config_table)?;
-    let config: Config = config_table.try_into()?;
+        RaplBackend::Powercap => register_source_override::<powercap::Rapl, CliArgs>(
+            &mut profiler,
+            &mut config_table,
+            &mut cli,
+            |cli, config| {
+                config.rapl_path = cli.rapl_path.take();
+                config.sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
+                if let ProfilerCommand::Profile(profile_args) = &cli.command {
+                    config.poll_interval = profile_args.rapl_polling
+                }
+            },
+        ),
+    }?;
+
+    register_source::<PerfEvent>(&mut profiler, &mut config_table)?;
+    register_source::<CgroupSource>(&mut profiler, &mut config_table)?;
+    register_source::<Procfs>(&mut profiler, &mut config_table)?;
+    register_source::<Nvml>(&mut profiler, &mut config_table)?;
+    register_source::<AmdSmi>(&mut profiler, &mut config_table)?;
+
+    let (config, mut displayer) = config_table.to_config(cli)?;
 
     match config.command {
         Command::Profile(profile_config) => {

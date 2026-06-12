@@ -2,7 +2,7 @@ use anyhow::Result;
 use joule_profiler_core::{JouleProfiler, source::MetricReader};
 use serde::Deserialize;
 
-use crate::config::{cli_override::CliOverride, table::ConfigTable};
+use crate::config::table::ConfigTable;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct MetricSourceConfig<T> {
@@ -25,7 +25,6 @@ pub fn register_source<R>(
 ) -> Result<()>
 where
     R: MetricReader,
-    R::Config: CliOverride,
 {
     if let Some(reader) = config_table.build_source::<R>()? {
         profiler.add_source(reader);
@@ -37,12 +36,11 @@ where
 pub fn register_source_override<R, O>(
     profiler: &mut JouleProfiler,
     config_table: &mut ConfigTable,
-    config_override: &O,
-    config_override_fn: impl FnOnce(&O, &mut R::Config),
+    config_override: &mut O,
+    config_override_fn: impl FnOnce(&mut O, &mut R::Config),
 ) -> Result<()>
 where
     R: MetricReader,
-    R::Config: CliOverride,
 {
     if let Some(reader) =
         config_table.build_source_override::<R, O>(config_override, config_override_fn)?
