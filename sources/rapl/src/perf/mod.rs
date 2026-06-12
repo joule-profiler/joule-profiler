@@ -25,9 +25,12 @@ use crate::{
 };
 
 mod compute;
+mod config;
 mod domain;
 mod event;
 mod socket;
+
+pub use config::RaplConfig;
 
 /// Default sysfs path for perf RAPL counters.
 const PERF_RAPL_PATH: &str = "/sys/bus/event_source/devices/power";
@@ -122,10 +125,10 @@ impl Rapl {
 impl MetricReader for Rapl {
     type Type = Phase;
     type Error = RaplError;
-    type Config = ();
+    type Config = RaplConfig;
 
-    fn from_config(_config: Self::Config) -> Result<Self> {
-        Self::new(None)
+    fn from_config(config: Self::Config) -> Result<Self> {
+        Self::new(config.sockets_spec.as_ref())
     }
 
     /// Enable the `perf_event` counters.
@@ -214,7 +217,7 @@ impl MetricReader for Rapl {
     }
 
     fn get_id() -> &'static str {
-        "perf_rapl"
+        "rapl"
     }
 }
 

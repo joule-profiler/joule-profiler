@@ -47,6 +47,7 @@
 use crate::MICRO_JOULE_UNIT;
 use crate::error::RaplError;
 use crate::powercap::compute::compute_measurement_from_snapshots;
+use crate::powercap::config::RaplConfig;
 use crate::powercap::domain::{RaplDomain, get_domains, read_energy};
 use crate::snapshot::Snapshot;
 use crate::util::check_os;
@@ -66,6 +67,7 @@ use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 
 mod compute;
+pub mod config;
 mod domain;
 mod socket;
 
@@ -99,7 +101,7 @@ impl Rapl {
     ///
     /// `rapl_path` - base path to RAPL domains (e.g., `/sys/devices/virtual/powercap/intel-rapl`)
     /// `sockets` - optional set of CPU sockets to monitor
-    /// `polling_rate_s` - optional interval in seconds for periodic measurement
+    /// `poll_interval` - optional interval for periodic measurement
     ///
     /// # Errors
     ///
@@ -110,7 +112,7 @@ impl Rapl {
     pub fn new(
         rapl_path: Option<&str>,
         sockets_spec: Option<&HashSet<u32>>,
-        polling_rate_s: Option<f64>,
+        poll_interval: Option<Duration>,
     ) -> Result<Self> {
         let rapl_path = rapl_base_path(rapl_path);
 
@@ -128,8 +130,6 @@ impl Rapl {
         }
 
         info!("Discovered {} RAPL domain(s)", domains.len());
-
-        let poll_interval = polling_rate_s.map(Duration::from_secs_f64);
 
         trace!(
             "Creating Rapl instance (domains={}, ticker={})",
@@ -182,10 +182,14 @@ impl Rapl {
 impl MetricReader for Rapl {
     type Type = Snapshot;
     type Error = RaplError;
-    type Config = ();
+    type Config = RaplConfig;
 
-    fn from_config(_config: Self::Config) -> Result<Self> {
-        Self::try_default()
+    fn from_config(config: Self::Config) -> Result<Self> {
+        Self::new(
+            config.rapl_path.as_deref(),
+            config.sockets_spec.as_ref(),
+            config.poll_interval,
+        )
     }
 
     async fn init(&mut self, _: i32) -> Result<()> {
@@ -306,7 +310,7 @@ impl MetricReader for Rapl {
     }
 
     fn get_id() -> &'static str {
-        "powercap_rapl"
+        "rapl"
     }
 }
 
