@@ -115,7 +115,7 @@ pub enum PerfParanoidError {
     #[error(
         "perf_event_paranoid level is {0}, try setting it to 0 or launch profiler with root rights"
     )]
-    ParanoidLevelTooHigh(u8),
+    ParanoidLevelTooHigh(i8),
 
     /// Generic I/O error while reading the paranoid file.
     #[error(transparent)]

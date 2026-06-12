@@ -219,7 +219,7 @@ fn read_pmu_type() -> Result<u32> {
 /// Read the `perf_event_paranoid` level from `/proc`.
 ///
 /// Returns a `PerfParanoidError` if the file cannot be read or parsed.
-fn read_paranoid_level() -> Result<u8> {
+fn read_paranoid_level() -> Result<i8> {
     read_paranoid_level_from_path(PERF_PARANOID_PATH)
 }
 
@@ -231,14 +231,14 @@ fn read_pmu_type_from_path(path: &str) -> Result<u32> {
         .map_err(Into::into)
 }
 
-fn read_paranoid_level_from_path(path: &str) -> Result<u8> {
+fn read_paranoid_level_from_path(path: &str) -> Result<i8> {
     fs::read_to_string(path)
         .map_err(|err| match err.kind() {
             ErrorKind::NotFound => PerfParanoidError::NotFound,
             ErrorKind::PermissionDenied => PerfParanoidError::PermissionDenied(err.to_string()),
             _ => PerfParanoidError::IoError(err),
         })
-        .map(|s| s.trim().parse::<u8>())?
+        .map(|s| s.trim().parse::<i8>())?
         .map_err(|err| PerfParanoidError::ParseParanoidLevelError(err).into())
 }
 
@@ -262,11 +262,10 @@ mod tests {
     }
 
     #[test]
-    fn read_paranoid_level_negative_stored_as_high_byte() {
-        // -1 in the kernel is written as 255 when parsed as u8
+    fn read_paranoid_level_negative() {
         let dir = TempDir::new().unwrap();
-        let path = write_file(&dir, "paranoid", "255\n");
-        assert_eq!(read_paranoid_level_from_path(&path).unwrap(), 255);
+        let path = write_file(&dir, "paranoid", "-1\n");
+        assert_eq!(read_paranoid_level_from_path(&path).unwrap(), -1);
     }
 
     #[test]
