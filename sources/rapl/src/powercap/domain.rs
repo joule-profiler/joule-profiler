@@ -124,7 +124,10 @@ fn add_domain_if_energy(dir: &Path, out: &mut Vec<RaplDomain>) -> Result<()> {
         Ok(n) => n,
         Err(e) => match e.kind() {
             ErrorKind::NotFound => {
-                warn!("Directory {} missing energy_uj file, ignored.", dir.display());
+                warn!(
+                    "Directory {} missing energy_uj file, ignored.",
+                    dir.display()
+                );
                 return Ok(());
             }
             _ => return Err(e)?,
@@ -149,7 +152,10 @@ fn add_domain_if_energy(dir: &Path, out: &mut Vec<RaplDomain>) -> Result<()> {
         let domain = RaplDomain::try_new(path, name_trimmed, socket, max_energy_uj)?;
         out.push(domain);
     } else {
-        warn!("Domain {} missing max_energy_range_uj, ignored.", dir.display());
+        warn!(
+            "Domain {} missing max_energy_range_uj, ignored.",
+            dir.display()
+        );
     }
 
     Ok(())
