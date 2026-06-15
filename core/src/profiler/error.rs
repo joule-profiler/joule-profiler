@@ -16,6 +16,9 @@ pub enum JouleProfilerError {
     #[error("Command not found: {0}")]
     CommandNotFound(String),
 
+    #[error("The provided command is empty.")]
+    EmptyCommand,
+
     /// The output file could not be created at the given path.
     #[error("Failed to create output file: {0}")]
     OutputFileCreationFailed(String),
