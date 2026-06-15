@@ -1,6 +1,6 @@
 use std::fs::File;
-use std::io::Write;
 
+use csv::{QuoteStyle, Writer};
 use joule_profiler_core::fs::{
     create_file_with_user_permissions, default_results_filename, get_absolute_path,
 };
@@ -13,8 +13,8 @@ type Result<T> = std::result::Result<T, DisplayerError>;
 
 /// CSV output writer to a file.
 pub struct CsvOutput {
-    /// File handle for writing CSV data.
-    file: File,
+    /// CSV writer wrapping the output file.
+    writer: Writer<File>,
 
     /// Path to the output CSV file.
     filename: String,
@@ -28,30 +28,46 @@ impl CsvOutput {
         let absolute_path = get_absolute_path(&filename)?;
         let file = create_file_with_user_permissions(&absolute_path)?;
 
+        let writer = csv::WriterBuilder::new()
+            .delimiter(b';')
+            .quote_style(QuoteStyle::Necessary)
+            .from_writer(file);
+
         Ok(Self {
-            file,
+            writer,
             filename: absolute_path,
         })
     }
 
     /// Write CSV header row.
     fn write_header(&mut self, with_iteration_id: bool) -> Result<()> {
+        let mut record: Vec<&str> = Vec::new();
+
         if with_iteration_id {
-            write!(self.file, "iteration_id;")?;
+            record.push("iteration_id");
         }
 
-        write!(self.file, "phase_id;phase_name;phase_duration_ms;")?;
-        write!(
-            self.file,
-            "metric_name;metric_value;metric_unit;metric_source;"
-        )?;
-        write!(
-            self.file,
-            "start_token;end_token;start_token_line;end_token_line;timestamp;"
-        )?;
-        write!(self.file, "command;exit_code;token_pattern")?;
-        writeln!(self.file)?;
+        record.extend_from_slice(&[
+            "phase_id",
+            "phase_name",
+            "phase_duration_ms",
+            "metric_name",
+            "metric_value",
+            "metric_unit",
+            "metric_source",
+            "start_token",
+            "end_token",
+            "start_token_line",
+            "end_token_line",
+            "timestamp",
+            "command",
+            "exit_code",
+            "token_pattern",
+        ]);
 
+        self.writer
+            .write_record(&record)
+            .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
         Ok(())
     }
 
@@ -63,51 +79,53 @@ impl CsvOutput {
         cmd: &str,
         token_pattern: &str,
     ) -> Result<()> {
-        for metric in &phase.metrics {
-            let start_token_line = phase
-                .start_token_line
-                .map(|l| l.to_string())
-                .unwrap_or_default();
-            let end_token_line = phase
-                .end_token_line
-                .map(|l| l.to_string())
-                .unwrap_or_default();
+        let start_token_line = phase
+            .start_token_line
+            .map(|l| l.to_string())
+            .unwrap_or_default();
+        let end_token_line = phase
+            .end_token_line
+            .map(|l| l.to_string())
+            .unwrap_or_default();
 
-            write!(
-                self.file,
-                "{};\"{}\";{};",
-                phase.index,
-                phase.get_name(),
-                phase.duration_ms
-            )?;
-            write!(
-                self.file,
-                "{};{};{};{};",
-                metric.name, metric.value, metric.unit, metric.source
-            )?;
-            write!(
-                self.file,
-                "{};{};{};{};{};",
-                phase.start_token,
-                phase.end_token,
-                start_token_line,
-                end_token_line,
-                phase.timestamp
-            )?;
-            write!(
-                self.file,
-                "\"{}\";{};\"{}\"",
-                cmd, results.exit_code, token_pattern
-            )?;
-            writeln!(self.file)?;
+        let phase_id = phase.index.to_string();
+        let phase_name = phase.get_name();
+        let duration_ms = phase.duration_ms.to_string();
+        let start_token = phase.start_token.to_string();
+        let end_token = phase.end_token.to_string();
+        let timestamp = phase.timestamp.to_string();
+        let exit_code = results.exit_code.to_string();
+
+        for metric in &phase.metrics {
+            self.writer
+                .write_record([
+                    &phase_id,
+                    &phase_name,
+                    &duration_ms,
+                    &metric.name,
+                    &metric.value.to_string(),
+                    &metric.unit.to_string(),
+                    &metric.source,
+                    &start_token,
+                    &end_token,
+                    &start_token_line,
+                    &end_token_line,
+                    &timestamp,
+                    cmd,
+                    &exit_code,
+                    token_pattern,
+                ])
+                .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
         }
 
         Ok(())
     }
 
-    /// Print a message indicating the CSV file has been written.
-    fn finalize(&self) {
+    /// Flush the writer and print a message indicating the CSV file has been written.
+    fn finalize(&mut self) -> Result<()> {
+        self.writer.flush()?;
         println!("CSV written to: {}", self.filename);
+        Ok(())
     }
 }
 
@@ -128,22 +146,26 @@ impl Displayer for CsvOutput {
             self.write_phase(phase, results, command.as_str(), token_pattern)?;
         }
 
-        self.finalize();
+        self.finalize()?;
         Ok(())
     }
 
     fn list_sensors(&mut self, sensors: &[Sensor]) -> Result<()> {
-        writeln!(self.file, "sensor;unit;source")?;
+        self.writer
+            .write_record(["sensor", "unit", "source"])
+            .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
 
         for sensor in sensors {
-            writeln!(
-                self.file,
-                "{};{};{}",
-                sensor.name, sensor.unit, sensor.source
-            )?;
+            self.writer
+                .write_record([
+                    sensor.name.as_str(),
+                    sensor.unit.to_string().as_str(),
+                    sensor.source.as_str(),
+                ])
+                .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
         }
 
-        self.finalize();
+        self.finalize()?;
         Ok(())
     }
 }
@@ -261,7 +283,7 @@ mod tests {
         csv.display_results(&["my_cmd".into(), "--flag".into()], "MY_PATTERN", &iter)
             .unwrap();
         let content = read(&tmp);
-        assert!(content.contains("500")); // duration_us
+        assert!(content.contains("500")); // duration_ms
         assert!(content.contains("MY_PATTERN"));
         assert!(content.contains("my_cmd --flag"));
         assert!(content.contains("3")); // exit_code
@@ -342,5 +364,31 @@ mod tests {
         assert!(content.contains("PKG"));
         assert!(content.contains("DRAM"));
         assert_eq!(content.lines().count(), 3);
+    }
+
+    #[test]
+    fn phases_semicolon_in_field_does_not_break_columns() {
+        let (mut csv, tmp) = csv_to_tempfile();
+        let iter = results(0, vec![simple_phase(vec![metric("PKG", 1)])]);
+        csv.display_results(&["echo".into(), "\"a;b\"".into()], "pat;tern", &iter)
+            .unwrap();
+        let content = read(&tmp);
+        let header_cols = content.lines().next().unwrap().split(';').count();
+        assert!(content.contains("a;b") || content.contains("\"a;b\""));
+        assert!(content.contains("pat;tern") || content.contains("\"pat;tern\""));
+        assert!(header_cols > 0);
+    }
+
+    #[test]
+    fn quotes_are_escaped() {
+        let (mut csv, tmp) = csv_to_tempfile();
+        let iter = results(0, vec![simple_phase(vec![metric("PKG", 1)])]);
+
+        csv.display_results(&["echo".into(), r#"hello "world""#.into()], ".*", &iter)
+            .unwrap();
+
+        let content = read(&tmp);
+
+        assert!(content.contains(r#"""world""""#));
     }
 }
