@@ -348,7 +348,12 @@ fn spawn_profiled_command(config: &ProfileConfig) -> Result<Child> {
 /// - The `SUDO_USER` environment variable cannot be retrieved, even so the user is root.
 /// - The user uid cannot be retrieved with it's username provided by the environment variable.  
 pub fn init_command(cmd: &[String], use_root: bool) -> Result<Command> {
-    let mut command = process::Command::new(&cmd[0]);
+    let mut command = if let Some(program) = cmd.first() {
+        process::Command::new(program)
+    } else {
+        return Err(JouleProfilerError::EmptyCommand);
+    };
+
     if cmd.len() > 1 {
         command.args(&cmd[1..]);
     }
