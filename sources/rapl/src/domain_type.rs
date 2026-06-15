@@ -67,21 +67,28 @@ impl Display for RaplDomainType {
     }
 }
 
-impl TryInto<RaplDomainType> for String {
+impl TryFrom<&str> for RaplDomainType {
     type Error = RaplError;
 
-    fn try_into(self) -> Result<RaplDomainType, RaplError> {
-        let name_lower = self.to_lowercase();
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let eq = |s| value.eq_ignore_ascii_case(s);
 
-        let domain_type = match name_lower.as_str() {
-            domain if domain.starts_with("package") => RaplDomainType::Package,
-            "energy-pkg" => RaplDomainType::Package,
-            "core" | "pp0" | "energy-cores" => RaplDomainType::Core,
-            "uncore" | "pp1" | "energy-uncore" | "energy-gpu" => RaplDomainType::Uncore,
-            "dram" | "ram" | "energy-ram" => RaplDomainType::Dram,
-            "psys" | "platform" | "energy-psys" => RaplDomainType::Psys,
-            _ => return Err(RaplError::UnknownDomain(name_lower)),
+        let domain_type = if eq("core") || eq("pp0") || eq("energy-cores") {
+            RaplDomainType::Core
+        } else if eq("uncore") || eq("pp1") || eq("energy-uncore") || eq("energy-gpu") {
+            RaplDomainType::Uncore
+        } else if eq("dram") || eq("ram") || eq("energy-ram") {
+            RaplDomainType::Dram
+        } else if (value.len() >= 7 && value[..7].eq_ignore_ascii_case("package"))
+            || eq("energy-pkg")
+        {
+            RaplDomainType::Package
+        } else if eq("psys") || eq("platform") || eq("energy-psys") {
+            RaplDomainType::Psys
+        } else {
+            return Err(RaplError::UnknownDomain(value.to_string()));
         };
+
         Ok(domain_type)
     }
 }
@@ -91,11 +98,11 @@ mod test {
     use crate::{RaplError, domain_type::RaplDomainType};
 
     fn str_to_domain(domain: &str) -> RaplDomainType {
-        domain.to_string().try_into().unwrap()
+        RaplDomainType::try_from(domain).unwrap()
     }
 
     fn str_to_domain_err(domain: &str) -> RaplError {
-        let result: Result<RaplDomainType, RaplError> = domain.to_string().try_into();
+        let result: Result<RaplDomainType, RaplError> = RaplDomainType::try_from(domain);
         result.unwrap_err()
     }
 
