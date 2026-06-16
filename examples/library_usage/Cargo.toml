@@ -1,0 +1,17 @@
+[package]
+name = "library_usage_example"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow = "1.0.102"
+joule-profiler-core = { version = "1.0.2", path = "../../core" }
+joule-profiler-source-rapl = { version = "1.0.2", path = "../../sources/rapl" }
+tokio.workspace = true
+
+[lints]
+workspace = true
