@@ -3,8 +3,9 @@ resolver = "2"
 members = [
     "core",
     "cli",
-    "sources/*"
-, "examples/library_usage"]
+    "sources/*",
+    "examples/library_usage"
+]
 
 [workspace.package]
 edition = "2024"
