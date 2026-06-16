@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     // Launch profiling.
     let results = profiler.profile(&profile_config).await?;
 
-    println!("{results:?}");
+    println!("{results:#?}");
 
     Ok(())
 }

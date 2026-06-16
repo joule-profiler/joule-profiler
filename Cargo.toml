@@ -4,7 +4,7 @@ members = [
     "core",
     "cli",
     "sources/*"
-]
+, "examples/library_usage"]
 
 [workspace.package]
 edition = "2024"
@@ -17,7 +17,7 @@ readme = "README.md"
 joule-profiler-core = { path = "core", version = "1.0.2" }
 
 log = "0.4.28"
-tokio = { version = "1.25", features = ["time", "rt-multi-thread", "macros", "sync", "rt"] }
+tokio = { version = "1.52.3", features = ["time", "rt-multi-thread", "macros", "sync", "rt"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 futures = "0.3.31"
