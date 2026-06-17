@@ -69,7 +69,11 @@ impl SourceOrchestrator {
         Ok(())
     }
 
-    /// Measures the metrics of each metric source.
+    /// Send a measure event to each metrics source.
+    ///
+    /// This function ensure event submission, but is does not ensure
+    /// measurement completion and that the measure will be taken directly after it.
+    /// At high concurrency and with many running sources, the measurement can be made lately.
     #[inline]
     pub async fn measure(&mut self) -> Result<(), OrchestratorError> {
         self.send_event(SourceEvent::Measure).await
@@ -79,16 +83,16 @@ impl SourceOrchestrator {
     /// Called when the program execution is stopped to inizialize sources requiring pid filtering (e.g. `perf_event`).
     #[inline]
     pub fn init(&mut self, pid: i32) -> Result<(), OrchestratorError> {
-        for source_handle in &mut self.handles {
-            if let Some(init_sender) = source_handle.init_sender.take()
-                && init_sender.send(pid).is_err()
+        self.handles.iter_mut().try_for_each(|h| {
+            if let Some(sender) = h.init_sender.take()
+                && sender.send(pid).is_err()
             {
                 return Err(OrchestratorError::InitializationError(
                     "Failed to initialize sources.".to_string(),
                 ));
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Initializes a new phase for each metric source.
@@ -123,20 +127,16 @@ impl SourceOrchestrator {
     ///
     /// If an error is encountered in a source, then the worker is aborted and the error is returned.
     async fn send_event(&mut self, event: SourceEvent) -> Result<(), OrchestratorError> {
-        let futures: Vec<_> = self
-            .handles
-            .iter_mut()
-            .enumerate()
-            .map(|(i, source_handle)| async move {
-                source_handle
-                    .control_sender
-                    .send(event)
-                    .await
-                    .map_err(|send_err| (i, send_err))
-            })
-            .collect();
-
-        if let Err((failed_index, send_err)) = try_join_all(futures).await {
+        if let Err((failed_index, send_err)) = try_join_all(
+            self.handles
+                .iter_mut()
+                .enumerate()
+                .map(
+                    |(i, h)| async move { h.control_sender.send(event).await.map_err(|e| (i, e)) },
+                ),
+        )
+        .await
+        {
             Err(self.handle_event_error(failed_index, send_err.into()).await)
         } else {
             Ok(())
@@ -171,14 +171,14 @@ impl SourceOrchestrator {
 
         let handles = std::mem::take(&mut self.handles);
 
-        let mut results = Vec::with_capacity(handles.len());
-        let mut sources = Vec::with_capacity(handles.len());
+        let results = try_join_all(handles.into_iter().map(|h| h.handle)).await?;
 
-        for source_handle in handles {
-            let (result, source) = source_handle.handle.await??;
-            results.push(result);
-            sources.push(source);
-        }
+        let (results, sources) = results
+            .into_iter()
+            .map(|r| r.map_err(OrchestratorError::from))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
 
         Ok((results, sources))
     }
