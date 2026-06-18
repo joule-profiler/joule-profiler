@@ -2,7 +2,10 @@ use anyhow::Result;
 use joule_profiler_cli::config::GlobalConfig;
 use joule_profiler_cli::config::source::{register_source, register_source_override};
 use joule_profiler_cli::config::table::ConfigTable;
-use joule_profiler_cli::{CliArgs, ProfilerCommand, RaplBackend, init_logging, parse_sockets_spec};
+use joule_profiler_cli::{
+    CliArgs, ProfilerCommand, RaplBackend, config_table_to_displayer, init_logging,
+    parse_sockets_spec,
+};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
 use joule_profiler_source_amdsmi::AmdSmi;
@@ -33,12 +36,11 @@ async fn main() -> Result<()> {
         ConfigTable::new(GlobalConfig::default(), &cli.sources)
     };
 
-    match cli.rapl_backend {
+    match config_table.profiler_config.rapl_backend {
         RaplBackend::Perf => register_source_override::<perf::Rapl, CliArgs>(
             &mut profiler,
             &mut config_table,
-            &mut cli,
-            |cli, config| {
+            |config| {
                 config.sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
             },
         ),
@@ -46,8 +48,7 @@ async fn main() -> Result<()> {
         RaplBackend::Powercap => register_source_override::<powercap::Rapl, CliArgs>(
             &mut profiler,
             &mut config_table,
-            &mut cli,
-            |cli, config| {
+            |config| {
                 config.rapl_path = cli.rapl_path.take();
                 config.sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
                 if let ProfilerCommand::Profile(profile_args) = &cli.command {
@@ -63,7 +64,8 @@ async fn main() -> Result<()> {
     register_source::<Nvml>(&mut profiler, &mut config_table)?;
     register_source::<AmdSmi>(&mut profiler, &mut config_table)?;
 
-    let (config, mut displayer) = config_table.to_config(cli)?;
+    let mut displayer = config_table_to_displayer(&config_table, &cli)?;
+    let config = config_table.to_config(cli)?;
 
     match config.command {
         Command::Profile(profile_config) => {

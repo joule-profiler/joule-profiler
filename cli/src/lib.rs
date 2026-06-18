@@ -4,6 +4,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 
 use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
+use serde::Deserialize;
 
 use crate::{
     config::table::ConfigTable,
@@ -59,8 +60,8 @@ pub struct CliArgs {
     pub output_file: Option<String>,
 
     /// Choose RAPL backend between powercap or perf
-    #[arg(long = "rapl-backend", value_enum, default_value_t = RaplBackend::Perf)]
-    pub rapl_backend: RaplBackend,
+    #[arg(long = "rapl-backend", value_enum)]
+    pub rapl_backend: Option<RaplBackend>,
 
     /// Sources activation list. All sources must be separated with a comma (e.g., "perf,nvml").
     #[arg(long, value_delimiter = ',', default_value = "rapl")]
@@ -118,13 +119,14 @@ impl std::fmt::Display for Source {
     }
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Debug, Default, Clone, ValueEnum, Deserialize)]
 pub enum RaplBackend {
+    #[default]
     Perf,
     Powercap,
 }
 
-pub fn config_to_displayer(
+pub fn config_table_to_displayer(
     config_table: &ConfigTable,
     cli: &CliArgs,
 ) -> Result<Box<dyn Displayer>> {
@@ -133,12 +135,12 @@ pub fn config_to_displayer(
     } else if cli.csv {
         OutputFormat::Csv
     } else {
-        config_table.config.profiler.output_format
+        config_table.profiler_config.output_format
     };
     let output_file = cli
         .output_file
         .as_ref()
-        .or(config_table.config.profiler.output_file.as_ref())
+        .or(config_table.profiler_config.output_file.as_ref())
         .cloned();
 
     let displayer = match output_format {
