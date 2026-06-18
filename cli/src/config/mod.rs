@@ -2,7 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use serde::Deserialize;
 
-use crate::output::formats::OutputFormat;
+use crate::{RaplBackend, output::formats::OutputFormat};
 
 pub mod source;
 pub mod table;
@@ -31,18 +31,27 @@ pub struct ProfilerConfig {
     #[serde(default)]
     pub use_root: bool,
 
+    /// Output file for CSV/JSON (else `data<TIMESTAMP>`.csv/json)
     pub output_file: Option<String>,
 
+    /// The output format to use (e.g., text, Json, CSV)
     #[serde(default)]
     pub output_format: OutputFormat,
 
+    /// Duration before aborting sources initialization. (default: 1s)
     #[serde(default = "default_timeout", with = "humantime_serde")]
     pub init_timeout: Duration,
+
+    #[serde(default)]
+    pub rapl_backend: RaplBackend,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct GlobalConfig {
+    /// The global configuration of the profiler.
     #[serde(default)]
     pub profiler: ProfilerConfig,
+
+    /// The sources configurations.
     pub sources: HashMap<String, toml::Value>,
 }
