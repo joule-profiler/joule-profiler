@@ -15,7 +15,8 @@ log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 futures.workspace = true
-amdsmi = { path = "../../../amdsmi-wrapper/amdsmi" }
+
+amdsmi = { git = "https://github.com/joule-profiler/amd-smi-wrapper", version = "0.1.0" }
 tokio-timerfd = "0.2.0"
 tokio-util = "0.7.18"
 bitflags = "2.11.1"
