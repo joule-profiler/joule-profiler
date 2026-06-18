@@ -1,0 +1,17 @@
+[profiler]
+token_pattern = "__[A-Z0-9_]+__"
+output_format = "json"
+output_file = "results.json"
+stdout_file = "stdout.txt"
+use_root = true
+init_timeout = "1ns"
+rapl_backend = "perf_event"
+
+[sources.rapl]
+sockets_spec = [0]
+
+[sources.perf_event]
+events = ["instructions", "cpu-cycles"]
+
+[sources.nvml]
+ignore_on_failure = true
