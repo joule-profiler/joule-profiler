@@ -41,7 +41,9 @@ async fn main() -> Result<()> {
             &mut profiler,
             &mut config_table,
             |config| {
-                config.sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
+                if let Some(sockets_spec) = &cli.sockets {
+                    config.sockets_spec = Some(parse_sockets_spec(sockets_spec));
+                }
             },
         ),
 
@@ -50,9 +52,11 @@ async fn main() -> Result<()> {
             &mut config_table,
             |config| {
                 config.rapl_path = cli.rapl_path.take();
-                config.sockets_spec = parse_sockets_spec(cli.sockets.as_deref());
+                if let Some(sockets_spec) = &cli.sockets {
+                    config.sockets_spec = Some(parse_sockets_spec(sockets_spec));
+                }
                 if let ProfilerCommand::Profile(profile_args) = &cli.command {
-                    config.poll_interval = profile_args.rapl_polling
+                    config.poll_interval = profile_args.rapl_polling;
                 }
             },
         ),

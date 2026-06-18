@@ -122,7 +122,9 @@ impl std::fmt::Display for Source {
 #[derive(Debug, Default, Clone, ValueEnum, Deserialize)]
 pub enum RaplBackend {
     #[default]
+    #[serde(rename = "perf", alias = "perf_event")]
     Perf,
+    #[serde(rename = "powercap")]
     Powercap,
 }
 
@@ -156,10 +158,9 @@ pub fn init_logging(verbose: u8) {
     logging::init_logging(verbose);
 }
 
-pub fn parse_sockets_spec(sockets_spec: Option<&str>) -> Option<HashSet<u32>> {
-    sockets_spec.map(|s| {
-        s.split(',')
-            .filter_map(|x| x.trim().parse::<u32>().ok())
-            .collect()
-    })
+pub fn parse_sockets_spec(sockets_spec: &str) -> HashSet<u32> {
+    sockets_spec
+        .split(',')
+        .filter_map(|x| x.trim().parse::<u32>().ok())
+        .collect()
 }

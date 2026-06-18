@@ -44,7 +44,7 @@ impl ConfigTable {
             .sources
             .keys()
             .cloned()
-            .chain(sources.iter().map(|s| s.to_string()))
+            .chain(sources.iter().map(Source::to_string))
             .collect();
 
         Self {
@@ -57,7 +57,7 @@ impl ConfigTable {
     /// Applies CLI overrides to Joule Profiler global configuration.
     pub fn apply_cli(&mut self, cli: &mut CliArgs) {
         if cli.csv {
-            self.profiler_config.output_format = OutputFormat::Csv
+            self.profiler_config.output_format = OutputFormat::Csv;
         } else if cli.json {
             self.profiler_config.output_format = OutputFormat::Json;
         }
