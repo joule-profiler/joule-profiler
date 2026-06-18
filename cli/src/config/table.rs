@@ -153,12 +153,12 @@ impl ConfigTable {
 
 impl ConfigTable {
     /// Consumes the [`ConfigTable`] and a final [`CliArgs`] to produce the
-    /// core [`Config`] and a [`Displayer`] for rendering output.
+    /// core [`Config`].
     ///
     /// CLI values override config file values for all fields
     /// resolved here (stdout file, root mode, timeouts, token patterns).
     ///
-    /// Returns an error if the configuration is invalid or if the displayer cannot be constructed.
+    /// Returns an error if the configuration is invalid.
     pub fn to_config(self, cli: CliArgs) -> Result<Config> {
         let command = match cli.command {
             ProfilerCommand::Profile(profile_args) => {
