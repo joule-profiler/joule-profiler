@@ -5,15 +5,24 @@ use log::{debug, trace};
 
 use crate::{Device, DeviceSupport, Result, UUID, counters::PowerMeasurement, error::NvmlError};
 
-/// Trait abstracting NVML hardware access for testability.
+/// Trait for abstracting the backend of NVML library. Used for testing.
 #[cfg_attr(test, mockall::automock)]
 pub trait NvmlHardware: Send + Sync + 'static {
+    /// Init all GPU devices specicied by the provided specification.
     // Automock needs lifetime and clippy wants it erased.
     #[allow(clippy::needless_lifetimes)]
     fn init_devices<'a>(&mut self, spec: Option<&'a HashSet<UUID>>) -> Result<Vec<Device>>;
+
+    /// Retrieve the energy count of a device.
     fn get_energy(&self, device: &Device) -> Result<u64>;
+
+    /// Retrieve the instantaneous power of a device.
     fn get_power(&self, device: &Device) -> Result<PowerMeasurement>;
+
+    /// Retrieve the current vram usage of a device.
     fn get_vram_usage(&self, device: &Device) -> Result<u64>;
+
+    /// Retrieve the current GPU utilization info.
     fn get_utilization(&self, device: &Device) -> Result<u32>;
 }
 
@@ -24,6 +33,11 @@ pub struct NvmlWrapperHardware {
 }
 
 impl NvmlWrapperHardware {
+    /// Creates a new NVML hardware instance.
+    ///
+    /// This function will return an error if:
+    /// - The NVML library cannot be initialized (driver not installed, incompatible version, etc.)
+    /// - The permissions are insufficient to be able to query the NVML driver.
     pub fn new() -> Result<Self> {
         debug!("Attempting to initialize NVML reader");
         let nvml = nvml_wrapper::Nvml::init().map_err(|err| match err {
@@ -37,8 +51,10 @@ impl NvmlWrapperHardware {
 }
 
 impl NvmlHardware for NvmlWrapperHardware {
+    /// Initializes devices with the specified devices specification.
+    /// Check the compatibility of each device and determine which metrics can be queried.
     fn init_devices(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Device>> {
-        trace!("Discovering NVIDIA GPU devices.");
+        trace!("Discovering GPU devices.");
         let device_count = self.nvml.device_count()?;
 
         let devices: Vec<_> = (0..device_count)
@@ -88,7 +104,7 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_energy(&self, device: &Device) -> Result<u64> {
-        trace!("Retrieving energy for NVIDIA GPU device {}.", device.index);
+        trace!("Retrieving energy for GPU device {}.", device.index);
         Ok(self
             .nvml
             .device_by_index(device.index)?
@@ -96,7 +112,7 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_power(&self, device: &Device) -> Result<PowerMeasurement> {
-        trace!("Retrieving power for NVIDIA  GPU device {}.", device.index);
+        trace!("Retrieving power for GPU device {}.", device.index);
         Ok(self
             .nvml
             .device_by_index(device.index)?
@@ -108,16 +124,13 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_vram_usage(&self, device: &Device) -> Result<u64> {
-        trace!(
-            "Retrieving VRAM usage NVIDIA for GPU device {}.",
-            device.index
-        );
+        trace!("Retrieving VRAM usage for GPU device {}.", device.index);
         Ok(self.nvml.device_by_index(device.index)?.memory_info()?.used)
     }
 
     fn get_utilization(&self, device: &Device) -> Result<u32> {
         trace!(
-            "Retrieving GPU utilization for NVIDIA GPU device {}.",
+            "Retrieving GPU utilization for GPU device {}.",
             device.index
         );
         Ok(self
