@@ -5,6 +5,18 @@ use crate::Processor;
 
 #[derive(Debug, Error)]
 pub enum AmdSmiError {
+    /// AMD SMI could not find or load the driver.
+    #[error(
+        "No driver found or loaded to access AMD SMI, check whether you have an AMD GPU or not."
+    )]
+    NoDriverLoaded,
+
+    /// Unable to find the AMD SMI library.
+    #[error(
+        "AMD SMI library not found, check whether amd-smi-lib is installed and if you have an AMD GPU device."
+    )]
+    LibraryNotFound,
+
     /// Unknown device.
     #[error("Device {0:?} not found.")]
     NoSuchDevice(Processor),
@@ -22,7 +34,7 @@ pub enum AmdSmiError {
     ),
 
     /// Tokio task join error (async execution failure).
-    #[error("Failed to join tokio task: {0}")]
+    #[error("Failed to join tokio task: {0}.")]
     JoinError(
         #[from]
         #[source]
@@ -30,6 +42,6 @@ pub enum AmdSmiError {
     ),
 
     /// AMD SMI library error.
-    #[error("AMD SMI error: {0}")]
+    #[error("AMD SMI error: {0}.")]
     AmdSmiError(#[from] amdsmi::error::AmdSmiError),
 }
