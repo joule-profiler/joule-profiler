@@ -31,7 +31,9 @@ impl EnergyCounter {
     /// Returns `None` if either measurement is missing.
     pub fn diff(&self) -> Option<u64> {
         match (self.begin, self.end) {
-            (Some(begin), Some(end)) => Some(energy(&end).saturating_sub(energy(&begin))),
+            (Some(begin), Some(end)) => {
+                Some(compute_energy(&end).saturating_sub(compute_energy(&begin)))
+            }
             _ => None,
         }
     }
@@ -176,6 +178,6 @@ pub struct Counter {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
-fn energy(count: &EnergyCount) -> u64 {
+fn compute_energy(count: &EnergyCount) -> u64 {
     (count.energy_accumulator as f64 * f64::from(count.counter_resolution)) as u64
 }
