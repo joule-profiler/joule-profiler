@@ -173,8 +173,6 @@ impl JouleProfiler {
     /// Spawn the configured command and profile it, separating its execution into phases through tokens matching
     /// a configured regular expression.
     ///
-    /// The shared pid atomic integer is used to configure the sources supporting pid filtering (e.g. `perf_event`)
-    ///
     /// The profiling is composed of several steps:
     ///
     /// - Firstly, the program is spawned and its pid is retrieved.
@@ -198,7 +196,7 @@ impl JouleProfiler {
         let pid = child.id().cast_signed();
 
         pause_prosess(pid)?;
-        self.orchestrator.init(pid)?;
+        self.orchestrator.init(pid).await?;
 
         let child_stdout = child
             .stdout

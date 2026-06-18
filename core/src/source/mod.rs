@@ -31,12 +31,11 @@ pub(crate) trait MetricSource: Send {
     /// Spawn the source worker and return its handle, control channel and initialization channel.
     fn run(
         self: Box<Self>,
+        control_receiver: mpsc::Receiver<SourceEvent>,
+        init_receiver: oneshot::Receiver<i32>,
+        init_validation_sender: oneshot::Sender<Result<(), MetricSourceError>>,
         init_timeout: Duration,
-    ) -> (
-        SourceWorkerHandle,
-        mpsc::Sender<SourceEvent>,
-        oneshot::Sender<i32>,
-    );
+    ) -> SourceWorkerHandle;
 
     /// List sensors exposed by this source.
     fn list_sensors(&self) -> Result<Sensors, MetricSourceError>;
@@ -52,19 +51,20 @@ where
     /// This transformation allows to monomorphize the metric source and discover its type after its launch.
     fn run(
         self: Box<Self>,
+        control_receiver: mpsc::Receiver<SourceEvent>,
+        init_receiver: oneshot::Receiver<i32>,
+        init_validation_sender: oneshot::Sender<Result<(), MetricSourceError>>,
         init_timeout: Duration,
-    ) -> (
-        SourceWorkerHandle,
-        mpsc::Sender<SourceEvent>,
-        oneshot::Sender<i32>,
-    ) {
-        let (control_sender, control_receiver) = mpsc::channel(4);
-        let (init_sender, init_receiver) = oneshot::channel();
-        let handle = tokio::spawn(async move {
-            self.run_worker(control_receiver, init_receiver, init_timeout)
-                .await
-        });
-        (handle, control_sender, init_sender)
+    ) -> SourceWorkerHandle {
+        tokio::spawn(async move {
+            self.run_worker(
+                control_receiver,
+                init_receiver,
+                init_validation_sender,
+                init_timeout,
+            )
+            .await
+        })
     }
 
     /// List the sensors of the metric source.
