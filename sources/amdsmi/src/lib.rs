@@ -1,3 +1,7 @@
+//! AMD SMI (AMD System Management Interface) energy profiling integration for Joule Profiler.
+//!
+//! This module provides energy consumption, VRAM usage and GPU utilization metrics for AMD GPUs using the AMD SMI library.
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bitflags::bitflags;
@@ -428,5 +432,391 @@ impl<H: AmdSmiHardware> MetricReader for AmdSmi<H> {
 
     fn get_name() -> &'static str {
         AMDSMI_SOURCE_NAME
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc, time::Duration};
+
+    use amdsmi::types::{EnergyCount, GpuUsageInfo};
+    use joule_profiler_core::source::MetricReader;
+    use mockall::predicate::function;
+    use tokio::time::sleep;
+
+    use crate::{
+        AmdSmi, Processor, ProcessorSupport,
+        config::AmdSmiConfig,
+        counters::{Counter, PowerMeasurement},
+        error::AmdSmiError,
+        hardware::MockAmdSmiHardware,
+    };
+
+    fn make_processor(uuid: &str, support: ProcessorSupport) -> Processor {
+        Processor {
+            uuid: uuid.to_owned(),
+            support,
+        }
+    }
+
+    fn processors_map(list: Vec<Processor>) -> Arc<HashMap<usize, Processor>> {
+        Arc::new(list.into_iter().enumerate().collect())
+    }
+
+    fn build_amdsmi(
+        hardware: MockAmdSmiHardware,
+        processors: Arc<HashMap<usize, Processor>>,
+        poll_interval: Option<Duration>,
+    ) -> AmdSmi<MockAmdSmiHardware> {
+        AmdSmi {
+            config: AmdSmiConfig {
+                poll_interval,
+                gpus_spec: None,
+            },
+            hardware: Arc::new(hardware),
+            handle: None,
+            processors,
+            energy_counters: HashMap::default(),
+            vram_counters: Arc::default(),
+            power_counters: Arc::default(),
+            utilization_counters: Arc::default(),
+        }
+    }
+
+    fn energy_count(value: u64) -> EnergyCount {
+        EnergyCount {
+            energy_accumulator: value,
+            counter_resolution: 1.0,
+            timestamp: 0,
+        }
+    }
+
+    fn gpu_usage(gpu_usage: u32) -> GpuUsageInfo {
+        GpuUsageInfo {
+            gpu_usage,
+            mem_usage: 0,
+        }
+    }
+
+    fn power_measurement(power: u32) -> PowerMeasurement {
+        PowerMeasurement {
+            timestamp: 0,
+            power,
+        }
+    }
+
+    fn by_uuid(uuid: &'static str) -> impl mockall::Predicate<Processor> {
+        function(move |p: &Processor| p.uuid == uuid)
+    }
+
+    #[test]
+    fn get_sensors_energy_support_emits_energy_sensor() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Energy)]);
+        let amdsmi = build_amdsmi(MockAmdSmiHardware::new(), processors, None);
+
+        let sensors = amdsmi.get_sensors().unwrap();
+        assert!(sensors.iter().any(|s| s.name == "GPU-UUID_0-energy"));
+    }
+
+    #[test]
+    fn get_sensors_power_support_emits_energy_sensor() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Power)]);
+        let amdsmi = build_amdsmi(MockAmdSmiHardware::new(), processors, None);
+
+        let sensors = amdsmi.get_sensors().unwrap();
+        assert!(sensors.iter().any(|s| s.name == "GPU-UUID_0-energy"));
+    }
+
+    #[test]
+    fn get_sensors_vram_support_emits_vram_sensors() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Vram)]);
+        let amdsmi = build_amdsmi(MockAmdSmiHardware::new(), processors, None);
+
+        let sensors = amdsmi.get_sensors().unwrap();
+        assert!(sensors.iter().any(|s| s.name == "GPU-UUID_0-vram_min"));
+        assert!(sensors.iter().any(|s| s.name == "GPU-UUID_0-vram_max"));
+    }
+
+    #[test]
+    fn get_sensors_utilization_support_emits_utilization_sensors() {
+        let processors = processors_map(vec![make_processor(
+            "UUID_0",
+            ProcessorSupport::Utilization,
+        )]);
+        let amdsmi = build_amdsmi(MockAmdSmiHardware::new(), processors, None);
+
+        let sensors = amdsmi.get_sensors().unwrap();
+        assert!(
+            sensors
+                .iter()
+                .any(|s| s.name == "GPU-UUID_0-utilization_min")
+        );
+        assert!(
+            sensors
+                .iter()
+                .any(|s| s.name == "GPU-UUID_0-utilization_max")
+        );
+    }
+
+    #[test]
+    fn get_sensors_empty_when_no_processors() {
+        let amdsmi = build_amdsmi(MockAmdSmiHardware::new(), Arc::new(HashMap::new()), None);
+        assert!(amdsmi.get_sensors().unwrap().is_empty());
+    }
+
+    #[test]
+    fn get_sensors_counts_all_sensors_for_full_support() {
+        let processors = processors_map(vec![make_processor(
+            "UUID_0",
+            ProcessorSupport::Energy | ProcessorSupport::Vram | ProcessorSupport::Utilization,
+        )]);
+        let amdsmi = build_amdsmi(MockAmdSmiHardware::new(), processors, None);
+        assert_eq!(amdsmi.get_sensors().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn measure_reads_energy_for_energy_capable_processor() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Energy)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_energy_count()
+            .with(by_uuid("UUID_0"))
+            .once()
+            .returning(|_| Ok(energy_count(1_000_000)));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+
+        assert!(amdsmi.energy_counters.contains_key(&0));
+    }
+
+    #[tokio::test]
+    async fn measure_reads_power_for_power_capable_processor() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Power)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_power()
+            .with(by_uuid("UUID_0"))
+            .once()
+            .returning(|_| Ok(power_measurement(150_000)));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+
+        assert!(amdsmi.power_counters.lock().await.contains_key(&0));
+    }
+
+    #[tokio::test]
+    async fn measure_reads_vram_for_vram_capable_processor() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Vram)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_vram_usage()
+            .with(by_uuid("UUID_0"))
+            .once()
+            .returning(|_| Ok(8_000_000_000));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+
+        assert!(amdsmi.vram_counters.lock().await.contains_key(&0));
+    }
+
+    #[tokio::test]
+    async fn measure_reads_utilization_for_utilization_capable_processor() {
+        let processors = processors_map(vec![make_processor(
+            "UUID_0",
+            ProcessorSupport::Utilization,
+        )]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_gpu_activity()
+            .with(by_uuid("UUID_0"))
+            .once()
+            .returning(|_| Ok(gpu_usage(75)));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+
+        assert!(amdsmi.utilization_counters.lock().await.contains_key(&0));
+    }
+
+    #[tokio::test]
+    async fn measure_skips_energy_and_power_for_vram_only_processor() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Vram)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_energy_count().never();
+        hw.expect_get_power().never();
+        hw.expect_get_vram_usage()
+            .once()
+            .returning(|_| Ok(1_000_000));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+
+        assert!(amdsmi.energy_counters.is_empty());
+        assert!(amdsmi.power_counters.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn measure_propagates_energy_error() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Energy)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_energy_count().once().returning(|_| {
+            Err(AmdSmiError::AmdSmiError(
+                amdsmi::error::AmdSmiError::NotSupported,
+            ))
+        });
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        assert!(amdsmi.measure().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn measure_propagates_power_error() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Power)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_power().once().returning(|_| {
+            Err(AmdSmiError::AmdSmiError(
+                amdsmi::error::AmdSmiError::NotSupported,
+            ))
+        });
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        assert!(amdsmi.measure().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn measure_propagates_vram_error() {
+        let processors = processors_map(vec![make_processor("UUID_0", ProcessorSupport::Vram)]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_vram_usage().once().returning(|_| {
+            Err(AmdSmiError::AmdSmiError(
+                amdsmi::error::AmdSmiError::NotSupported,
+            ))
+        });
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        assert!(amdsmi.measure().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn measure_propagates_utilization_error() {
+        let processors = processors_map(vec![make_processor(
+            "UUID_0",
+            ProcessorSupport::Utilization,
+        )]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_gpu_activity().once().returning(|_| {
+            Err(AmdSmiError::AmdSmiError(
+                amdsmi::error::AmdSmiError::NotSupported,
+            ))
+        });
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        assert!(amdsmi.measure().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn retrieve_returns_counters_and_resets_them() {
+        let processors = processors_map(vec![make_processor(
+            "UUID_0",
+            ProcessorSupport::Energy | ProcessorSupport::Vram,
+        )]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_energy_count()
+            .returning(|_| Ok(energy_count(10_000)));
+        hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+        amdsmi.measure().await.unwrap();
+
+        let result = amdsmi.retrieve().await.unwrap();
+        assert!(result.contains_key(&0));
+
+        let result2 = amdsmi.retrieve().await.unwrap();
+        let counter: &Counter = result2.get(&0).unwrap();
+        assert!(
+            counter
+                .energy
+                .as_ref()
+                .and_then(|e| e.diff())
+                .is_none_or(|v| v == 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn retrieve_includes_entry_for_every_processor() {
+        let processors = processors_map(vec![
+            make_processor("UUID_0", ProcessorSupport::Energy),
+            make_processor("UUID_1", ProcessorSupport::Power),
+            make_processor("UUID_2", ProcessorSupport::Vram),
+        ]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_energy_count()
+            .returning(|_| Ok(energy_count(1_000)));
+        hw.expect_get_power()
+            .returning(|_| Ok(power_measurement(5_000)));
+        hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
+
+        let mut amdsmi = build_amdsmi(hw, processors, None);
+        amdsmi.measure().await.unwrap();
+
+        let result = amdsmi.retrieve().await.unwrap();
+        assert_eq!(result.len(), 3);
+        for index in [0, 1, 2] {
+            assert!(result.contains_key(&index));
+        }
+    }
+
+    #[tokio::test]
+    async fn init_does_not_spawn_worker_without_poll_interval() {
+        let mut amdsmi = build_amdsmi(MockAmdSmiHardware::new(), Arc::new(HashMap::new()), None);
+        amdsmi.init(1234).await.unwrap();
+        assert!(amdsmi.handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn init_spawns_worker_with_poll_interval() {
+        let mut amdsmi = build_amdsmi(
+            MockAmdSmiHardware::new(),
+            Arc::new(HashMap::new()),
+            Some(Duration::from_millis(50)),
+        );
+        amdsmi.init(1234).await.unwrap();
+        assert!(amdsmi.handle.is_some());
+        amdsmi.join().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_polls_counters_and_can_be_cancelled() {
+        let processors = processors_map(vec![make_processor(
+            "UUID_0",
+            ProcessorSupport::Power | ProcessorSupport::Vram | ProcessorSupport::Utilization,
+        )]);
+
+        let mut hw = MockAmdSmiHardware::new();
+        hw.expect_get_power()
+            .returning(|_| Ok(power_measurement(5_000)));
+        hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
+        hw.expect_get_gpu_activity()
+            .returning(|_| Ok(gpu_usage(42)));
+
+        let mut amdsmi = build_amdsmi(hw, processors, Some(Duration::from_millis(20)));
+        amdsmi.init(0).await.unwrap();
+
+        sleep(Duration::from_millis(80)).await;
+
+        amdsmi.join().await.unwrap();
+
+        assert!(amdsmi.power_counters.lock().await.contains_key(&0));
     }
 }
