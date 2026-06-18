@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use clap::Parser;
+use serde::Deserialize;
 
 /// Arguments for profiling mode.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Deserialize, Default)]
 pub struct ProfileArgs {
     /// Regex pattern to detect phase tokens in program output. (default: __[A-Z0-9_]+__)
     ///
@@ -13,11 +14,7 @@ pub struct ProfileArgs {
     ///   - START -> `first_token`
     ///   - `token_i` -> `token_i+1`
     ///   - `last_token` -> END
-    #[arg(
-        long = "token-pattern",
-        // default_value = "__[A-Z0-9_]+__",
-        value_name = "REGEX"
-    )]
+    #[arg(long = "token-pattern", value_name = "REGEX")]
     pub token_pattern: Option<String>,
 
     /// Redirect profiled program stdout to this file.
