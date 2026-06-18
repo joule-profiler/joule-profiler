@@ -8,7 +8,9 @@ use crate::{Device, DeviceSupport, Result, UUID, counters::PowerMeasurement, err
 /// Trait abstracting NVML hardware access for testability.
 #[cfg_attr(test, mockall::automock)]
 pub trait NvmlHardware: Send + Sync + 'static {
-    fn init_devices(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Device>>;
+    // Automock needs lifetime and clippy wants it erased.
+    #[allow(clippy::needless_lifetimes)]
+    fn init_devices<'a>(&mut self, spec: Option<&'a HashSet<UUID>>) -> Result<Vec<Device>>;
     fn get_energy(&self, device: &Device) -> Result<u64>;
     fn get_power(&self, device: &Device) -> Result<PowerMeasurement>;
     fn get_vram_usage(&self, device: &Device) -> Result<u64>;
@@ -36,6 +38,7 @@ impl NvmlWrapperHardware {
 
 impl NvmlHardware for NvmlWrapperHardware {
     fn init_devices(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Device>> {
+        trace!("Discovering NVIDIA GPU devices.");
         let device_count = self.nvml.device_count()?;
 
         let devices: Vec<_> = (0..device_count)
@@ -85,6 +88,7 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_energy(&self, device: &Device) -> Result<u64> {
+        trace!("Retrieving energy for GPU device {}.", device.index);
         Ok(self
             .nvml
             .device_by_index(device.index)?
@@ -92,6 +96,7 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_power(&self, device: &Device) -> Result<PowerMeasurement> {
+        trace!("Retrieving power for GPU device {}.", device.index);
         Ok(self
             .nvml
             .device_by_index(device.index)?
@@ -103,10 +108,15 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_vram_usage(&self, device: &Device) -> Result<u64> {
+        trace!("Retrieving VRAM usage for GPU device {}.", device.index);
         Ok(self.nvml.device_by_index(device.index)?.memory_info()?.used)
     }
 
     fn get_utilization(&self, device: &Device) -> Result<u32> {
+        trace!(
+            "Retrieving GPU utilization for GPU device {}.",
+            device.index
+        );
         Ok(self
             .nvml
             .device_by_index(device.index)?
