@@ -9,9 +9,12 @@ use crate::{
 };
 
 /// Trait for abstracting the backend of AMD SMI library. Used for testing.
+#[cfg_attr(test, mockall::automock)]
 pub trait AmdSmiHardware: Send + Sync + 'static {
     /// Init all GPU devices specicied by the provided specification.
-    fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>>;
+    // Automock needs lifetime and clippy wants it erased.
+    #[allow(clippy::needless_lifetimes)]
+    fn init_processors<'a>(&mut self, spec: Option<&'a HashSet<UUID>>) -> Result<Vec<Processor>>;
 
     /// Retrieve the energy count of a device.
     fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount>;
@@ -36,7 +39,13 @@ pub struct AmdSmiWrapperHardware {
 }
 
 impl AmdSmiWrapperHardware {
+    /// Creates a new AMD SMI hardware instance.
+    ///
+    /// This function will return an error if:
+    /// - The AMD SMI library cannot be initialized (driver not installed, incompatible version, etc.)
+    /// - The permissions are insufficient to be able to query the AMD SMI driver.
     pub fn new() -> Result<Self> {
+        debug!("Attempting to initialize AMD SMI reader");
         let amdsmi = amdsmi::AmdSmi::init().map_err(|err| match err {
             amdsmi::error::AmdSmiError::DriverNotLoaded => AmdSmiError::NoDriverLoaded,
             amdsmi::error::AmdSmiError::LibraryNotFound => AmdSmiError::LibraryNotFound,
@@ -44,7 +53,6 @@ impl AmdSmiWrapperHardware {
         })?;
 
         let (major, minor, patch) = amdsmi.get_lib_version()?;
-
         debug!("AMD SMI driver detected, version v{major}.{minor}.{patch}");
 
         Ok(Self {
@@ -61,7 +69,10 @@ impl AmdSmiWrapperHardware {
 }
 
 impl AmdSmiHardware for AmdSmiWrapperHardware {
+    /// Initializes devices with the specified devices specification.
+    /// Check the compatibility of each device and determine which metrics can be queried.
     fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
+        trace!("Discovering AMD GPU devices.");
         let sockets = self.amdsmi.get_socket_handles()?;
 
         let processors: Vec<_> = sockets
@@ -118,10 +129,12 @@ impl AmdSmiHardware for AmdSmiWrapperHardware {
     }
 
     fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount> {
+        trace!("Retrieving energy for GPU device {}.", processor.uuid);
         Ok(self.get_device_handle(processor)?.get_energy_count()?)
     }
 
     fn get_power(&self, processor: &Processor) -> Result<PowerMeasurement> {
+        trace!("Retrieving power for GPU device {}.", processor.uuid);
         Ok(PowerMeasurement {
             timestamp: get_timestamp_micros(),
             power: self.get_device_handle(processor)?.get_power()?,
@@ -129,10 +142,15 @@ impl AmdSmiHardware for AmdSmiWrapperHardware {
     }
 
     fn get_vram_usage(&self, processor: &Processor) -> Result<u64> {
+        trace!("Retrieving VRAM usage for GPU device {}.", processor.uuid);
         Ok(self.get_device_handle(processor)?.get_vram_usage()?)
     }
 
     fn get_gpu_activity(&self, processor: &Processor) -> Result<GpuUsageInfo> {
+        trace!(
+            "Retrieving GPU utilization for GPU device {}.",
+            processor.uuid
+        );
         Ok(self.get_device_handle(processor)?.get_gpu_activity()?)
     }
 }
