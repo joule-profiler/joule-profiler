@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Trait for abstracting the backend of AMD SMI library. Used for testing.
-pub trait Hardware: Send + Sync + 'static {
+pub trait AmdSmiHardware: Send + Sync + 'static {
     /// Init all GPU devices specicied by the provided specification.
     fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>>;
 
@@ -27,7 +27,7 @@ pub trait Hardware: Send + Sync + 'static {
 }
 
 /// Backend for interacting with AMD SMI library.
-pub struct AmdSmi {
+pub struct AmdSmiWrapperHardware {
     /// Handle to the AMD SMI wrapper library.
     amdsmi: amdsmi::AmdSmi,
 
@@ -35,9 +35,14 @@ pub struct AmdSmi {
     processor_handles: HashMap<UUID, amdsmi::Processor>,
 }
 
-impl AmdSmi {
+impl AmdSmiWrapperHardware {
     pub fn new() -> Result<Self> {
-        let amdsmi = amdsmi::AmdSmi::init()?;
+        let amdsmi = amdsmi::AmdSmi::init().map_err(|err| match err {
+            amdsmi::error::AmdSmiError::DriverNotLoaded => AmdSmiError::NoDriverLoaded,
+            amdsmi::error::AmdSmiError::LibraryNotFound => AmdSmiError::LibraryNotFound,
+            _ => err.into(),
+        })?;
+
         let (major, minor, patch) = amdsmi.get_lib_version()?;
 
         debug!("AMD SMI driver detected, version v{major}.{minor}.{patch}");
@@ -55,7 +60,7 @@ impl AmdSmi {
     }
 }
 
-impl Hardware for AmdSmi {
+impl AmdSmiHardware for AmdSmiWrapperHardware {
     fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
         let sockets = self.amdsmi.get_socket_handles()?;
 

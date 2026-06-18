@@ -8,7 +8,7 @@ use joule_profiler_cli::{
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
 use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
-use joule_profiler_source_amdsmi::AmdSmiSource;
+use joule_profiler_source_amdsmi::AmdSmi;
 use joule_profiler_source_amdsmi::config::AmdSmiConfig;
 use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_nvml::config::NvmlConfig;
@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     }
 
     if cli.sources.contains(&Source::AmdSmi) {
-        match AmdSmiSource::new(AmdSmiConfig {
+        match AmdSmi::new(AmdSmiConfig {
             poll_interval: Some(Duration::from_millis(1)),
             ..Default::default()
         }) {
