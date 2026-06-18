@@ -1,8 +1,6 @@
-//! NVML (NVIDIA Management Library) energy profiling integration.
+//! NVML (NVIDIA Management Library) energy profiling integration for Joule Profiler.
 //!
-//! This module provides energy consumption monitoring for NVIDIA GPUs using the NVML library.
-//! It implements the `MetricReader` trait to collect energy metrics from GPU devices and
-//! track energy usage over time.
+//! This module provides energy consumption, VRAM usage and GPU utilization metrics forNVIDIA GPUs using the NVML library.
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
