@@ -39,6 +39,7 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
         mut self,
         mut receiver: mpsc::Receiver<SourceEvent>,
         init_receiver: oneshot::Receiver<i32>,
+        init_validation_sender: oneshot::Sender<Result<(), MetricSourceError>>,
         init_timeout: Duration,
     ) -> Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError> {
         let pid = timeout(init_timeout, init_receiver)
@@ -46,7 +47,7 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
             .map_err(IntoMetricSourceError::into_metric_source_error)?
             .map_err(|_| MetricSourceError::InitTimeout(init_timeout))?;
 
-        self.init_source(pid).await?;
+        let _ = init_validation_sender.send(self.init_source(pid).await);
 
         loop {
             if let Some(event) = receiver.recv().await {
@@ -213,12 +214,13 @@ mod tests {
         let (reader, counts) = mock_reader_counted();
         let rt = MetricSourceRuntime::new(reader);
         let (tx, rx) = mpsc::channel(16);
+        let (init_validation_sender, _init_validation_receiver) = oneshot::channel();
 
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        rt.run_worker(rx, pid(0), Duration::from_secs(1))
+        rt.run_worker(rx, pid(0), init_validation_sender, Duration::from_secs(1))
             .await
             .unwrap();
 
@@ -230,9 +232,10 @@ mod tests {
         let (reader, counts) = mock_reader_counted();
         let rt = MetricSourceRuntime::new(reader);
         let (tx, rx) = mpsc::channel(16);
+        let (init_validation_sender, _init_validation_receiver) = oneshot::channel();
 
         tx.send(SourceEvent::JoinWorker).await.unwrap();
-        rt.run_worker(rx, pid(42), Duration::from_secs(1))
+        rt.run_worker(rx, pid(42), init_validation_sender, Duration::from_secs(1))
             .await
             .unwrap();
 
@@ -248,12 +251,13 @@ mod tests {
             .returning(|| Err(MockError("injected".into())));
         let rt = MetricSourceRuntime::new(reader);
         let (tx, rx) = mpsc::channel(16);
+        let (init_validation_sender, _init_validation_receiver) = oneshot::channel();
 
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
         assert!(
-            rt.run_worker(rx, pid(0), Duration::from_secs(1))
+            rt.run_worker(rx, pid(0), init_validation_sender, Duration::from_secs(1))
                 .await
                 .is_err()
         );
@@ -264,11 +268,12 @@ mod tests {
         let (reader, counts) = mock_reader_counted();
         let rt = MetricSourceRuntime::new(reader);
         let (tx, rx) = mpsc::channel(16);
+        let (init_validation_sender, _init_validation_receiver) = oneshot::channel();
 
         tx.send(SourceEvent::NewPhase).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        rt.run_worker(rx, pid(0), Duration::from_secs(1))
+        rt.run_worker(rx, pid(0), init_validation_sender, Duration::from_secs(1))
             .await
             .unwrap();
 
@@ -280,9 +285,10 @@ mod tests {
         let (reader, counts) = mock_reader_counted();
         let rt = MetricSourceRuntime::new(reader);
         let (tx, rx) = mpsc::channel(16);
+        let (init_validation_sender, _init_validation_receiver) = oneshot::channel();
 
         tx.send(SourceEvent::JoinWorker).await.unwrap();
-        rt.run_worker(rx, pid(0), Duration::from_secs(1))
+        rt.run_worker(rx, pid(0), init_validation_sender, Duration::from_secs(1))
             .await
             .unwrap();
 
@@ -294,6 +300,7 @@ mod tests {
         let (reader, counts) = mock_reader_counted();
         let rt = MetricSourceRuntime::new(reader);
         let (tx, rx) = mpsc::channel(16);
+        let (init_validation_sender, _init_validation_receiver) = oneshot::channel();
 
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::Measure).await.unwrap();
@@ -301,7 +308,7 @@ mod tests {
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
         assert!(
-            rt.run_worker(rx, pid(0), Duration::from_secs(1))
+            rt.run_worker(rx, pid(0), init_validation_sender, Duration::from_secs(1))
                 .await
                 .is_ok()
         );
