@@ -32,6 +32,8 @@ type Result<T> = std::result::Result<T, AmdSmiError>;
 /// Polling task handle and its cancellation token.
 type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 
+const AMDSMI_SOURCE_NAME: &str = "amdsmi";
+
 const MICRO_JOULE_UNIT: MetricUnit = MetricUnit {
     prefix: UnitPrefix::Micro,
     unit: Unit::Joule,
@@ -425,6 +427,6 @@ impl<H: AmdSmiHardware> MetricReader for AmdSmi<H> {
     }
 
     fn get_name() -> &'static str {
-        "amdsmi"
+        AMDSMI_SOURCE_NAME
     }
 }

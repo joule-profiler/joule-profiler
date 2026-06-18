@@ -20,5 +20,9 @@ tokio-timerfd = "0.2.0"
 tokio-util = "0.7.18"
 bitflags = "2.11.1"
 
+[dev-dependencies]
+tokio.workspace = true
+mockall.workspace = true
+
 [lints]
 workspace = true
