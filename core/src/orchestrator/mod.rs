@@ -6,9 +6,11 @@ use std::time::Duration;
 
 use crate::aggregate::sensor_result::SensorResult;
 use crate::orchestrator::error::OrchestratorError;
+use crate::source::error::IntoMetricSourceError;
 use crate::source::types::SourceEvent;
 use crate::source::{MetricSource, MetricSourceError};
 use futures::future::try_join_all;
+use tokio::time::timeout;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -16,15 +18,39 @@ use tokio::{
 
 pub mod error;
 
+/// The size of the control channel to send event.
+/// It should not have a huge size because if the buffer is full,
+/// it means that the sources are slower to measure than the phases durations.
+pub const CONTROL_CHANNEL_SIZE: usize = 16;
+
 /// The handle describing the return type of a source worker.
 type TaskHandle = JoinHandle<Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError>>;
+
+struct InitChannel {
+    sender: oneshot::Sender<i32>,
+    validation: oneshot::Receiver<Result<(), MetricSourceError>>,
+}
+
+impl InitChannel {
+    async fn initialize(self, pid: i32) -> Result<(), OrchestratorError> {
+        self.sender
+            .send(pid)
+            .map_err(|_| OrchestratorError::InitializationError("Failed to send PID"))?;
+
+        self.validation
+            .await
+            .map_err(|e| OrchestratorError::MetricSourceError(e.into_metric_source_error()))??;
+
+        Ok(())
+    }
+}
 
 struct SourceHandle {
     /// The event channel sender used to manage the metric sources.
     control_sender: mpsc::Sender<SourceEvent>,
 
-    /// The oneshot sender used to initialized sources.
-    init_sender: Option<oneshot::Sender<i32>>,
+    /// The channels used for sources initializations.
+    init_channel: Option<InitChannel>,
 
     /// The handle of the worker task, used for joining sources gracefully.
     handle: TaskHandle,
@@ -35,6 +61,7 @@ struct SourceHandle {
 #[derive(Default)]
 pub struct SourceOrchestrator {
     handles: Vec<SourceHandle>,
+    init_timeout: Duration,
 }
 
 impl SourceOrchestrator {
@@ -51,19 +78,33 @@ impl SourceOrchestrator {
         if sources.is_empty() {
             return Err(OrchestratorError::NoSourceConfigured);
         }
-
-        let nb_sources = sources.len();
-        let mut handles = Vec::with_capacity(nb_sources);
+        let mut handles = Vec::with_capacity(sources.len());
 
         for source in sources {
-            let (handle, control_sender, init_sender) = source.run(init_timeout);
+            let (control_sender, control_receiver) = mpsc::channel(CONTROL_CHANNEL_SIZE);
+            let (init_sender, init_receiver) = oneshot::channel();
+            let (init_validation_sender, init_validation_receiver) = oneshot::channel();
+
+            let handle = source.run(
+                control_receiver,
+                init_receiver,
+                init_validation_sender,
+                init_timeout,
+            );
+
+            let init_channel = InitChannel {
+                sender: init_sender,
+                validation: init_validation_receiver,
+            };
+
             handles.push(SourceHandle {
                 handle,
                 control_sender,
-                init_sender: Some(init_sender),
+                init_channel: Some(init_channel),
             });
         }
 
+        self.init_timeout = init_timeout;
         self.handles = handles;
 
         Ok(())
@@ -81,18 +122,21 @@ impl SourceOrchestrator {
 
     /// Initializes each metric source.
     /// Called when the program execution is stopped to inizialize sources requiring pid filtering (e.g. `perf_event`).
-    #[inline]
-    pub fn init(&mut self, pid: i32) -> Result<(), OrchestratorError> {
-        self.handles.iter_mut().try_for_each(|h| {
-            if let Some(sender) = h.init_sender.take()
-                && sender.send(pid).is_err()
-            {
-                return Err(OrchestratorError::InitializationError(
-                    "Failed to initialize sources.".to_string(),
-                ));
+    /// Wait for all sources to be initialized and to receive their validation.
+    pub async fn init(&mut self, pid: i32) -> Result<(), OrchestratorError> {
+        let futures = self.handles.iter_mut().map(|handle| async move {
+            if let Some(init_channel) = handle.init_channel.take() {
+                init_channel.initialize(pid).await
+            } else {
+                Ok(())
             }
-            Ok(())
-        })
+        });
+
+        timeout(self.init_timeout, try_join_all(futures))
+            .await
+            .map_err(|_| OrchestratorError::InitializationError("init timeout reached"))??;
+
+        Ok(())
     }
 
     /// Initializes a new phase for each metric source.
@@ -272,7 +316,7 @@ mod tests {
         orchestrator
             .run(vec![source], Duration::from_secs(1))
             .unwrap();
-        orchestrator.init(0).unwrap();
+        orchestrator.init(0).await.unwrap();
 
         assert!(matches!(
             orchestrator.finalize().await,
@@ -299,7 +343,7 @@ mod tests {
             .unwrap();
 
         let _ = orchestrator.measure().await;
-        let _ = orchestrator.init(0);
+        let _ = orchestrator.init(0).await;
         let _ = orchestrator.join().await;
 
         tokio::task::yield_now().await;
@@ -320,7 +364,7 @@ mod tests {
             .run(vec![source], Duration::from_secs(1))
             .unwrap();
 
-        orchestrator.init(42).unwrap();
+        orchestrator.init(42).await.unwrap();
 
         // wait for initialization
         tokio::task::yield_now().await;
@@ -339,7 +383,7 @@ mod tests {
         orchestrator
             .run(vec![source], Duration::from_secs(1))
             .unwrap();
-        orchestrator.init(0).unwrap();
+        orchestrator.init(0).await.unwrap();
         orchestrator.measure().await.unwrap();
         let result = orchestrator.finalize().await;
 

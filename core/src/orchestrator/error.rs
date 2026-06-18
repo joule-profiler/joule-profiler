@@ -27,8 +27,8 @@ pub enum OrchestratorError {
     ),
 
     /// Returned when an error occured while sending the initialization event.
-    #[error("Cannot initialize {0} source.")]
-    InitializationError(String),
+    #[error("Cannot initialize source: {0}.")]
+    InitializationError(&'static str),
 
     /// Phase count mismatch between two sensor sources during aggregation.
     #[error(
