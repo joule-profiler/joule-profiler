@@ -17,7 +17,7 @@ use crate::{
     config::AmdSmiConfig,
     counters::{Counter, EnergyCounter, PowerCounter, UtilizationCounter, VramCounter},
     error::AmdSmiError::{self},
-    hardware::{AmdSmi, Hardware},
+    hardware::{AmdSmiHardware, AmdSmiWrapperHardware},
 };
 
 pub mod config;
@@ -67,7 +67,7 @@ pub struct Processor {
     support: ProcessorSupport,
 }
 
-pub struct AmdSmiSource<H: Hardware> {
+pub struct AmdSmi<H: AmdSmiHardware> {
     /// Source configuration.
     config: AmdSmiConfig,
 
@@ -93,10 +93,11 @@ pub struct AmdSmiSource<H: Hardware> {
     utilization_counters: Arc<Mutex<HashMap<usize, UtilizationCounter>>>,
 }
 
-impl AmdSmiSource<AmdSmi> {
+impl AmdSmi<AmdSmiWrapperHardware> {
     /// Initializes the AMD SMI source and retrieve the GPU devices.
     pub fn new(config: AmdSmiConfig) -> Result<Self> {
-        let mut amdsmi = AmdSmi::new()?;
+        let mut amdsmi = AmdSmiWrapperHardware::new()?;
+
         let processors = amdsmi
             .init_processors(config.gpus_spec.as_ref())?
             .into_iter()
@@ -116,7 +117,7 @@ impl AmdSmiSource<AmdSmi> {
     }
 }
 
-impl<H: Hardware> AmdSmiSource<H> {
+impl<H: AmdSmiHardware> AmdSmi<H> {
     /// Creates the worker task for power and vram polling at the specified polling interval.
     pub fn create_worker(
         hardware: Arc<H>,
@@ -203,7 +204,7 @@ impl<H: Hardware> AmdSmiSource<H> {
     }
 }
 
-impl<H: Hardware> MetricReader for AmdSmiSource<H> {
+impl<H: AmdSmiHardware> MetricReader for AmdSmi<H> {
     type Type = HashMap<usize, Counter>;
 
     type Error = AmdSmiError;

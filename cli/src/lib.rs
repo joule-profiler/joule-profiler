@@ -120,7 +120,7 @@ impl TryFrom<CliArgs> for Config {
 pub enum Source {
     Rapl,
     Nvml,
-    #[value(alias = "amdsmi")]
+    #[value(name = "amdsmi")]
     AmdSmi,
     #[value(alias = "perf_event")]
     Perf,
