@@ -88,7 +88,7 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_energy(&self, device: &Device) -> Result<u64> {
-        trace!("Retrieving energy for GPU device {}.", device.index);
+        trace!("Retrieving energy for NVIDIA GPU device {}.", device.index);
         Ok(self
             .nvml
             .device_by_index(device.index)?
@@ -96,7 +96,7 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_power(&self, device: &Device) -> Result<PowerMeasurement> {
-        trace!("Retrieving power for GPU device {}.", device.index);
+        trace!("Retrieving power for NVIDIA  GPU device {}.", device.index);
         Ok(self
             .nvml
             .device_by_index(device.index)?
@@ -108,13 +108,16 @@ impl NvmlHardware for NvmlWrapperHardware {
     }
 
     fn get_vram_usage(&self, device: &Device) -> Result<u64> {
-        trace!("Retrieving VRAM usage for GPU device {}.", device.index);
+        trace!(
+            "Retrieving VRAM usage NVIDIA for GPU device {}.",
+            device.index
+        );
         Ok(self.nvml.device_by_index(device.index)?.memory_info()?.used)
     }
 
     fn get_utilization(&self, device: &Device) -> Result<u32> {
         trace!(
-            "Retrieving GPU utilization for GPU device {}.",
+            "Retrieving GPU utilization for NVIDIA GPU device {}.",
             device.index
         );
         Ok(self
