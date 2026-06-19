@@ -17,8 +17,7 @@
 //! };
 //!
 //! let config = Config {
-//!     command: Command::Profile(profile),
-//!     rapl_path: None,
+//!     command: Command::Profile(profile)
 //! };
 //! ```
 
