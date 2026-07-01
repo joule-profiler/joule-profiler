@@ -1,85 +1,178 @@
-//! Internal abstractions for metric sources.
-//!
-//! This module defines the private traits used by the
-//! profiler to manage metric readers. It is not part of the public API.
-//! Implementations are boxed for flexibility, while internally resolving
-//! concrete types to minimize the profiler overhead.
+use std::pin::Pin;
+use std::{error::Error, future::Future};
 
-use std::time::Duration;
+use thiserror::Error;
+use tokio::sync;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::{
+    sync::mpsc::{self, channel},
+    task::JoinHandle,
+};
 
-use tokio::sync::{mpsc, oneshot};
+mod processor;
+mod sensor;
 
-pub(crate) mod accumulator;
-pub mod error;
-pub mod reader;
-pub(crate) mod runtime;
-pub(crate) mod types;
+pub use processor::Processor;
+pub use sensor::Sensor;
 
-use crate::sensor::Sensors;
-use crate::source::runtime::MetricSourceRuntime;
-use crate::source::types::{SourceEvent, SourceWorkerHandle};
-pub use error::MetricSourceError;
-pub use reader::MetricReader;
-pub use types::{MetricReaderErrorBound, MetricReaderTypeBound};
+use crate::types::{InitContext, Phase, Sensors};
 
-/// Internal trait representing a runnable metric source.
-///
-/// Implemented by the runtime wrapper around a [`MetricReader`].
-/// This trait is used to erase the type of the metric source, to be able to have a
-/// convenient API for users while maintaining performance with monomorphization during hot paths.
-pub(crate) trait MetricSource: Send {
-    /// Spawn the source worker and return its handle, control channel and initialization channel.
-    fn run(
-        self: Box<Self>,
-        init_timeout: Duration,
-    ) -> (
-        SourceWorkerHandle,
-        mpsc::Sender<SourceEvent>,
-        oneshot::Sender<i32>,
-    );
+#[derive(Debug, Error)]
+#[error(transparent)]
+pub struct MetricSourceError(#[from] Box<dyn std::error::Error + Send + Sync>);
 
-    /// List sensors exposed by this source.
+impl MetricSourceError {
+    pub(crate) fn boxed<E: Error + Send + Sync + 'static>(error: E) -> Self {
+        Self(Box::new(error))
+    }
+}
+
+pub trait MetricSource: Send + Sized + 'static {
+    type Sensor: Sensor<Self>;
+    type Processor: Processor<Self>;
+    type Snapshot: Send + Sync;
+    type Error: Error + Send + Sync;
+    type Config;
+
+    fn from_config(config: Self::Config) -> Result<(Self::Sensor, Self::Processor), Self::Error>;
+
+    fn get_name() -> &'static str;
+}
+
+pub(crate) trait MetricSourceWrapper: Send {
+    fn pre_init(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>>;
+
+    fn init(
+        &mut self,
+        ctx: InitContext,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>>;
+
     fn list_sensors(&self) -> Result<Sensors, MetricSourceError>;
-}
 
-impl<R> MetricSource for MetricSourceRuntime<R>
-where
-    R: MetricReader,
-{
-    /// Runs the worker task and returns its handle and the sender, used to send events to manage the metric source.
-    ///
-    /// The metric source is consumed and transformed into a [`MetricSourceRuntime`] with the metric source as a reader.
-    /// This transformation allows to monomorphize the metric source and discover its type after its launch.
     fn run(
         self: Box<Self>,
-        init_timeout: Duration,
-    ) -> (
-        SourceWorkerHandle,
-        mpsc::Sender<SourceEvent>,
-        oneshot::Sender<i32>,
-    ) {
-        let (control_sender, control_receiver) = mpsc::channel(4);
-        let (init_sender, init_receiver) = oneshot::channel();
-        let handle = tokio::spawn(async move {
-            self.run_worker(control_receiver, init_receiver, init_timeout)
-                .await
-        });
-        (handle, control_sender, init_sender)
+        rx: sync::broadcast::Receiver<()>,
+        exporter_tx: mpsc::Sender<Phase>,
+    ) -> JoinHandle<Result<Box<dyn MetricSourceWrapper>, MetricSourceError>>;
+}
+
+pub(crate) struct MetricSourceRuntime<S: MetricSource> {
+    sensor: S::Sensor,
+    processor: S::Processor,
+}
+
+impl<S: MetricSource> MetricSourceRuntime<S> {
+    pub fn new(config: S::Config) -> Result<Self, S::Error> {
+        let (sensor, processor) = S::from_config(config)?;
+        Ok(Self { sensor, processor })
     }
 
-    /// List the sensors of the metric source.
-    fn list_sensors(&self) -> Result<Sensors, MetricSourceError> {
-        self.get_source_sensors()
+    pub fn boxed(config: S::Config) -> Result<Box<dyn MetricSourceWrapper>, MetricSourceError> {
+        Ok(Box::new(
+            Self::new(config).map_err(MetricSourceError::boxed)?,
+        ))
     }
 }
 
-/// Converts a [`MetricReader`] into a boxed [`MetricSource`].
-impl<R> From<R> for Box<dyn MetricSource>
+impl<S> MetricSourceWrapper for MetricSourceRuntime<S>
 where
-    R: MetricReader,
+    S: MetricSource,
 {
-    fn from(reader: R) -> Self {
-        let source = MetricSourceRuntime::new(reader);
-        Box::new(source)
+    fn pre_init(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>> {
+        Box::pin(async {
+            self.sensor
+                .pre_init()
+                .await
+                .map_err(MetricSourceError::boxed)
+        })
+    }
+
+    fn init(
+        &mut self,
+        ctx: InitContext,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>> {
+        Box::pin(async move {
+            self.sensor
+                .init(ctx)
+                .await
+                .map_err(MetricSourceError::boxed)?;
+            self.processor
+                .init()
+                .await
+                .map_err(MetricSourceError::boxed)?;
+            Ok(())
+        })
+    }
+
+    fn run(
+        self: Box<Self>,
+        mut rx: sync::broadcast::Receiver<()>,
+        exporter_tx: mpsc::Sender<Phase>,
+    ) -> JoinHandle<Result<Box<dyn MetricSourceWrapper>, MetricSourceError>> {
+        tokio::spawn(async move {
+            let mut sensor = self.sensor;
+            let mut processor = self.processor;
+            let mut phase_index = 0;
+
+            let (sensor_tx, mut processor_rx) = channel::<S::Snapshot>(128);
+
+            let processor_task = tokio::spawn(async move {
+                while let Some(snapshot) = processor_rx.recv().await {
+                    match processor.consume(snapshot).await {
+                        Ok(Some(mut metrics)) => {
+                            for metric in &mut metrics {
+                                metric.source = S::get_name();
+                            }
+                            let phase = Phase {
+                                phase_index,
+                                metrics,
+                            };
+                            exporter_tx
+                                .send(phase)
+                                .await
+                                .map_err(MetricSourceError::boxed)?;
+                            phase_index += 1;
+                        }
+                        Ok(None) => {}
+                        Err(e) => return Err(MetricSourceError::boxed(e)),
+                    }
+                }
+                processor.clean().await.map_err(MetricSourceError::boxed)?;
+                Ok(processor)
+            });
+
+            loop {
+                match rx.recv().await {
+                    Ok(()) => {
+                        let snapshot = sensor.measure().await.map_err(MetricSourceError::boxed)?;
+                        sensor_tx
+                            .send(snapshot)
+                            .await
+                            .map_err(MetricSourceError::boxed)?;
+                    }
+                    Err(e) => match e {
+                        RecvError::Closed => break,
+                        RecvError::Lagged(n) => println!("WARN: {n} lagged"),
+                    },
+                }
+            }
+
+            sensor.join().await.map_err(MetricSourceError::boxed)?;
+            sensor.clean().await.map_err(MetricSourceError::boxed)?;
+            drop(sensor_tx);
+
+            let processor = processor_task.await.map_err(MetricSourceError::boxed)??;
+
+            Ok(Box::new(MetricSourceRuntime::<S> { sensor, processor })
+                as Box<dyn MetricSourceWrapper>)
+        })
+    }
+
+    fn list_sensors(&self) -> Result<Sensors, MetricSourceError> {
+        self.sensor.list_sensors().map_err(MetricSourceError::boxed)
     }
 }

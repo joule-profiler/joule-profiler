@@ -17,6 +17,8 @@ path = "src/bin/main.rs"
 joule-profiler-source-rapl = { path = "../sources/rapl", version = "1.0.2" }
 joule-profiler-source-nvml = { path = "../sources/nvml", version = "1.0.2" }
 joule-profiler-source-perf_event = { path = "../sources/perf_event", version = "1.0.2" }
+joule-profiler-exporter-terminal = { path = "../exporters/terminal", version = "0.1.0" }
+joule-profiler-injector-stdout = { path = "../injectors/stdout", version = "0.1.0" }
 
 joule-profiler-core.workspace = true
 log.workspace = true

@@ -5,7 +5,7 @@ members = [
     "cli",
     "sources/*",
     "examples/library_usage"
-]
+, "injectors/*", "exporters/*"]
 
 [workspace.package]
 edition = "2024"

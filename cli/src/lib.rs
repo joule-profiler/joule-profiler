@@ -6,16 +6,8 @@ use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
 use joule_profiler_core::config::{Command, Config, ProfileConfigBuilder};
 
-use crate::output::{
-    displayer::Displayer,
-    formats::{
-        OutputFormat, csv::CsvOutput, json::JsonOutput, output_format, terminal::TerminalOutput,
-    },
-};
-
 mod commands;
 mod logging;
-mod output;
 
 /// joule-profiler: measure program energy consumption
 #[allow(clippy::struct_excessive_bools)]
@@ -139,19 +131,6 @@ impl std::fmt::Display for Source {
 pub enum RaplBackend {
     Perf,
     Powercap,
-}
-
-pub fn output_format_to_displayer(cli: &CliArgs) -> Result<Box<dyn Displayer>> {
-    let output_format = output_format(cli.json, cli.csv);
-    let output_file = cli.output_file.clone();
-
-    let displayer = match output_format {
-        OutputFormat::Terminal => TerminalOutput.into(),
-        OutputFormat::Json => JsonOutput::new(output_file)?.into(),
-        OutputFormat::Csv => CsvOutput::try_new(output_file)?.into(),
-    };
-
-    Ok(displayer)
 }
 
 pub fn init_logging(verbose: u8) {

@@ -1,6 +1,6 @@
-use crate::orchestrator::error::OrchestratorError;
-use crate::source::error::MetricSourceError;
 use thiserror::Error;
+
+use crate::{injector::InjectorError, orchestrator::OrchestratorError, source::MetricSourceError};
 
 /// Top-level error type for `JouleProfiler`.
 ///
@@ -57,6 +57,9 @@ pub enum JouleProfilerError {
         std::io::Error,
     ),
 
+    #[error("No exporter configured.")]
+    NoExporterConfigured,
+
     /// A process control operation (e.g. kill, wait) failed.
     #[error("Process control failed: {0}")]
     ProcessControlFailed(String),
@@ -68,4 +71,7 @@ pub enum JouleProfilerError {
     /// Error propagated from the source orchestrator.
     #[error(transparent)]
     OrchestratorError(#[from] OrchestratorError),
+
+    #[error(transparent)]
+    InjectorError(#[from] InjectorError),
 }

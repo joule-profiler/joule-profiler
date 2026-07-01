@@ -18,6 +18,7 @@ futures.workspace = true
 regex = "1.12.2"
 derive_builder = "0.20.2"
 libc = "0.2.183"
+smallvec = "1.15.2"
 
 [dev-dependencies]
 tempfile.workspace = true
