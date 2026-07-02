@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::{debug, warn};
+use log::{debug, trace, warn};
 
 use crate::{
     Result,
@@ -48,13 +48,11 @@ impl Display for Controller {
 /// Interface for reading cgroup statistics.
 pub trait CgroupBackend: Send + Sync + 'static {
     /// Initializes the backend.
-    fn initialize(
-        &self,
-        path: &Path,
-        root: &Path,
-        pid: i32,
-        controllers: &HashSet<Controller>,
-    ) -> Result<()>;
+    fn create(&self, path: &Path) -> Result<()>;
+
+    fn attach_pid(&self, path: &Path, pid: i32) -> Result<()>;
+
+    fn enable_controllers(&self, root: &Path, controllers: &HashSet<Controller>) -> Result<()>;
 
     /// Cleanup the backend.
     fn cleanup(&self, path: &Path, root: &Path) -> Result<()>;
@@ -73,37 +71,6 @@ pub trait CgroupBackend: Send + Sync + 'static {
 pub struct SysFsBackend;
 
 impl SysFsBackend {
-    /// Enables a controller in `cgroup.subtree_control`.
-    ///
-    /// If the provided controller is already activated, then nothing happens.
-    fn activate_controller(root_path: &Path, controller: Controller) -> Result<()> {
-        debug!(
-            "Activating controller for root cgroup `{}`.",
-            root_path.display()
-        );
-        let subtree_control_path = root_path.join("cgroup.subtree_control");
-        fs::write(&subtree_control_path, format!("+{controller}")).map_err(|err| {
-            CgroupError::FailedToCreateController {
-                controller,
-                path: subtree_control_path,
-                source: err,
-            }
-        })?;
-        Ok(())
-    }
-
-    /// Attaches a process PID to the cgroup.
-    fn attach_pid(path: &Path, pid: i32) -> Result<()> {
-        let procs_path = path.join("cgroup.procs");
-        fs::write(&procs_path, pid.to_string()).map_err(|err| CgroupError::FailedToAttachPid {
-            pid,
-            path: procs_path,
-            source: err,
-        })?;
-        debug!("Attached PID {pid} to cgroup {}", path.display());
-        Ok(())
-    }
-
     /// Returns all PIDs attached to the cgroup.
     fn pids(path: &Path) -> Result<Vec<i32>> {
         debug!("Retrieving cgroup `{}` PIDs.", path.display());
@@ -118,23 +85,43 @@ impl SysFsBackend {
 
 impl CgroupBackend for SysFsBackend {
     /// Creates the cgroup directory on disk.
-    fn initialize(
-        &self,
-        path: &Path,
-        root: &Path,
-        pid: i32,
-        controllers: &HashSet<Controller>,
-    ) -> Result<()> {
+    fn create(&self, path: &Path) -> Result<()> {
         debug!("Initializing cgroup at \"{}\"", path.display());
-
         fs::create_dir_all(path)?;
+        Ok(())
+    }
 
+    /// Attaches a process PID to the cgroup.
+    fn attach_pid(&self, path: &Path, pid: i32) -> Result<()> {
+        let procs_path = path.join("cgroup.procs");
+        fs::write(&procs_path, pid.to_string()).map_err(|err| CgroupError::FailedToAttachPid {
+            pid,
+            path: procs_path,
+            source: err,
+        })?;
+        debug!("Attached PID {pid} to cgroup {}", path.display());
+        Ok(())
+    }
+
+    /// Enables the provided controllers in `cgroup.subtree_control`.
+    ///
+    /// If a controller is already activated, then nothing happens for it.
+    fn enable_controllers(&self, root: &Path, controllers: &HashSet<Controller>) -> Result<()> {
+        debug!("Enabling cgroup controllers {controllers:?}.");
+        let subtree_control_path = root.join("cgroup.subtree_control");
         for controller in controllers {
-            Self::activate_controller(root, *controller)?;
+            trace!(
+                "Activating controller for root cgroup `{}`.",
+                root.display()
+            );
+            fs::write(&subtree_control_path, format!("+{controller}")).map_err(|err| {
+                CgroupError::FailedToCreateController {
+                    controller: *controller,
+                    path: subtree_control_path.clone(),
+                    source: err,
+                }
+            })?;
         }
-
-        Self::attach_pid(path, pid)?;
-
         Ok(())
     }
 
@@ -250,6 +237,11 @@ impl<B: CgroupBackend> RootCgroup<B> {
     pub fn io(&self) -> Result<IoSnapshot> {
         self.backend.io(&self.path)
     }
+
+    /// Enables the provided controllers.
+    pub fn enable_controllers(&self, controllers: &HashSet<Controller>) -> Result<()> {
+        self.backend.enable_controllers(&self.path, controllers)
+    }
 }
 
 impl Default for RootCgroup {
@@ -295,9 +287,13 @@ impl<B: CgroupBackend> ChildCgroup<B> {
     }
 
     /// Initializes the cgroup backend.
-    pub fn initialize(&self, pid: i32, controllers: &HashSet<Controller>) -> Result<()> {
-        self.backend
-            .initialize(&self.path, &self.root, pid, controllers)
+    pub fn create(&self) -> Result<()> {
+        self.backend.create(&self.path)
+    }
+
+    /// Attaches a process PID to the cgroup.
+    pub fn attach_pid(&self, pid: i32) -> Result<()> {
+        self.backend.attach_pid(&self.path, pid)
     }
 
     /// Cleanup the cgroup backend.
@@ -330,11 +326,17 @@ mod tests {
             Ok(self.io.clone())
         }
 
-        fn initialize(
+        fn create(&self, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn attach_pid(&self, _path: &Path, _pid: i32) -> Result<()> {
+            Ok(())
+        }
+
+        fn enable_controllers(
             &self,
-            _path: &Path,
             _root: &Path,
-            _pid: i32,
             _controllers: &HashSet<Controller>,
         ) -> Result<()> {
             Ok(())
