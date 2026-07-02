@@ -166,15 +166,13 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
             self.proc_cgroup.attach_pid(pid)?;
         }
 
-        if let Some(poll_interval) = self.config.poll_interval {
-            self.handle = Some(Self::create_worker(
-                self.proc_cgroup.clone(),
-                self.root_cgroup.clone(),
-                self.proc_memory_counters.clone(),
-                self.global_memory_counters.clone(),
-                poll_interval,
-            )?);
-        }
+        self.handle = Some(Self::create_worker(
+            self.proc_cgroup.clone(),
+            self.root_cgroup.clone(),
+            self.proc_memory_counters.clone(),
+            self.global_memory_counters.clone(),
+            self.config.poll_interval,
+        )?);
 
         self.begin_timestamp = get_timestamp_micros();
 
