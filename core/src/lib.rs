@@ -6,8 +6,7 @@ mod profiler;
 pub mod sensor;
 
 mod util;
-pub use util::fs;
-pub use util::time;
+pub use util::{fs, sys, time};
 
 pub mod source;
 

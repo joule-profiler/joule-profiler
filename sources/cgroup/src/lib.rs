@@ -161,8 +161,6 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
     async fn init(&mut self, pid: i32) -> Result<()> {
         if self.config.create_cgroup {
             self.proc_cgroup.create()?;
-            self.root_cgroup
-                .enable_controllers(&self.config.controllers)?;
         }
         if self.config.attach_pid {
             self.proc_cgroup.attach_pid(pid)?;
@@ -463,9 +461,7 @@ fn to_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cgroup::Controller;
     use crate::snapshot::{CpuSnapshot, IoSnapshot, MemorySnapshot};
-    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tokio::time::{Duration, sleep};
@@ -499,14 +495,6 @@ mod tests {
         }
 
         fn attach_pid(&self, _path: &Path, _pid: i32) -> Result<()> {
-            Ok(())
-        }
-
-        fn enable_controllers(
-            &self,
-            _root: &Path,
-            _controllers: &HashSet<Controller>,
-        ) -> Result<()> {
             Ok(())
         }
     }
