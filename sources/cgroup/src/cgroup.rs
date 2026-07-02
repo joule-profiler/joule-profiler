@@ -1,19 +1,17 @@
 //! cgroup v2 management utilities.
 //!
 //! This module provides:
-//! - controller activation (`cpu`, `memory`, `io`);
 //! - child cgroup creation and cleanup;
 //! - process attachment to cgroups;
 //! - CPU, memory, and I/O statistics collection.
 
 use std::{
-    collections::HashSet,
-    fmt::Display,
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
-use log::{debug, trace, warn};
+use log::{debug, warn};
 
 use crate::{
     Result,
@@ -22,37 +20,13 @@ use crate::{
     util::{read_flat_keyed_file, read_io_stat, read_u64_opt},
 };
 
-/// Available cgroup v2 controllers.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum Controller {
-    /// I/O controller.
-    Io,
-
-    /// Memory controller.
-    Memory,
-
-    /// CPU controller.
-    Cpu,
-}
-
-impl Display for Controller {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Controller::Io => "io",
-            Controller::Memory => "memory",
-            Controller::Cpu => "cpu",
-        })
-    }
-}
-
 /// Interface for reading cgroup statistics.
 pub trait CgroupBackend: Send + Sync + 'static {
     /// Initializes the backend.
     fn create(&self, path: &Path) -> Result<()>;
 
+    /// Attaches the provided pid to the cgroup.
     fn attach_pid(&self, path: &Path, pid: i32) -> Result<()>;
-
-    fn enable_controllers(&self, root: &Path, controllers: &HashSet<Controller>) -> Result<()>;
 
     /// Cleanup the backend.
     fn cleanup(&self, path: &Path, root: &Path) -> Result<()>;
@@ -84,44 +58,32 @@ impl SysFsBackend {
 }
 
 impl CgroupBackend for SysFsBackend {
-    /// Creates the cgroup directory on disk.
+    /// Creates the cgroup directory.
     fn create(&self, path: &Path) -> Result<()> {
         debug!("Initializing cgroup at \"{}\"", path.display());
-        fs::create_dir_all(path)?;
+        fs::create_dir_all(path).map_err(|err| match err.kind() {
+            ErrorKind::PermissionDenied => {
+                CgroupError::PermissionDenied("creating a cgroup requires root privileges.")
+            }
+            _ => err.into(),
+        })?;
         Ok(())
     }
 
     /// Attaches a process PID to the cgroup.
     fn attach_pid(&self, path: &Path, pid: i32) -> Result<()> {
         let procs_path = path.join("cgroup.procs");
-        fs::write(&procs_path, pid.to_string()).map_err(|err| CgroupError::FailedToAttachPid {
-            pid,
-            path: procs_path,
-            source: err,
+        fs::write(&procs_path, pid.to_string()).map_err(|err| match err.kind() {
+            ErrorKind::PermissionDenied => CgroupError::PermissionDenied(
+                "attaching a process to this cgroup requires root privileges.",
+            ),
+            _ => CgroupError::FailedToAttachPid {
+                pid,
+                path: procs_path,
+                source: err,
+            },
         })?;
         debug!("Attached PID {pid} to cgroup {}", path.display());
-        Ok(())
-    }
-
-    /// Enables the provided controllers in `cgroup.subtree_control`.
-    ///
-    /// If a controller is already activated, then nothing happens for it.
-    fn enable_controllers(&self, root: &Path, controllers: &HashSet<Controller>) -> Result<()> {
-        debug!("Enabling cgroup controllers {controllers:?}.");
-        let subtree_control_path = root.join("cgroup.subtree_control");
-        for controller in controllers {
-            trace!(
-                "Activating controller for root cgroup `{}`.",
-                root.display()
-            );
-            fs::write(&subtree_control_path, format!("+{controller}")).map_err(|err| {
-                CgroupError::FailedToCreateController {
-                    controller: *controller,
-                    path: subtree_control_path.clone(),
-                    source: err,
-                }
-            })?;
-        }
         Ok(())
     }
 
@@ -150,7 +112,8 @@ impl CgroupBackend for SysFsBackend {
 
     /// Reads memory statistics from cgroup memory files.
     fn memory(&self, path: &Path) -> Result<MemorySnapshot> {
-        let mut stat = read_flat_keyed_file(&path.join("memory.stat"))?;
+        let mut stat = read_flat_keyed_file(&path.join("memory.stat"))
+            .map_err(|e| e.into_controller_error("memory", path))?;
         Ok(MemorySnapshot {
             current: read_u64_opt(&path.join("memory.current"))?,
             swap_current: read_u64_opt(&path.join("memory.swap.current"))?,
@@ -166,7 +129,8 @@ impl CgroupBackend for SysFsBackend {
 
     /// Reads CPU statistics from `cpu.stat`.
     fn cpu(&self, path: &Path) -> Result<CpuSnapshot> {
-        let mut stat = read_flat_keyed_file(&path.join("cpu.stat"))?;
+        let mut stat = read_flat_keyed_file(&path.join("cpu.stat"))
+            .map_err(|e| e.into_controller_error("cpu", path))?;
 
         Ok(CpuSnapshot {
             usage_usec: stat
@@ -188,7 +152,8 @@ impl CgroupBackend for SysFsBackend {
 
     /// Reads I/O statistics from `io.stat`.
     fn io(&self, path: &Path) -> Result<IoSnapshot> {
-        let (rbytes, wbytes) = read_io_stat(&path.join("io.stat"))?;
+        let (rbytes, wbytes) =
+            read_io_stat(&path.join("io.stat")).map_err(|e| e.into_controller_error("io", path))?;
         Ok(IoSnapshot { rbytes, wbytes })
     }
 }
@@ -236,11 +201,6 @@ impl<B: CgroupBackend> RootCgroup<B> {
     /// Get I/O stats.
     pub fn io(&self) -> Result<IoSnapshot> {
         self.backend.io(&self.path)
-    }
-
-    /// Enables the provided controllers.
-    pub fn enable_controllers(&self, controllers: &HashSet<Controller>) -> Result<()> {
-        self.backend.enable_controllers(&self.path, controllers)
     }
 }
 
@@ -331,14 +291,6 @@ mod tests {
         }
 
         fn attach_pid(&self, _path: &Path, _pid: i32) -> Result<()> {
-            Ok(())
-        }
-
-        fn enable_controllers(
-            &self,
-            _root: &Path,
-            _controllers: &HashSet<Controller>,
-        ) -> Result<()> {
             Ok(())
         }
 
