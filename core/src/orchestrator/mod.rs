@@ -49,7 +49,7 @@ struct SourceHandle {
     /// The event channel sender used to manage the metric sources.
     control_sender: mpsc::Sender<SourceEvent>,
 
-    /// The channels used for sources initializations.
+    /// The channels used for sources initialization.
     init_channel: Option<InitChannel>,
 
     /// The handle of the worker task, used for joining sources gracefully.
