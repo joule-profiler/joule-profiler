@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
         let procfs = Procfs::new(ProcfsConfig::default())?;
         profiler.add_source(procfs);
     }
-    
+
     if cli.sources.contains(&Source::Cgroup) {
         trace!("Initializing CGroup v2 source");
         let cgroup = CgroupSource::new(CgroupConfig {
