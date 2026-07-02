@@ -103,6 +103,7 @@ pub struct Nvml<H: NvmlHardware = NvmlWrapperHardware> {
     /// The current vram counters.
     vram_counters: Arc<Mutex<HashMap<u32, VramCounter>>>,
 
+    /// The current utilization counters.
     utilization_counters: Arc<Mutex<HashMap<u32, UtilizationCounter>>>,
 
     /// The current power counters.
