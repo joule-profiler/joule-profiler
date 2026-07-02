@@ -6,15 +6,13 @@ use std::time::Duration;
 
 use crate::aggregate::sensor_result::SensorResult;
 use crate::orchestrator::error::OrchestratorError;
-use crate::source::error::IntoMetricSourceError;
 use crate::source::types::SourceEvent;
 use crate::source::{MetricSource, MetricSourceError};
+use crate::util::time::get_timestamp_micros;
 use futures::future::try_join_all;
+use log::{debug, trace};
 use tokio::time::timeout;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 pub mod error;
 
@@ -26,31 +24,9 @@ pub const CONTROL_CHANNEL_SIZE: usize = 16;
 /// The handle describing the return type of a source worker.
 type TaskHandle = JoinHandle<Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError>>;
 
-struct InitChannel {
-    sender: oneshot::Sender<i32>,
-    validation: oneshot::Receiver<Result<(), MetricSourceError>>,
-}
-
-impl InitChannel {
-    async fn initialize(self, pid: i32) -> Result<(), OrchestratorError> {
-        self.sender
-            .send(pid)
-            .map_err(|_| OrchestratorError::InitializationError("Failed to send PID"))?;
-
-        self.validation
-            .await
-            .map_err(|e| OrchestratorError::MetricSourceError(e.into_metric_source_error()))??;
-
-        Ok(())
-    }
-}
-
 struct SourceHandle {
     /// The event channel sender used to manage the metric sources.
     control_sender: mpsc::Sender<SourceEvent>,
-
-    /// The channels used for sources initialization.
-    init_channel: Option<InitChannel>,
 
     /// The handle of the worker task, used for joining sources gracefully.
     handle: TaskHandle,
@@ -58,54 +34,90 @@ struct SourceHandle {
 
 /// Orchestrates the metric sources and send them the profiler's messages through asynchronous channels.
 /// It is a proxy between the profiler and the sources and is responsible of their lifecycle.
-#[derive(Default)]
-pub struct SourceOrchestrator {
+pub struct Orchestrator {
+    /// Sources initialized through [`SourceOrchestrator::init`], not yet started by [`SourceOrchestrator::run`].
+    sources: Vec<Box<dyn MetricSource>>,
+
     handles: Vec<SourceHandle>,
-    init_timeout: Duration,
 }
 
-impl SourceOrchestrator {
-    /// Starts all the metric sources.
+impl Orchestrator {
+    pub fn new(sources: Vec<Box<dyn MetricSource>>) -> Self {
+        Self {
+            sources,
+            handles: Vec::new(),
+        }
+    }
+
+    /// Initializes each metric source with the profiled program's pid, bounded by `init_timeout`.
     ///
-    /// The function uses a one shot sender to forward the profiled program's pid to the sources, used by some for per-process profiling (e.g. `perf_event`).
-    /// Stores the sources handles and the channels senders to be able to gracefully join the sources and send events.
-    #[inline]
-    pub fn run(
+    /// Used by some sources for per-process profiling (e.g. `perf_event`).
+    /// Stores the initialized sources, ready to be started with [`SourceOrchestrator::run`].
+    ///
+    /// Each source is initialized in its own task: some [`MetricReader::init`](`crate::source::MetricReader::init`)
+    /// implementations perform blocking work without yielding, which would otherwise prevent
+    /// `init_timeout` from being enforced if awaited directly on the calling task.
+    pub async fn init(
         &mut self,
-        sources: Vec<Box<dyn MetricSource>>,
+        pid: i32,
         init_timeout: Duration,
     ) -> Result<(), OrchestratorError> {
+        trace!(
+            "Initializing {} source(s) with pid {pid}",
+            self.sources.len()
+        );
+        let sources = std::mem::take(&mut self.sources);
+        let tasks = sources.into_iter().map(|mut source| {
+            tokio::spawn(async move {
+                let result = source.init(pid).await;
+                (source, result)
+            })
+        });
+
+        let begin_init_timestamp = get_timestamp_micros();
+        let initialized = timeout(init_timeout, try_join_all(tasks))
+            .await
+            .map_err(|_| OrchestratorError::InitializationError("init timeout reached"))??;
+        let end_init_timestamp = get_timestamp_micros();
+        debug!(
+            "Sources initialized in {}μs.",
+            end_init_timestamp - begin_init_timestamp
+        );
+
+        self.sources = initialized
+            .into_iter()
+            .map(|(source, result)| result.map(|()| source))
+            .collect::<Result<Vec<_>, MetricSourceError>>()?;
+
+        Ok(())
+    }
+
+    /// Starts all the metric sources, already initialized through [`SourceOrchestrator::init`].
+    ///
+    /// Stores the sources handles and the channels senders to be able to gracefully join the sources and send events.
+    #[inline]
+    pub fn run(&mut self) -> Result<(), OrchestratorError> {
+        trace!(
+            "Starting orchestrator with {} source(s)",
+            self.sources.len()
+        );
+        let sources = std::mem::take(&mut self.sources);
+
         if sources.is_empty() {
             return Err(OrchestratorError::NoSourceConfigured);
         }
-        let mut handles = Vec::with_capacity(sources.len());
 
-        for source in sources {
-            let (control_sender, control_receiver) = mpsc::channel(CONTROL_CHANNEL_SIZE);
-            let (init_sender, init_receiver) = oneshot::channel();
-            let (init_validation_sender, init_validation_receiver) = oneshot::channel();
-
-            let handle = source.run(
-                control_receiver,
-                init_receiver,
-                init_validation_sender,
-                init_timeout,
-            );
-
-            let init_channel = InitChannel {
-                sender: init_sender,
-                validation: init_validation_receiver,
-            };
-
-            handles.push(SourceHandle {
-                handle,
-                control_sender,
-                init_channel: Some(init_channel),
-            });
-        }
-
-        self.init_timeout = init_timeout;
-        self.handles = handles;
+        self.handles = sources
+            .into_iter()
+            .map(|source| {
+                let (control_sender, control_receiver) = mpsc::channel(CONTROL_CHANNEL_SIZE);
+                let handle = source.run(control_receiver);
+                SourceHandle {
+                    control_sender,
+                    handle,
+                }
+            })
+            .collect();
 
         Ok(())
     }
@@ -118,25 +130,6 @@ impl SourceOrchestrator {
     #[inline]
     pub async fn measure(&mut self) -> Result<(), OrchestratorError> {
         self.send_event(SourceEvent::Measure).await
-    }
-
-    /// Initializes each metric source.
-    /// Called when the program execution is stopped to inizialize sources requiring pid filtering (e.g. `perf_event`).
-    /// Wait for all sources to be initialized and to receive their validation.
-    pub async fn init(&mut self, pid: i32) -> Result<(), OrchestratorError> {
-        let futures = self.handles.iter_mut().map(|handle| async move {
-            if let Some(init_channel) = handle.init_channel.take() {
-                init_channel.initialize(pid).await
-            } else {
-                Ok(())
-            }
-        });
-
-        timeout(self.init_timeout, try_join_all(futures))
-            .await
-            .map_err(|_| OrchestratorError::InitializationError("init timeout reached"))??;
-
-        Ok(())
     }
 
     /// Initializes a new phase for each metric source.
@@ -311,12 +304,10 @@ mod tests {
 
     #[tokio::test]
     async fn finalize_without_measurements_returns_not_enough_snapshots() {
-        let mut orchestrator = SourceOrchestrator::default();
         let (source, _) = mock_source();
-        orchestrator
-            .run(vec![source], Duration::from_secs(1))
-            .unwrap();
-        orchestrator.init(0).await.unwrap();
+        let mut orchestrator = Orchestrator::new(vec![source]);
+        orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
+        orchestrator.run().unwrap();
 
         assert!(matches!(
             orchestrator.finalize().await,
@@ -326,10 +317,10 @@ mod tests {
 
     #[tokio::test]
     async fn run_orchestrator_with_no_source_returns_error() {
-        let mut orchestrator = SourceOrchestrator::default();
+        let mut orchestrator = Orchestrator::new(Vec::new());
 
         assert!(matches!(
-            orchestrator.run(vec![], Duration::from_secs(1)),
+            orchestrator.run(),
             Err(OrchestratorError::NoSourceConfigured)
         ));
     }
@@ -337,13 +328,11 @@ mod tests {
     #[tokio::test]
     async fn event_reaches_worker() {
         let (source, state) = mock_source();
-        let mut orchestrator = SourceOrchestrator::default();
-        orchestrator
-            .run(vec![source], Duration::from_secs(1))
-            .unwrap();
+        let mut orchestrator = Orchestrator::new(vec![source]);
+        orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
+        orchestrator.run().unwrap();
 
         let _ = orchestrator.measure().await;
-        let _ = orchestrator.init(0).await;
         let _ = orchestrator.join().await;
 
         tokio::task::yield_now().await;
@@ -358,18 +347,34 @@ mod tests {
     #[tokio::test]
     async fn init_initializes_source_with_right_pid() {
         let (source, state) = mock_source();
+        let mut orchestrator = Orchestrator::new(vec![source]);
 
-        let mut orchestrator = SourceOrchestrator::default();
-        orchestrator
-            .run(vec![source], Duration::from_secs(1))
-            .unwrap();
-
-        orchestrator.init(42).await.unwrap();
-
-        // wait for initialization
-        tokio::task::yield_now().await;
+        orchestrator.init(42, Duration::from_secs(1)).await.unwrap();
 
         assert_eq!(state.lock().unwrap().pid, 42);
+    }
+
+    // Requires a multi-threaded runtime: a blocking `init` occupies its own worker thread,
+    // relying on another worker thread being free to enforce `init_timeout`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn init_times_out_on_blocking_source() {
+        let mut reader = MockMetricReader::new();
+        reader.expect_init().returning(|_| {
+            // Simulates a `MetricReader::init` implementation performing blocking
+            // work without ever yielding (e.g. a blocking syscall or file read),
+            // which must not prevent `init_timeout` from being enforced.
+            std::thread::sleep(Duration::from_millis(200));
+            Ok(())
+        });
+        let source: Box<dyn MetricSource> = reader.into();
+        let mut orchestrator = Orchestrator::new(vec![source]);
+
+        let result = orchestrator.init(0, Duration::from_millis(20)).await;
+
+        assert!(matches!(
+            result,
+            Err(OrchestratorError::InitializationError(_))
+        ));
     }
 
     #[tokio::test]
@@ -378,12 +383,10 @@ mod tests {
         reader.expect_init().returning(|_| Ok(()));
         reader.expect_measure().returning(|| Err(MockError));
         let source: Box<dyn MetricSource> = reader.into();
-        let mut orchestrator = SourceOrchestrator::default();
+        let mut orchestrator = Orchestrator::new(vec![source]);
 
-        orchestrator
-            .run(vec![source], Duration::from_secs(1))
-            .unwrap();
-        orchestrator.init(0).await.unwrap();
+        orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
+        orchestrator.run().unwrap();
         orchestrator.measure().await.unwrap();
         let result = orchestrator.finalize().await;
 
