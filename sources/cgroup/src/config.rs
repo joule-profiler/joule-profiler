@@ -16,6 +16,12 @@ pub struct CgroupConfig {
 
     /// Enabled cgroup controllers (cpu, memory, io).
     pub controllers: HashSet<Controller>,
+
+    /// Whether the source must attach the process pid to the cgroup or not.
+    pub attach_pid: bool,
+
+    /// Whether the cgroup is already created or if the source must create it itself.
+    pub create_cgroup: bool,
 }
 
 impl Default for CgroupConfig {
@@ -27,6 +33,8 @@ impl Default for CgroupConfig {
             controllers: vec![Controller::Io, Controller::Memory, Controller::Cpu]
                 .into_iter()
                 .collect(),
+            attach_pid: true,
+            create_cgroup: true,
         }
     }
 }
