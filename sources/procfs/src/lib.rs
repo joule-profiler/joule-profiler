@@ -70,9 +70,6 @@ pub struct Procfs<B: Backend = ProcfsBackend> {
     /// The backend used to interract with procfs. Used for testing.
     backend: Arc<B>,
 
-    /// pid of the profiled process, initialized at -1.
-    pid: i32,
-
     /// Current metrics counters.
     counters: Arc<Mutex<Counters>>,
 
@@ -96,7 +93,6 @@ impl Procfs {
     pub fn new(config: ProcfsConfig) -> Result<Self> {
         Ok(Self {
             config,
-            pid: -1,
             mem_total: 0,
             backend: Arc::new(ProcfsBackend),
             counters: Arc::default(),
@@ -213,7 +209,6 @@ impl<B: Backend> MetricReader for Procfs<B> {
     /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
         debug!("Initializing procfs source.");
-        self.pid = pid;
         self.mem_total = self.backend.mem_total()?;
         *self.detected_processes.lock().await = self.backend.collect_children(pid);
 
@@ -449,7 +444,6 @@ mod tests {
     fn create_source(backend: MockBackend) -> Procfs<MockBackend> {
         let source = Procfs {
             backend: Arc::new(backend),
-            pid: 1,
             config: ProcfsConfig::default(),
             mem_total: 0,
             counters: Arc::default(),
@@ -483,7 +477,6 @@ mod tests {
 
         assert_eq!(source.mem_total, mem_total);
         assert!(source.detected_processes.lock().await.eq(&children));
-        assert_eq!(source.pid, pid);
     }
 
     #[tokio::test]
