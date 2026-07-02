@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, Source, init_logging, output_format_to_displayer,
@@ -79,10 +77,7 @@ async fn main() -> Result<()> {
 
     if cli.sources.contains(&Source::Cgroup) {
         trace!("Initializing CGroup v2 source");
-        let cgroup = CgroupSource::new(CgroupConfig {
-            poll_interval: Some(Duration::from_millis(1)),
-            ..Default::default()
-        })?;
+        let cgroup = CgroupSource::new(CgroupConfig::default())?;
         profiler.add_source(cgroup);
     }
 
