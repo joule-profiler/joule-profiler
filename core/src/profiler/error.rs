@@ -57,6 +57,10 @@ pub enum JouleProfilerError {
         std::io::Error,
     ),
 
+    /// Returned when there's no metric sources configured to profile the program with.
+    #[error("No metric sources configured.")]
+    NoSourceConfigured,
+
     /// A process control operation (e.g. kill, wait) failed.
     #[error("Process control failed: {0}")]
     ProcessControlFailed(String),

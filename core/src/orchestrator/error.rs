@@ -6,10 +6,6 @@ use tokio::{sync::mpsc::error::SendError, task::JoinError};
 /// Errors that can occur during orchestration.
 #[derive(Debug, Error)]
 pub enum OrchestratorError {
-    /// Returned when there's no metric sources configured to profile the program with.
-    #[error("No metric sources configured.")]
-    NoSourceConfigured,
-
     /// Happens when an error occur while joining sources.
     #[error("Join error")]
     JoinError(
