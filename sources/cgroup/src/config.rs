@@ -9,8 +9,8 @@ pub struct CgroupConfig {
     /// Name of the created cgroup for the monitored process.
     pub cgroup_name: String,
 
-    /// Optional background polling interval.
-    pub poll_interval: Option<Duration>,
+    /// Background polling interval.
+    pub poll_interval: Duration,
 
     /// Whether the source must attach the process pid to the cgroup or not.
     pub attach_pid: bool,
@@ -24,7 +24,7 @@ impl Default for CgroupConfig {
         Self {
             cgroup_root: None,
             cgroup_name: format!("joule-profiler-{}", std::process::id()),
-            poll_interval: None,
+            poll_interval: Duration::from_millis(1),
             attach_pid: true,
             create_cgroup: true,
         }
