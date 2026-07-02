@@ -157,14 +157,16 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
     type Type = Counters;
     type Error = CgroupError;
 
-    /// Initializes the cgroup for the given process and enables controllers.
-    ///
-    /// - creates the process cgroup directory
-    /// - enables requested controllers on root cgroup
-    /// - attaches the target PID
-    /// - optionally starts background polling worker
+    /// Initializes the cgroup source with the given pid.
     async fn init(&mut self, pid: i32) -> Result<()> {
-        self.proc_cgroup.initialize(pid, &self.config.controllers)?;
+        if self.config.create_cgroup {
+            self.proc_cgroup.create()?;
+            self.root_cgroup
+                .enable_controllers(&self.config.controllers)?;
+        }
+        if self.config.attach_pid {
+            self.proc_cgroup.attach_pid(pid)?;
+        }
 
         if let Some(poll_interval) = self.config.poll_interval {
             self.handle = Some(Self::create_worker(
@@ -210,7 +212,7 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
 
     /// Returns collected metrics and resets per-phase counters.
     async fn retrieve(&mut self) -> Result<Self::Type> {
-        debug!("Retriving cgroup counters.");
+        debug!("Retrieving cgroup counters.");
 
         let proc_memory = {
             let mut lock = self.proc_memory_counters.lock().await;
@@ -260,7 +262,9 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
             cancellation_token.cancel();
             handle.await??;
         }
-        self.proc_cgroup.cleanup()?;
+        if self.config.create_cgroup {
+            self.proc_cgroup.cleanup()?;
+        }
         Ok(())
     }
 
@@ -490,11 +494,17 @@ mod tests {
             Ok(())
         }
 
-        fn initialize(
+        fn create(&self, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn attach_pid(&self, _path: &Path, _pid: i32) -> Result<()> {
+            Ok(())
+        }
+
+        fn enable_controllers(
             &self,
-            _path: &Path,
             _root: &Path,
-            _pid: i32,
             _controllers: &HashSet<Controller>,
         ) -> Result<()> {
             Ok(())
