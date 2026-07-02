@@ -35,7 +35,6 @@ struct SourceHandle {
 /// Orchestrates the metric sources and send them the profiler's messages through asynchronous channels.
 /// It is a proxy between the profiler and the sources and is responsible of their lifecycle.
 pub struct Orchestrator {
-    /// Sources initialized through [`SourceOrchestrator::init`], not yet started by [`SourceOrchestrator::run`].
     sources: Vec<Box<dyn MetricSource>>,
 
     handles: Vec<SourceHandle>,
@@ -96,16 +95,12 @@ impl Orchestrator {
     ///
     /// Stores the sources handles and the channels senders to be able to gracefully join the sources and send events.
     #[inline]
-    pub fn run(&mut self) -> Result<(), OrchestratorError> {
+    pub fn run(&mut self) {
         trace!(
             "Starting orchestrator with {} source(s)",
             self.sources.len()
         );
         let sources = std::mem::take(&mut self.sources);
-
-        if sources.is_empty() {
-            return Err(OrchestratorError::NoSourceConfigured);
-        }
 
         self.handles = sources
             .into_iter()
@@ -118,8 +113,6 @@ impl Orchestrator {
                 }
             })
             .collect();
-
-        Ok(())
     }
 
     /// Send a measure event to each metrics source.
@@ -307,7 +300,7 @@ mod tests {
         let (source, _) = mock_source();
         let mut orchestrator = Orchestrator::new(vec![source]);
         orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
-        orchestrator.run().unwrap();
+        orchestrator.run();
 
         assert!(matches!(
             orchestrator.finalize().await,
@@ -316,21 +309,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_orchestrator_with_no_source_returns_error() {
-        let mut orchestrator = Orchestrator::new(Vec::new());
-
-        assert!(matches!(
-            orchestrator.run(),
-            Err(OrchestratorError::NoSourceConfigured)
-        ));
-    }
-
-    #[tokio::test]
     async fn event_reaches_worker() {
         let (source, state) = mock_source();
         let mut orchestrator = Orchestrator::new(vec![source]);
         orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
-        orchestrator.run().unwrap();
+        orchestrator.run();
 
         let _ = orchestrator.measure().await;
         let _ = orchestrator.join().await;
@@ -386,7 +369,7 @@ mod tests {
         let mut orchestrator = Orchestrator::new(vec![source]);
 
         orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
-        orchestrator.run().unwrap();
+        orchestrator.run();
         orchestrator.measure().await.unwrap();
         let result = orchestrator.finalize().await;
 
