@@ -1,6 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, time::Duration};
-
-use crate::cgroup::Controller;
+use std::{path::PathBuf, time::Duration};
 
 /// Configuration for the cgroup metric source.
 #[derive(Debug, Clone)]
@@ -13,9 +11,6 @@ pub struct CgroupConfig {
 
     /// Optional background polling interval.
     pub poll_interval: Option<Duration>,
-
-    /// Enabled cgroup controllers (cpu, memory, io).
-    pub controllers: HashSet<Controller>,
 
     /// Whether the source must attach the process pid to the cgroup or not.
     pub attach_pid: bool,
@@ -30,9 +25,6 @@ impl Default for CgroupConfig {
             cgroup_root: None,
             cgroup_name: format!("joule-profiler-{}", std::process::id()),
             poll_interval: None,
-            controllers: vec![Controller::Io, Controller::Memory, Controller::Cpu]
-                .into_iter()
-                .collect(),
             attach_pid: true,
             create_cgroup: true,
         }

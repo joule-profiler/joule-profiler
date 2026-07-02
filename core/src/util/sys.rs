@@ -47,6 +47,11 @@ pub fn geteuid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// True if the current user is root, else False.
+pub fn is_root() -> bool {
+    geteuid() == 0
+}
+
 /// Gets the current process' user id from its username.
 ///
 /// SAFETY

@@ -7,6 +7,41 @@ This crate implements a `MetricReader` from `joule-profiler-core` and collects *
 Control groups (cgroups v2) are a Linux kernel feature that allows grouping processes and tracking/limiting their resource usage.
 This source uses cgroup files exposed under `/sys/fs/cgroup`.
 
+## Setup
+
+Before using this source, the required cgroup controllers `cpu`, `memory`, `io` must be enabled on the cgroup hierarchy. This source does **not** enables them automatically, it is your responsibility to ensure controllers are active.
+
+To enable them on the root cgroup:
+
+```bash
+echo "+cpu +memory +io" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+```
+
+To verify which controllers are currently enabled:
+
+```bash
+cat /sys/fs/cgroup/cgroup.subtree_control
+```
+
+To enable the required controllers for the root cgroup:
+
+```bash
+echo "+cpu +memory +io" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+```
+
+If you are using a nested cgroup, each ancestor must propagate the controllers down. For example, if your cgroup lives under `/sys/fs/cgroup/nested_cgroup/mycgroup`:
+
+```bash
+echo "+cpu +memory +io" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+echo "+cpu +memory +io" | sudo tee /sys/fs/cgroup/nested_cgroup/cgroup.subtree_control
+```
+
+> [!IMPORTANT]
+> By default, a nested cgroup inherit its parent controllers files. Nonetheless, the parent of the nested cgroup must enable the controllers.
+
+> [!NOTE]
+> On systemd-based systems, some controllers may already be enabled. Check `/sys/fs/cgroup/cgroup.subtree_control` first.
+
 ## Implemented metrics
 
 All metrics are reported for both the process cgroup and the root cgroup, thus they are prefixed with a `proc` or a `global`.

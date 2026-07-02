@@ -23,7 +23,7 @@ use crate::profiler::types::{MeasurePhasesReturnType, Phase, ProfilerResults, Re
 use crate::sensor::{Sensor, Sensors};
 use crate::source::{MetricReader, MetricSource, MetricSourceError};
 use crate::util::fs::create_file_with_user_permissions;
-use crate::util::sys::{get_uid_from_username, geteuid, signal};
+use crate::util::sys::{get_uid_from_username, is_root, signal};
 use crate::util::time::get_timestamp_micros;
 pub use error::JouleProfilerError;
 
@@ -361,7 +361,7 @@ pub fn init_command(cmd: &[String], use_root: bool) -> Result<Command> {
         command.args(&cmd[1..]);
     }
 
-    if geteuid() == 0 && !use_root {
+    if is_root() && !use_root {
         let username =
             std::env::var("SUDO_USER").map_err(|_| JouleProfilerError::CannotRetrieveSudoUser)?;
         let uid = get_uid_from_username(&username)?;
