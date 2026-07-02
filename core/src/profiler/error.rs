@@ -25,7 +25,7 @@ pub enum JouleProfilerError {
 
     /// The provided token pattern is not a valid regular expression.
     #[error("Invalid regex pattern: {0}")]
-    InvalidPattern(String),
+    InvalidPattern(#[from] regex::Error),
 
     /// Failed to capture the profiled command's stdout.
     #[error("Stdout capture failed")]
