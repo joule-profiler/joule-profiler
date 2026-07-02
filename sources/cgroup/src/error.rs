@@ -79,15 +79,14 @@ pub enum CgroupError {
 
 impl CgroupError {
     pub(crate) fn into_controller_error(self, controller: &'static str, cgroup: &Path) -> Self {
-        if let CgroupError::IoPath { ref source, .. } = self {
-            if source.kind() == ErrorKind::NotFound {
-                if let Some(parent) = cgroup.parent() {
-                    return CgroupError::ControllerNotEnabled {
-                        controller,
-                        path: parent.to_path_buf(),
-                    };
-                }
-            }
+        if let CgroupError::IoPath { ref source, .. } = self
+            && source.kind() == ErrorKind::NotFound
+            && let Some(parent) = cgroup.parent()
+        {
+            return CgroupError::ControllerNotEnabled {
+                controller,
+                path: parent.to_path_buf(),
+            };
         }
         self
     }
