@@ -17,7 +17,7 @@ use std::{
 pub mod error;
 
 use crate::config::ProfileConfig;
-use crate::orchestrator::SourceOrchestrator;
+use crate::orchestrator::Orchestrator;
 use crate::phase::{PhaseInfo, PhaseToken};
 use crate::profiler::types::{MeasurePhasesReturnType, Phase, ProfilerResults, Result};
 use crate::sensor::{Sensor, Sensors};
@@ -61,9 +61,6 @@ pub mod types;
 /// ```
 #[derive(Default)]
 pub struct JouleProfiler {
-    /// The sources orchestrator, managing sources and sending them the events sent by the profiler.
-    orchestrator: SourceOrchestrator,
-
     /// The different metric sources.
     sources: Vec<Box<dyn MetricSource>>,
 }
@@ -108,20 +105,31 @@ impl JouleProfiler {
 
     /// Profiles a program spawned with the configured command and return the aggregated results.
     ///
-    /// It starts the orchestrator with the metric sources and profile the program.
+    /// It spawns the program, initializes the metric sources with its pid, starts the
+    /// orchestrator, and profiles the program.
     pub async fn profile(&mut self, config: &ProfileConfig) -> Result<ProfilerResults> {
         info!("Running phase-based profiling");
         debug!("Phase regex: {}", config.token_pattern);
 
+        let regex = Regex::new(&config.token_pattern)?;
+
         let sources = std::mem::take(&mut self.sources);
-        trace!("Starting orchestrator with {} source(s)", sources.len());
-        self.orchestrator.run(sources, config.init_timeout)?;
+        let mut orchestrator = Orchestrator::new(sources);
+
+        debug!("Spawning command: {:?}", config.cmd);
+        let mut child = spawn_profiled_command(config)?;
+        let pid = child.id().cast_signed();
+
+        pause_prosess(pid)?;
+        orchestrator.init(pid, config.init_timeout).await?;
+        orchestrator.run()?;
 
         info!("Starting measurements");
-        let (command_duration_ms, timestamp, exit_code, detected_phases) =
-            self.measure_phases(config).await?;
+        let (command_duration_ms, timestamp, exit_code, detected_phases) = self
+            .measure_phases(&mut orchestrator, config, &regex, &mut child, pid)
+            .await?;
 
-        let (sources_results, sources) = self.orchestrator.finalize().await?;
+        let (sources_results, sources) = orchestrator.finalize().await?;
         self.sources = sources;
 
         let mut phases: Vec<_> = detected_phases
@@ -170,33 +178,27 @@ impl JouleProfiler {
         })
     }
 
-    /// Spawn the configured command and profile it, separating its execution into phases through tokens matching
-    /// a configured regular expression.
+    /// Profile the already spawned and paused command, separating its execution into phases
+    /// through tokens matching a configured regular expression.
     ///
     /// The profiling is composed of several steps:
     ///
-    /// - Firstly, the program is spawned and its pid is retrieved.
-    /// - The process is immediately stopped using a SIGSTOP signal to configure the sources without introducing a significant overhead.
-    /// - The first measure is made and the process is then resume.
+    /// - The metric sources have already been initialized with the profiled program's pid and the process paused
+    ///   (see [`JouleProfiler::profile`]), to configure the sources without introducing a significant overhead.
+    /// - The first measure is made and the process is then resumed.
     /// - The profiler listens for phase token in the standard output of the profiled process and make a measure for every token detected.
     /// - When the program exited, the profiler makes a last measure to compute the last phase metrics.
     ///
     /// After the profiling, results are aggregated into a common structure.
-    async fn measure_phases(&mut self, config: &ProfileConfig) -> Result<MeasurePhasesReturnType> {
-        debug!("Compiling phase regex");
-
-        let regex = Regex::new(&config.token_pattern).map_err(|err| {
-            JouleProfilerError::InvalidPattern(format!("{}: {}", config.token_pattern, err))
-        })?;
-
+    async fn measure_phases(
+        &mut self,
+        orchestrator: &mut Orchestrator,
+        config: &ProfileConfig,
+        regex: &Regex,
+        child: &mut Child,
+        pid: i32,
+    ) -> Result<MeasurePhasesReturnType> {
         let mut sink = create_output_sink(config.stdout_file.as_ref())?;
-
-        debug!("Spawning command: {:?}", config.cmd);
-        let mut child = spawn_profiled_command(config)?;
-        let pid = child.id().cast_signed();
-
-        pause_prosess(pid)?;
-        self.orchestrator.init(pid).await?;
 
         let child_stdout = child
             .stdout
@@ -209,16 +211,17 @@ impl JouleProfiler {
         let begin_timestamp = get_timestamp_micros();
         trace!("Begin timestamp: {begin_timestamp}");
 
-        self.orchestrator.measure().await?;
+        orchestrator.measure().await?;
 
         resume_process(pid)?;
 
         detected_phases.push(PhaseInfo::start(begin_timestamp));
 
         self.detect_and_handle_phases_from_program_output(
+            orchestrator,
             &mut detected_phases,
             reader,
-            &regex,
+            regex,
             &mut sink,
         )
         .await?;
@@ -228,14 +231,14 @@ impl JouleProfiler {
         let end_timestamp = get_timestamp_micros();
         trace!("End timestamp: {end_timestamp}");
 
-        self.orchestrator.measure().await?;
-        self.orchestrator.new_phase().await?;
+        orchestrator.measure().await?;
+        orchestrator.new_phase().await?;
 
         let duration_ms = (end_timestamp - begin_timestamp) / 1000;
 
         detected_phases.push(PhaseInfo::end(end_timestamp));
 
-        let exit_code = wait_for_child_exit(&mut child)?;
+        let exit_code = wait_for_child_exit(child)?;
 
         info!("Command finished: duration={duration_ms} ms exit_code={exit_code}");
 
@@ -248,6 +251,7 @@ impl JouleProfiler {
     /// a measure is made and a new phase begins.
     async fn detect_and_handle_phases_from_program_output<R, W>(
         &mut self,
+        orchestrator: &mut Orchestrator,
         phases: &mut Vec<PhaseInfo>,
         mut reader: R,
         regex: &Regex,
@@ -284,8 +288,6 @@ impl JouleProfiler {
                 }
             }
 
-            trace!("STDOUT[{line_number}]: {line}");
-
             writeln!(sink, "{line}")?;
 
             if let Some(token) = phase_token_in_line(regex, &line) {
@@ -293,8 +295,8 @@ impl JouleProfiler {
 
                 debug!("Detected phase at line {line_number}, token '{token}'");
 
-                self.orchestrator.measure().await?;
-                self.orchestrator.new_phase().await?;
+                orchestrator.measure().await?;
+                orchestrator.new_phase().await?;
 
                 let phase_info = PhaseInfo {
                     token: PhaseToken::Token(token.to_owned()),
@@ -424,7 +426,7 @@ fn resume_process(pid: i32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::config::ProfileConfig;
-    use crate::orchestrator::SourceOrchestrator;
+    use crate::orchestrator::Orchestrator;
     use crate::phase::PhaseToken;
     use crate::profiler::{
         create_output_sink, phase_token_in_line, spawn_profiled_command, wait_for_child_exit,
@@ -442,7 +444,6 @@ mod tests {
 
     fn joule_profiler() -> JouleProfiler {
         JouleProfiler {
-            orchestrator: SourceOrchestrator::default(),
             sources: Vec::new(),
         }
     }
@@ -488,6 +489,7 @@ mod tests {
     #[tokio::test]
     async fn detect_multiple_phases() {
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__[A-Z0-9_]+__").unwrap();
         let cursor = Cursor::new("__PHASE1__\n__PHASE2__\n__PHASE3__");
         let reader = BufReader::new(cursor);
@@ -495,7 +497,13 @@ mod tests {
         let mut sink: Vec<u8> = Vec::new();
 
         profiler
-            .detect_and_handle_phases_from_program_output(&mut phases, reader, &regex, &mut sink)
+            .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
+                &mut phases,
+                reader,
+                &regex,
+                &mut sink,
+            )
             .await
             .unwrap();
 
@@ -508,13 +516,20 @@ mod tests {
     #[tokio::test]
     async fn detect_no_phases() {
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__[A-Z0-9_]+__").unwrap();
         let cursor = Cursor::new("hello\nworld\nno phases here");
         let reader = BufReader::new(cursor);
         let mut phases = Vec::new();
         let mut sink: Vec<u8> = Vec::new();
         profiler
-            .detect_and_handle_phases_from_program_output(&mut phases, reader, &regex, &mut sink)
+            .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
+                &mut phases,
+                reader,
+                &regex,
+                &mut sink,
+            )
             .await
             .unwrap();
 
@@ -524,6 +539,7 @@ mod tests {
     #[tokio::test]
     async fn detect_empty_output() {
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__PHASE__").unwrap();
         let cursor = Cursor::new("");
         let reader = BufReader::new(cursor);
@@ -531,7 +547,13 @@ mod tests {
         let mut sink: Vec<u8> = Vec::new();
 
         profiler
-            .detect_and_handle_phases_from_program_output(&mut phases, reader, &regex, &mut sink)
+            .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
+                &mut phases,
+                reader,
+                &regex,
+                &mut sink,
+            )
             .await
             .unwrap();
 
@@ -541,6 +563,7 @@ mod tests {
     #[tokio::test]
     async fn detect_phase_in_middle_of_line() {
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__PHASE[0-9]+__").unwrap();
         let cursor = Cursor::new("start __PHASE1__ end");
         let reader = BufReader::new(cursor);
@@ -548,7 +571,13 @@ mod tests {
         let mut sink: Vec<u8> = Vec::new();
 
         profiler
-            .detect_and_handle_phases_from_program_output(&mut phases, reader, &regex, &mut sink)
+            .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
+                &mut phases,
+                reader,
+                &regex,
+                &mut sink,
+            )
             .await
             .unwrap();
 
@@ -560,6 +589,7 @@ mod tests {
     #[tokio::test]
     async fn detect_correct_line_numbers() {
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__PHASE[0-9]+__").unwrap();
         let cursor = Cursor::new("a\nb\n__PHASE1__\nc\n__PHASE2__");
         let reader = BufReader::new(cursor);
@@ -567,7 +597,13 @@ mod tests {
         let mut sink: Vec<u8> = Vec::new();
 
         profiler
-            .detect_and_handle_phases_from_program_output(&mut phases, reader, &regex, &mut sink)
+            .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
+                &mut phases,
+                reader,
+                &regex,
+                &mut sink,
+            )
             .await
             .unwrap();
 
@@ -582,6 +618,7 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__PHASE__").unwrap();
         let cursor = Cursor::new("hello\n__PHASE__\nworld");
         let reader = BufReader::new(cursor);
@@ -591,6 +628,7 @@ mod tests {
 
         profiler
             .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
                 &mut phases,
                 reader,
                 &regex,
@@ -608,6 +646,7 @@ mod tests {
     #[tokio::test]
     async fn skips_invalid_utf8_lines() {
         let mut profiler = joule_profiler();
+        let mut orchestrator = Orchestrator::new(Vec::new());
         let regex = Regex::new("__PHASE__").unwrap();
 
         let bytes = vec![
@@ -619,7 +658,13 @@ mod tests {
         let mut sink: Vec<u8> = Vec::new();
 
         profiler
-            .detect_and_handle_phases_from_program_output(&mut phases, reader, &regex, &mut sink)
+            .detect_and_handle_phases_from_program_output(
+                &mut orchestrator,
+                &mut phases,
+                reader,
+                &regex,
+                &mut sink,
+            )
             .await
             .unwrap();
 
