@@ -185,6 +185,13 @@ impl<B: Backend> Procfs<B> {
                     pids_updated = true;
                     Ok(())
                 }
+                Err(ProcfsError::Procfs(procfs::ProcError::Incomplete(_))) => {
+                    trace!(
+                        "PID {pid} data incomplete (process exited during read), removing it from processes list."
+                    );
+                    pids_updated = true;
+                    Ok(())
+                }
                 r => r,
             }?;
         }
