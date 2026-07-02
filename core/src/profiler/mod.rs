@@ -114,6 +114,9 @@ impl JouleProfiler {
         let regex = Regex::new(&config.token_pattern)?;
 
         let sources = std::mem::take(&mut self.sources);
+        if sources.is_empty() {
+            return Err(JouleProfilerError::NoSourceConfigured);
+        }
         let mut orchestrator = Orchestrator::new(sources);
 
         debug!("Spawning command: {:?}", config.cmd);
@@ -122,7 +125,7 @@ impl JouleProfiler {
 
         pause_prosess(pid)?;
         orchestrator.init(pid, config.init_timeout).await?;
-        orchestrator.run()?;
+        orchestrator.run();
 
         info!("Starting measurements");
         let (command_duration_ms, timestamp, exit_code, detected_phases) = self
@@ -448,6 +451,10 @@ mod tests {
         }
     }
 
+    fn orchestrator() -> Orchestrator {
+        Orchestrator::new(Vec::new())
+    }
+
     fn create_test_config(cmd: Vec<String>) -> ProfileConfig {
         ProfileConfig {
             cmd,
@@ -489,7 +496,7 @@ mod tests {
     #[tokio::test]
     async fn detect_multiple_phases() {
         let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+        let mut orchestrator = orchestrator();
         let regex = Regex::new("__[A-Z0-9_]+__").unwrap();
         let cursor = Cursor::new("__PHASE1__\n__PHASE2__\n__PHASE3__");
         let reader = BufReader::new(cursor);
@@ -516,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn detect_no_phases() {
         let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+        let mut orchestrator = orchestrator();
         let regex = Regex::new("__[A-Z0-9_]+__").unwrap();
         let cursor = Cursor::new("hello\nworld\nno phases here");
         let reader = BufReader::new(cursor);
@@ -539,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn detect_empty_output() {
         let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+        let mut orchestrator = orchestrator();
         let regex = Regex::new("__PHASE__").unwrap();
         let cursor = Cursor::new("");
         let reader = BufReader::new(cursor);
@@ -563,7 +570,7 @@ mod tests {
     #[tokio::test]
     async fn detect_phase_in_middle_of_line() {
         let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+        let mut orchestrator = orchestrator();
         let regex = Regex::new("__PHASE[0-9]+__").unwrap();
         let cursor = Cursor::new("start __PHASE1__ end");
         let reader = BufReader::new(cursor);
@@ -618,7 +625,7 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+        let mut orchestrator = orchestrator();
         let regex = Regex::new("__PHASE__").unwrap();
         let cursor = Cursor::new("hello\n__PHASE__\nworld");
         let reader = BufReader::new(cursor);
@@ -646,7 +653,7 @@ mod tests {
     #[tokio::test]
     async fn skips_invalid_utf8_lines() {
         let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+        let mut orchestrator = orchestrator();
         let regex = Regex::new("__PHASE__").unwrap();
 
         let bytes = vec![
@@ -870,5 +877,14 @@ mod tests {
         let mut profiler = joule_profiler();
         let sensors = profiler.list_sensors().unwrap();
         assert!(sensors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_with_no_source_returns_no_source_configured_error() {
+        let config = create_test_config(vec!["test".to_string()]);
+        assert!(matches!(
+            joule_profiler().profile(&config).await,
+            Err(JouleProfilerError::NoSourceConfigured)
+        ));
     }
 }
