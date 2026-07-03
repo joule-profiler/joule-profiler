@@ -133,7 +133,7 @@ impl std::fmt::Display for Source {
         let s = match self {
             Source::Rapl => "rapl",
             Source::Nvml => "nvml",
-            Self::AmdSmi => "amdsmi",
+            Source::AmdSmi => "amdsmi",
             Source::Perf => "perf | perf_event",
             Source::Procfs => "procfs",
             Source::Cgroup => "cgroup",

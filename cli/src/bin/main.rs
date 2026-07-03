@@ -7,9 +7,9 @@ use joule_profiler_cli::{
 };
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::{Command, Config};
-use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 use joule_profiler_source_amdsmi::AmdSmi;
 use joule_profiler_source_amdsmi::config::AmdSmiConfig;
+use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_nvml::config::NvmlConfig;
 use joule_profiler_source_perf_event::PerfEvent;
