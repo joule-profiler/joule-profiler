@@ -54,10 +54,10 @@ global_memory_unit = "Giga"
 [sources.nvml]
 ignore_on_failure = true
 poll_interval = "50ms"
-gpus_spec = [0] # device indices to restrict to, omit for all GPUs
+gpus_spec = [0] # device indices to filter the GPUs, omit for all GPUs
 
 # AMD SMI
 [sources.amdsmi]
 ignore_on_failure = true
 poll_interval = "20ms"
-gpus_spec = ["GPU-00000000-0000-0000-0000-000000000000"] # UUIDs to restrict to
+gpus_spec = ["GPU-00000000-0000-0000-0000-000000000000"] # device UUIDs to filter the GPUs, omit for all GPUs

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use joule_profiler_cli::config::GlobalConfig;
 use joule_profiler_cli::config::source::{register_source, register_source_override};
 use joule_profiler_cli::config::table::ConfigTable;
@@ -25,8 +25,10 @@ async fn main() -> Result<()> {
     let mut profiler = JouleProfiler::new();
 
     let mut config_table = if let Some(config_file) = &cli.config_file {
-        let content = std::fs::read_to_string(config_file)?;
-        let value: GlobalConfig = toml::from_str(&content)?;
+        let content = std::fs::read_to_string(config_file)
+            .map_err(|e| anyhow!("configuration file error. Cause: {e}"))?;
+        let value: GlobalConfig = toml::from_str(&content)
+            .map_err(|e| anyhow!("error parsing configuration file. Cause: {e}"))?;
         ConfigTable::new(value, &cli.sources)
     } else {
         ConfigTable::new(GlobalConfig::default(), &cli.sources)

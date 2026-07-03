@@ -47,13 +47,9 @@ pub struct CliArgs {
     #[arg(short = 's', long = "sockets")]
     pub sockets: Option<String>,
 
-    /// Export results as JSON instead of pretty terminal output
-    #[arg(long, conflicts_with = "csv")]
-    pub json: bool,
-
-    /// Export results as CSV (semicolon-separated values)
-    #[arg(long, conflicts_with = "json")]
-    pub csv: bool,
+    /// Output format to export the results in. (e.g., terminal, json, csv)
+    #[arg(long = "output-format")]
+    pub output_format: Option<OutputFormat>,
 
     /// Output file for CSV/JSON (else `data<TIMESTAMP>`.csv/json)
     #[arg(short = 'o', long = "output-file")]
@@ -132,13 +128,9 @@ pub fn config_table_to_displayer(
     config_table: &ConfigTable,
     cli: &CliArgs,
 ) -> Result<Box<dyn Displayer>> {
-    let output_format = if cli.json {
-        OutputFormat::Json
-    } else if cli.csv {
-        OutputFormat::Csv
-    } else {
-        config_table.profiler_config.output_format
-    };
+    let output_format = cli
+        .output_format
+        .unwrap_or(config_table.profiler_config.output_format);
     let output_file = cli
         .output_file
         .as_ref()
