@@ -5,7 +5,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bitflags::bitflags;
-use futures::StreamExt;
+use futures::{StreamExt, future::try_join_all};
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
     source::MetricReader,
@@ -13,7 +13,10 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use log::{debug, trace};
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{
+    sync::Mutex,
+    task::{JoinHandle, spawn_blocking},
+};
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
@@ -162,6 +165,9 @@ impl<H: AmdSmiHardware> AmdSmi<H> {
     }
 
     /// Reads the power and vram counters for each processors and updates the current counters.
+    ///
+    /// Spawn every blocking read upfront so they run concurrently on the
+    /// blocking thread pool, instead of awaiting them one by one.
     async fn read_polled_counters(
         hardware: &Arc<H>,
         processors: &Arc<HashMap<usize, Processor>>,
@@ -169,39 +175,64 @@ impl<H: AmdSmiHardware> AmdSmi<H> {
         vram_counters: &Arc<Mutex<HashMap<usize, VramCounter>>>,
         utilization_counters: &Arc<Mutex<HashMap<usize, UtilizationCounter>>>,
     ) -> Result<()> {
-        let mut vram_updates = Vec::new();
-        let mut power_updates = Vec::new();
-        let mut utilization_updates = Vec::new();
+        let mut vram_tasks = Vec::new();
+        let mut power_tasks = Vec::new();
+        let mut utilization_tasks = Vec::new();
 
         for (index, processor) in processors.iter() {
+            let index = *index;
+
             if processor.support.contains(ProcessorSupport::Vram) {
-                vram_updates.push((*index, hardware.get_vram_usage(processor)?));
+                let hardware = hardware.clone();
+                let processor = processor.clone();
+                vram_tasks.push(spawn_blocking(move || {
+                    hardware
+                        .get_vram_usage(&processor)
+                        .map(|vram| (index, vram))
+                }));
             }
             if processor.support.contains(ProcessorSupport::Power) {
-                power_updates.push((*index, hardware.get_power(processor)?));
+                let hardware = hardware.clone();
+                let processor = processor.clone();
+                power_tasks.push(spawn_blocking(move || {
+                    hardware.get_power(&processor).map(|power| (index, power))
+                }));
             }
             if processor.support.contains(ProcessorSupport::Utilization) {
-                utilization_updates.push((*index, hardware.get_gpu_activity(processor)?.gpu_usage));
+                let hardware = hardware.clone();
+                let processor = processor.clone();
+                utilization_tasks.push(spawn_blocking(move || {
+                    hardware
+                        .get_gpu_activity(&processor)
+                        .map(|usage| (index, usage.gpu_usage))
+                }));
             }
         }
 
+        let vram_updates = try_join_all(vram_tasks).await?;
+        let power_updates = try_join_all(power_tasks).await?;
+        let utilization_updates = try_join_all(utilization_tasks).await?;
+
         {
             let mut lock = vram_counters.lock().await;
-            for (index, vram_usage) in vram_updates {
+            for (index, vram_usage) in vram_updates.into_iter().collect::<Result<Vec<_>>>()? {
                 lock.entry(index).or_default().update(vram_usage);
             }
         }
 
         {
             let mut lock = power_counters.lock().await;
-            for (index, power) in power_updates {
+            for (index, power) in power_updates.into_iter().collect::<Result<Vec<_>>>()? {
                 lock.entry(index).or_default().push(power);
             }
         }
 
         {
             let mut lock = utilization_counters.lock().await;
-            for (index, utilization) in utilization_updates {
+            for (index, utilization) in utilization_updates
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?
+            {
                 lock.entry(index).or_default().update(utilization);
             }
         }
@@ -216,16 +247,24 @@ impl<H: AmdSmiHardware> MetricReader for AmdSmi<H> {
     type Error = AmdSmiError;
 
     /// Makes a measurement for every devices.
+    ///
+    /// Spawns the different measures in the blocking thread pool to execute
+    /// them in parallel without blocking the async pool.
     async fn measure(&mut self) -> Result<()> {
+        let mut energy_tasks = Vec::new();
         for (index, processor) in self.processors.iter() {
             if processor.support.contains(ProcessorSupport::Energy) {
-                let energy = self.hardware.get_energy_count(processor)?;
-                self.energy_counters
-                    .entry(*index)
-                    .or_default()
-                    .update(energy);
+                let hardware = self.hardware.clone();
+                let processor = processor.clone();
+                let index = *index;
+                energy_tasks.push(spawn_blocking(move || {
+                    hardware
+                        .get_energy_count(&processor)
+                        .map(|energy| (index, energy))
+                }));
             }
         }
+
         Self::read_polled_counters(
             &self.hardware,
             &self.processors,
@@ -234,6 +273,18 @@ impl<H: AmdSmiHardware> MetricReader for AmdSmi<H> {
             &self.utilization_counters,
         )
         .await?;
+
+        for (index, energy) in try_join_all(energy_tasks)
+            .await?
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+        {
+            self.energy_counters
+                .entry(index)
+                .or_default()
+                .update(energy);
+        }
+
         Ok(())
     }
 
