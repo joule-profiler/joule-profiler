@@ -1,7 +1,5 @@
 use std::{collections::HashSet, time::Duration};
 
-use crate::UUID;
-
 /// Configuration of the NVML source.
 #[derive(Debug)]
 pub struct NvmlConfig {
@@ -9,7 +7,7 @@ pub struct NvmlConfig {
     pub poll_interval: Option<Duration>,
 
     /// Optional gpus filter.
-    pub gpus_spec: Option<HashSet<UUID>>,
+    pub gpus_spec: Option<HashSet<u32>>,
 }
 
 impl Default for NvmlConfig {

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use joule_profiler_core::time::get_timestamp_micros;
 use log::{debug, trace};
 
-use crate::{Device, DeviceSupport, Result, UUID, counters::PowerMeasurement, error::NvmlError};
+use crate::{Device, DeviceSupport, Result, counters::PowerMeasurement, error::NvmlError};
 
 /// Trait for abstracting the backend of NVML library. Used for testing.
 #[cfg_attr(test, mockall::automock)]
@@ -11,7 +11,7 @@ pub trait NvmlHardware: Send + Sync + 'static {
     /// Init all GPU devices specicied by the provided specification.
     // Automock needs lifetime and clippy wants it erased.
     #[allow(clippy::needless_lifetimes)]
-    fn init_devices<'a>(&mut self, spec: Option<&'a HashSet<UUID>>) -> Result<Vec<Device>>;
+    fn init_devices<'a>(&mut self, spec: Option<&'a HashSet<u32>>) -> Result<Vec<Device>>;
 
     /// Retrieve the energy count of a device.
     fn get_energy(&self, device: &Device) -> Result<u64>;
@@ -53,7 +53,7 @@ impl NvmlWrapperHardware {
 impl NvmlHardware for NvmlWrapperHardware {
     /// Initializes devices with the specified devices specification.
     /// Check the compatibility of each device and determine which metrics can be queried.
-    fn init_devices(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Device>> {
+    fn init_devices(&mut self, spec: Option<&HashSet<u32>>) -> Result<Vec<Device>> {
         trace!("Discovering GPU devices.");
         let device_count = self.nvml.device_count()?;
 
@@ -61,10 +61,10 @@ impl NvmlHardware for NvmlWrapperHardware {
             .flat_map(|i| {
                 let device = self.nvml.device_by_index(i)?;
                 let uuid = device.uuid()?;
-                trace!("Discovered GPU device {uuid}.");
+                trace!("Discovered GPU device, UUID: {uuid}, index: {i}.");
 
                 if let Some(spec) = &spec
-                    && !spec.contains(&uuid)
+                    && !spec.contains(&i)
                 {
                     trace!("Ignoring device {uuid}.");
                     return Ok::<Option<Device>, NvmlError>(None);
@@ -90,11 +90,7 @@ impl NvmlHardware for NvmlWrapperHardware {
                     trace!("No support detected for device {uuid}, ignored.");
                     Ok::<Option<Device>, NvmlError>(None)
                 } else {
-                    Ok(Some(Device {
-                        index: i,
-                        uuid: uuid.clone(),
-                        support,
-                    }))
+                    Ok(Some(Device { index: i, support }))
                 }
             })
             .flatten()
