@@ -29,9 +29,6 @@ pub mod counters;
 mod error;
 mod hardware;
 
-#[allow(clippy::upper_case_acronyms)]
-type UUID = String;
-
 const NVML_SOURCE_NAME: &str = "NVML";
 
 const MILLI_JOULE_UNIT: MetricUnit = MetricUnit {
@@ -70,9 +67,6 @@ type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 pub struct Device {
     /// The index of the device.
     index: u32,
-
-    /// The UUID of the device.
-    uuid: UUID,
 
     /// The supports of the device (e.g., Energy, Power, VRAM).
     support: DeviceSupport,
@@ -300,16 +294,39 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
     }
 
     fn get_sensors(&self) -> Result<Sensors> {
-        self.devices
+        Ok(self
+            .devices
             .iter()
-            .map(|device| {
-                Ok(Sensor::new(
-                    device.uuid.clone(),
-                    MILLI_JOULE_UNIT,
-                    NVML_SOURCE_NAME,
-                ))
+            .flat_map(|device| {
+                vec![
+                    Sensor::new(
+                        format!("GPU-{}-energy", device.index),
+                        MILLI_JOULE_UNIT,
+                        Self::get_name(),
+                    ),
+                    Sensor::new(
+                        format!("GPU-{}-vram_min", device.index),
+                        BYTE_UNIT,
+                        Self::get_name(),
+                    ),
+                    Sensor::new(
+                        format!("GPU-{}-vram_max", device.index),
+                        BYTE_UNIT,
+                        Self::get_name(),
+                    ),
+                    Sensor::new(
+                        format!("GPU-{}-utilization_min", device.index),
+                        PERCENT_UNIT,
+                        Self::get_name(),
+                    ),
+                    Sensor::new(
+                        format!("GPU-{}-utilization_max", device.index),
+                        PERCENT_UNIT,
+                        Self::get_name(),
+                    ),
+                ]
             })
-            .collect::<Result<_>>()
+            .collect())
     }
 
     fn to_metrics(&self, result: Self::Type) -> Result<Metrics> {
@@ -424,11 +441,7 @@ mod tests {
     };
 
     fn make_device(index: u32, support: DeviceSupport) -> Device {
-        Device {
-            index,
-            uuid: format!("GPU-mock-{index}"),
-            support,
-        }
+        Device { index, support }
     }
 
     fn build_nvml(
