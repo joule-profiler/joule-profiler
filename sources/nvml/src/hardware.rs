@@ -9,7 +9,9 @@ use crate::{Device, DeviceSupport, Result, counters::PowerMeasurement, error::Nv
 #[cfg_attr(test, mockall::automock)]
 pub trait NvmlHardware: Send + Sync + 'static {
     /// Creates an hardware instance.
-    fn new() -> Result<Self> where Self: Sized;
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
 
     /// Init all GPU devices specicied by the provided specification.
     // Automock needs lifetime and clippy wants it erased.

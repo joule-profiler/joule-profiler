@@ -389,16 +389,14 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
 
     /// Creates the polling task if a polling interval has been configured.
     async fn init(&mut self, _pid: i32) -> Result<()> {
-        if let Some(poll_interval) = self.config.poll_interval {
-            self.handle = Some(Self::create_worker(
-                self.hardware.clone(),
-                self.devices.clone(),
-                self.power_counters.clone(),
-                self.vram_counters.clone(),
-                self.utilization_counters.clone(),
-                poll_interval,
-            )?);
-        }
+        self.handle = Some(Self::create_worker(
+            self.hardware.clone(),
+            self.devices.clone(),
+            self.power_counters.clone(),
+            self.vram_counters.clone(),
+            self.utilization_counters.clone(),
+            self.config.poll_interval,
+        )?);
         debug!("NVML source initialized.");
         Ok(())
     }
@@ -431,7 +429,11 @@ mod tests {
     use tokio::time::sleep;
 
     use crate::{
-        Device, DeviceSupport, Nvml, config::NvmlConfig, counters::{Counter, PowerMeasurement}, error::NvmlError, hardware::{MockNvmlHardware, NvmlHardware},
+        Device, DeviceSupport, Nvml,
+        config::NvmlConfig,
+        counters::{Counter, PowerMeasurement},
+        error::NvmlError,
+        hardware::MockNvmlHardware,
     };
 
     fn make_device(index: u32, support: DeviceSupport) -> Device {
@@ -441,7 +443,7 @@ mod tests {
     fn build_nvml(
         hardware: MockNvmlHardware,
         devices: Vec<Device>,
-        poll_interval: Option<Duration>,
+        poll_interval: Duration,
     ) -> Nvml<MockNvmlHardware> {
         Nvml {
             config: NvmlConfig {
@@ -469,7 +471,7 @@ mod tests {
     async fn measure_reads_energy_for_energy_capable_device() {
         let device = make_device(0, DeviceSupport::Energy);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_energy()
             .with(predicate::function(move |d: &Device| {
                 d.index == device.index
@@ -477,7 +479,7 @@ mod tests {
             .once()
             .returning(|_| Ok(42_000));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
         assert!(nvml.energy_counters.contains_key(&0));
@@ -487,7 +489,7 @@ mod tests {
     async fn measure_reads_power_for_power_only_device() {
         let device = make_device(0, DeviceSupport::Power);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_power()
             .with(predicate::function(move |d: &Device| {
                 d.index == device.index
@@ -495,7 +497,7 @@ mod tests {
             .once()
             .returning(|_| Ok(power_measurement(150_000)));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
         assert!(nvml.power_counters.lock().await.contains_key(&0));
@@ -505,7 +507,7 @@ mod tests {
     async fn measure_reads_vram_for_vram_capable_device() {
         let device = make_device(0, DeviceSupport::Vram);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_vram_usage()
             .with(predicate::function(move |d: &Device| {
                 d.index == device.index
@@ -513,7 +515,7 @@ mod tests {
             .once()
             .returning(|_| Ok(8_000_000_000));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
         assert!(nvml.vram_counters.lock().await.contains_key(&0));
@@ -523,13 +525,13 @@ mod tests {
     async fn measure_reads_utilization_for_utilization_capable_device() {
         let device = make_device(0, DeviceSupport::Utilization);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_utilization()
             .with(predicate::function(|d: &Device| d.index == 0))
             .once()
             .returning(|_| Ok(42));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
         assert!(nvml.utilization_counters.lock().await.contains_key(&0));
@@ -539,14 +541,14 @@ mod tests {
     async fn measure_skips_energy_and_power_for_vram_only_device() {
         let device = make_device(0, DeviceSupport::Vram);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_energy().never();
         hw.expect_get_power().never();
         hw.expect_get_vram_usage()
             .once()
             .returning(|_| Ok(1_000_000));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
         assert!(nvml.energy_counters.is_empty());
@@ -557,12 +559,12 @@ mod tests {
     async fn measure_propagates_energy_error() {
         let device = make_device(0, DeviceSupport::Energy);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_energy()
             .once()
             .returning(|_| Err(NvmlError::NoPermission));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         assert!(nvml.measure().await.is_err());
     }
 
@@ -570,12 +572,12 @@ mod tests {
     async fn measure_propagates_power_error() {
         let device = make_device(0, DeviceSupport::Power);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_power()
             .once()
             .returning(|_| Err(NvmlError::NoPermission));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         assert!(nvml.measure().await.is_err());
     }
 
@@ -583,11 +585,11 @@ mod tests {
     async fn retrieve_returns_counters_and_resets_them() {
         let device = make_device(0, DeviceSupport::Energy | DeviceSupport::Vram);
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_energy().returning(|_| Ok(10_000));
         hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
 
-        let mut nvml = build_nvml(hw, vec![device], None);
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
         nvml.measure().await.unwrap();
 
@@ -613,13 +615,13 @@ mod tests {
             make_device(2, DeviceSupport::Vram),
         ];
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_energy().returning(|_| Ok(1_000));
         hw.expect_get_power()
             .returning(|_| Ok(power_measurement(5_000)));
         hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
 
-        let mut nvml = build_nvml(hw, devices, None);
+        let mut nvml = build_nvml(hw, devices, Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
         let result = nvml.retrieve().await.unwrap();
@@ -630,38 +632,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn init_does_not_spawn_worker_without_poll_interval() {
-        let mut nvml = build_nvml(MockNvmlHardware::new().unwrap(), vec![], None);
-        nvml.init(1234).await.unwrap();
-        assert!(nvml.handle.is_none());
-    }
-
-    #[tokio::test]
-    async fn init_spawns_worker_with_poll_interval() {
-        let mut nvml = build_nvml(
-            MockNvmlHardware::new().unwrap(),
-            vec![],
-            Some(Duration::from_millis(50)),
-        );
-        nvml.init(1234).await.unwrap();
-        assert!(nvml.handle.is_some());
-        nvml.join().await.unwrap();
-    }
-
-    #[tokio::test]
     async fn worker_polls_counters_and_can_be_cancelled() {
         let device = make_device(
             0,
             DeviceSupport::Power | DeviceSupport::Vram | DeviceSupport::Utilization,
         );
 
-        let mut hw = MockNvmlHardware::new().unwrap();
+        let mut hw = MockNvmlHardware::default();
         hw.expect_get_power()
             .returning(|_| Ok(power_measurement(5_000)));
         hw.expect_get_vram_usage().returning(|_| Ok(1_000_000));
         hw.expect_get_utilization().returning(|_| Ok(50));
 
-        let mut nvml = build_nvml(hw, vec![device], Some(Duration::from_millis(20)));
+        let mut nvml = build_nvml(hw, vec![device], Duration::from_millis(20));
         nvml.init(0).await.unwrap();
 
         sleep(Duration::from_millis(80)).await;

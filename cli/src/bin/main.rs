@@ -7,16 +7,12 @@ use joule_profiler_cli::{
     parse_sockets_spec,
 };
 use joule_profiler_core::JouleProfiler;
-use joule_profiler_core::config::{Command, Config};
-use joule_profiler_source_amdsmi::AmdSmi;
-use joule_profiler_source_amdsmi::config::AmdSmiConfig;
-use joule_profiler_source_cgroup::{CgroupConfig, CgroupSource};
 use joule_profiler_core::config::Command;
+use joule_profiler_source_amdsmi::AmdSmi;
+use joule_profiler_source_cgroup::Cgroup;
 use joule_profiler_source_nvml::Nvml;
-use joule_profiler_source_nvml::config::NvmlConfig;
 use joule_profiler_source_perf_event::PerfEvent;
 use joule_profiler_source_procfs::Procfs;
-use joule_profiler_source_procfs::config::ProcfsConfig;
 use joule_profiler_source_rapl::{perf, powercap};
 
 #[tokio::main]
@@ -63,7 +59,7 @@ async fn main() -> Result<()> {
     }?;
 
     register_source::<PerfEvent>(&mut profiler, &mut config_table)?;
-    register_source::<CgroupSource>(&mut profiler, &mut config_table)?;
+    register_source::<Cgroup>(&mut profiler, &mut config_table)?;
     register_source::<Procfs>(&mut profiler, &mut config_table)?;
     register_source::<Nvml>(&mut profiler, &mut config_table)?;
     register_source::<AmdSmi>(&mut profiler, &mut config_table)?;

@@ -99,7 +99,7 @@ impl ConfigTable {
             Err(e) => {
                 if config_wrapper.ignore_on_failure {
                     warn!(
-                        "Failed to initialize source {}, skipping. Cause: {e}.",
+                        "Failed to initialize source {}, skipping. Error: {e}",
                         R::get_name()
                     );
                     Ok(None)
@@ -139,7 +139,7 @@ impl ConfigTable {
             Err(e) => {
                 if config_wrapper.ignore_on_failure {
                     warn!(
-                        "Failed to initialize source {}, skipping. Cause: {e}.",
+                        "Failed to initialize source {}, skipping. Error: {e}",
                         R::get_name()
                     );
                     Ok(None)

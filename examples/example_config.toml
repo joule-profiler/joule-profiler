@@ -1,17 +1,63 @@
+# Example configuration of Joule Profiler.
+#
+# Usage:
+#   joule-profiler --config examples/example_config.toml ...
+#
+# `ignore_on_failure = true` on a configured source ignore the error 
+# if one occur while building the source.
+#
+# Notes: all fields are optional and Joule Profiler does not require
+# the use of a configuration file, the CLI can be used alone.
+# This examples exports the results in the results.json file
+# and the program's output is in stdout.txt.
+
 [profiler]
 token_pattern = "__[A-Z0-9_]+__"
-output_format = "json"
+output_format = "json" # terminal | json | csv
 output_file = "results.json"
 stdout_file = "stdout.txt"
-use_root = true
-init_timeout = "1ns"
-rapl_backend = "perf_event"
+use_root = false
+init_timeout = "1s"
+rapl_backend = "perf" # perf | powercap
 
+# RAPL
+# `sockets_spec` is used by both backends. `poll_interval`/`rapl_path` only
+# apply to the "powercap" backend and are silently ignored otherwise.
 [sources.rapl]
+ignore_on_failure = true
 sockets_spec = [0]
+poll_interval = "1s"
+rapl_path = "/sys/devices/virtual/powercap/intel-rapl"
 
+# perf_event
 [sources.perf_event]
-events = ["instructions", "cpu-cycles"]
+ignore_on_failure = true
+events = ["cpu-cycles", "instructions", "cache-misses", "branch-misses"]
 
+# cgroup v2
+[sources.cgroup]
+ignore_on_failure = true
+cgroup_root = "/sys/fs/cgroup"
+cgroup_name = "joule-profiler-test"
+poll_interval = "10ms"
+attach_pid = true
+create_cgroup = true
+
+# procfs
+[sources.procfs]
+poll_interval = "10ms"
+process_detection_poll_interval = "1s"
+proc_memory_unit = "Mega" # Bytes | Kilo | Mega | Giga
+global_memory_unit = "Giga"
+
+# NVML
 [sources.nvml]
 ignore_on_failure = true
+poll_interval = "50ms"
+gpus_spec = [0] # device indices to restrict to, omit for all GPUs
+
+# AMD SMI
+[sources.amdsmi]
+ignore_on_failure = true
+poll_interval = "20ms"
+gpus_spec = ["GPU-00000000-0000-0000-0000-000000000000"] # UUIDs to restrict to

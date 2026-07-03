@@ -212,6 +212,19 @@ impl<B: Backend> Procfs<B> {
 impl<B: Backend> MetricReader for Procfs<B> {
     type Type = Counters;
     type Error = ProcfsError;
+    type Config = ProcfsConfig;
+
+    fn from_config(config: ProcfsConfig) -> Result<Self> {
+        Ok(Self {
+            config,
+            mem_total: 0,
+            backend: Arc::new(B::default()),
+            counters: Arc::default(),
+            detected_processes: Arc::default(),
+            polling_task_handle: None,
+            process_discovery_task_handle: None,
+        })
+    }
 
     /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
@@ -219,27 +232,21 @@ impl<B: Backend> MetricReader for Procfs<B> {
         self.mem_total = self.backend.mem_total()?;
         *self.detected_processes.lock().await = self.backend.collect_children(pid);
 
-        if let Some(detection_poll_interval) = self.config.process_detection_poll_interval {
-            let process_discovery_handle = Self::spawn_process_discovery_worker(
-                self.backend.clone(),
-                pid,
-                self.detected_processes.clone(),
-                detection_poll_interval,
-            )?;
-            self.process_discovery_task_handle = Some(process_discovery_handle);
-        }
+        self.process_discovery_task_handle = Some(Self::spawn_process_discovery_worker(
+            self.backend.clone(),
+            pid,
+            self.detected_processes.clone(),
+            self.config.process_detection_poll_interval,
+        )?);
 
-        if let Some(poll_interval) = self.config.poll_interval {
-            let counters = self.counters.clone();
+        let counters = self.counters.clone();
 
-            let handle = Self::spawn_polling_worker(
-                self.backend.clone(),
-                counters,
-                self.detected_processes.clone(),
-                poll_interval,
-            )?;
-            self.polling_task_handle = Some(handle);
-        }
+        self.polling_task_handle = Some(Self::spawn_polling_worker(
+            self.backend.clone(),
+            counters,
+            self.detected_processes.clone(),
+            self.config.poll_interval,
+        )?);
 
         Ok(())
     }
@@ -434,6 +441,10 @@ impl<B: Backend> MetricReader for Procfs<B> {
     fn get_name() -> &'static str {
         PROCFS_SOURCE_NAME
     }
+
+    fn get_id() -> &'static str {
+        PROCFS_SOURCE_NAME
+    }
 }
 
 #[cfg(test)]
@@ -502,7 +513,7 @@ mod tests {
 
         backend.expect_mem_total().once().returning(|| Ok(0));
         let mut source = create_source(backend);
-        source.config.process_detection_poll_interval = Some(Duration::from_millis(1));
+        source.config.process_detection_poll_interval = Duration::from_millis(1);
         assert!(source.detected_processes.lock().await.eq(&HashSet::new()));
 
         source.init(1).await.unwrap();
@@ -554,7 +565,7 @@ mod tests {
         assert!(global_counters.swap_free.min().is_none());
         assert!(global_counters.swap_free.max().is_none());
 
-        source.config.poll_interval = Some(Duration::from_millis(10));
+        source.config.poll_interval = Duration::from_millis(10);
         source.init(1).await.unwrap();
 
         sleep(Duration::from_millis(20)).await;
@@ -697,7 +708,7 @@ mod tests {
             .returning(|| Ok(GlobalSnapshot::default()));
 
         let mut source = create_source(backend);
-        source.config.poll_interval = Some(Duration::from_millis(5));
+        source.config.poll_interval = Duration::from_millis(5);
         source.init(1).await.unwrap();
         sleep(Duration::from_millis(15)).await;
 
