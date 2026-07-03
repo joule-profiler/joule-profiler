@@ -11,7 +11,7 @@ use crate::{
 
 /// Trait abstracting procfs for testing efficiently.
 #[cfg_attr(test, mockall::automock)]
-pub trait Backend: Send + Sync + 'static {
+pub trait Backend: Default + Send + Sync + 'static {
     // Reads memory and I/O stats for a single pid and adds them into `snapshot`.
     fn read_proc(&self, pid: i32, snapshot: &mut ProcSnapshot) -> Result<()>;
 
@@ -25,7 +25,7 @@ pub trait Backend: Send + Sync + 'static {
     fn mem_total(&self) -> Result<u64>;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct ProcfsBackend;
 
 impl Backend for ProcfsBackend {

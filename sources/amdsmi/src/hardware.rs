@@ -11,6 +11,11 @@ use crate::{
 /// Trait for abstracting the backend of AMD SMI library. Used for testing.
 #[cfg_attr(test, mockall::automock)]
 pub trait AmdSmiHardware: Send + Sync + 'static {
+    /// Creates an hardware instance.
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
+
     /// Init all GPU devices specicied by the provided specification.
     // Automock needs lifetime and clippy wants it erased.
     #[allow(clippy::needless_lifetimes)]
@@ -39,12 +44,20 @@ pub struct AmdSmiWrapperHardware {
 }
 
 impl AmdSmiWrapperHardware {
+    fn get_device_handle(&self, processor: &Processor) -> Result<&amdsmi::Processor> {
+        self.processor_handles
+            .get(&processor.uuid)
+            .ok_or(AmdSmiError::NoSuchDevice(processor.clone()))
+    }
+}
+
+impl AmdSmiHardware for AmdSmiWrapperHardware {
     /// Creates a new AMD SMI hardware instance.
     ///
     /// This function will return an error if:
     /// - The AMD SMI library cannot be initialized (driver not installed, incompatible version, etc.)
     /// - The permissions are insufficient to be able to query the AMD SMI driver.
-    pub fn new() -> Result<Self> {
+    fn new() -> Result<Self> {
         debug!("Attempting to initialize AMD SMI reader");
         let amdsmi = amdsmi::AmdSmi::init().map_err(|err| match err {
             amdsmi::error::AmdSmiError::DriverNotLoaded => AmdSmiError::NoDriverLoaded,
@@ -61,14 +74,6 @@ impl AmdSmiWrapperHardware {
         })
     }
 
-    fn get_device_handle(&self, processor: &Processor) -> Result<&amdsmi::Processor> {
-        self.processor_handles
-            .get(&processor.uuid)
-            .ok_or(AmdSmiError::NoSuchDevice(processor.clone()))
-    }
-}
-
-impl AmdSmiHardware for AmdSmiWrapperHardware {
     /// Initializes devices with the specified devices specification.
     /// Check the compatibility of each device and determine which metrics can be queried.
     fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
