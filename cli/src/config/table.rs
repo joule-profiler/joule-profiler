@@ -16,7 +16,6 @@ use log::warn;
 use crate::{
     CliArgs, ProfilerCommand, Source,
     config::{GlobalConfig, ProfilerConfig, source::MetricSourceConfig},
-    output::formats::OutputFormat,
 };
 
 /// Holds the resolved configuration state, merging values from the global
@@ -56,10 +55,8 @@ impl ConfigTable {
 
     /// Applies CLI overrides to Joule Profiler global configuration.
     pub fn apply_cli(&mut self, cli: &mut CliArgs) {
-        if cli.csv {
-            self.profiler_config.output_format = OutputFormat::Csv;
-        } else if cli.json {
-            self.profiler_config.output_format = OutputFormat::Json;
+        if let Some(output_format) = cli.output_format.take() {
+            self.profiler_config.output_format = output_format;
         }
 
         if let Some(output_file) = cli.output_file.take() {
