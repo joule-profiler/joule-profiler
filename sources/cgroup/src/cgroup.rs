@@ -21,7 +21,11 @@ use crate::{
 };
 
 /// Interface for reading cgroup statistics.
-pub trait CgroupBackend: Send + Sync + 'static {
+///
+/// `Default` and `Clone` let [`RootCgroup::build`] construct a backend from
+/// scratch and share that same instance with its child cgroup, for any
+/// implementation of this trait (not just [`SysFsBackend`]).
+pub trait CgroupBackend: Send + Sync + Clone + Default + 'static {
     /// Initializes the backend.
     fn create(&self, path: &Path) -> Result<()>;
 
@@ -42,6 +46,7 @@ pub trait CgroupBackend: Send + Sync + 'static {
 }
 
 /// Cgroup sysfs backend.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SysFsBackend;
 
 impl SysFsBackend {
@@ -175,17 +180,31 @@ impl RootCgroup {
             backend: SysFsBackend,
         }
     }
-
-    /// Gets a child handle of the current cgroup based on its name.
-    pub fn child(&self, name: &str) -> ChildCgroup {
-        let child_path = self.path.join(name);
-        ChildCgroup::new(child_path.clone(), self.path.clone(), SysFsBackend)
-    }
 }
 
 impl<B: CgroupBackend> RootCgroup<B> {
     pub fn new(path: PathBuf, backend: B) -> Self {
         Self { path, backend }
+    }
+
+    /// Builds the root cgroup and its named child in one go, using a default backend.
+    pub fn build(cgroup_root: Option<PathBuf>, cgroup_name: &str) -> (Self, ChildCgroup<B>) {
+        let root = Self::new(
+            cgroup_root.unwrap_or_else(|| PathBuf::from(DEFAULT_CGROUP_ROOT)),
+            B::default(),
+        );
+        let child = root.child(cgroup_name);
+        (root, child)
+    }
+
+    /// Gets a child handle of the current cgroup based on its name, sharing
+    /// this cgroup's backend instance.
+    pub fn child(&self, name: &str) -> ChildCgroup<B> {
+        ChildCgroup::new(
+            self.path.join(name),
+            self.path.clone(),
+            self.backend.clone(),
+        )
     }
 
     /// Get memory stats.
@@ -204,9 +223,11 @@ impl<B: CgroupBackend> RootCgroup<B> {
     }
 }
 
+const DEFAULT_CGROUP_ROOT: &str = "/sys/fs/cgroup";
+
 impl Default for RootCgroup {
     fn default() -> Self {
-        Self::at(PathBuf::from("/sys/fs/cgroup"))
+        Self::at(PathBuf::from(DEFAULT_CGROUP_ROOT))
     }
 }
 
@@ -266,7 +287,7 @@ impl<B: CgroupBackend> ChildCgroup<B> {
 mod tests {
     use super::*;
 
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct MockCgroupBackend {
         memory: MemorySnapshot,
         cpu: CpuSnapshot,

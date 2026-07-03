@@ -3,6 +3,7 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use procfs::process::Process;
+use serde::Deserialize;
 
 /// Reads direct child of pid (threads excluded).
 ///
@@ -40,7 +41,7 @@ fn is_process(pid: i32) -> bool {
         .is_ok_and(|s| s.pid == s.tgid)
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum MemoryUnit {
     Bytes,
     Kilo,

@@ -8,6 +8,7 @@
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
+use joule_profiler_core::sys::is_root;
 use joule_profiler_core::time::get_timestamp_micros;
 use joule_profiler_core::types::{Metric, MetricValue, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
@@ -56,7 +57,7 @@ pub(crate) type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 ///
 /// Owns the process cgroup and root cgroup handles, and maintains
 /// internal counters for both process-level and system-wide metrics.
-pub struct CgroupSource<B = SysFsBackend>
+pub struct Cgroup<B = SysFsBackend>
 where
     B: CgroupBackend,
 {
@@ -74,36 +75,7 @@ where
     end_timestamp: u128,
 }
 
-impl CgroupSource {
-    /// Creates a new cgroup metric source.
-    ///
-    /// Initializes internal cgroup handles but does initialize and attach any PID yet.
-    pub fn new(config: CgroupConfig) -> Result<Self> {
-        let root_cgroup = if let Some(cgroup_root) = &config.cgroup_root {
-            RootCgroup::at(cgroup_root.clone())
-        } else {
-            RootCgroup::default()
-        };
-        let proc_cgroup = root_cgroup.child(&config.cgroup_name);
-
-        Ok(Self {
-            config,
-            handle: None,
-            root_cgroup: Arc::new(root_cgroup),
-            proc_cgroup: Arc::new(proc_cgroup),
-            proc_memory_counters: Arc::default(),
-            global_memory_counters: Arc::default(),
-            proc_cpu_counters: CpuCounters::default(),
-            global_cpu_counters: CpuCounters::default(),
-            proc_io_counters: IoCounters::default(),
-            global_io_counters: IoCounters::default(),
-            begin_timestamp: 0,
-            end_timestamp: 0,
-        })
-    }
-}
-
-impl<B: CgroupBackend> CgroupSource<B> {
+impl<B: CgroupBackend> Cgroup<B> {
     /// Creates a background worker that periodically samples memory usage.
     ///
     /// This worker updates process and global memory counters at a fixed interval.
@@ -153,9 +125,39 @@ impl<B: CgroupBackend> CgroupSource<B> {
     }
 }
 
-impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
+impl<B: CgroupBackend> MetricReader for Cgroup<B> {
     type Type = Counters;
     type Error = CgroupError;
+    type Config = CgroupConfig;
+
+    /// Builds the cgroup handles for `config`, generic over any [`CgroupBackend`].
+    ///
+    /// Does not initialize or attach any PID yet, see [`MetricReader::init`].
+    fn from_config(config: Self::Config) -> Result<Self> {
+        if (config.attach_pid || config.create_cgroup) && !is_root() {
+            return Err(CgroupError::PermissionDenied(
+                "the cgroup source requires root privileges to create a cgroup or attach a process.",
+            ));
+        }
+
+        let (root_cgroup, proc_cgroup) =
+            RootCgroup::build(config.cgroup_root.clone(), &config.cgroup_name);
+
+        Ok(Self {
+            config,
+            handle: None,
+            root_cgroup: Arc::new(root_cgroup),
+            proc_cgroup: Arc::new(proc_cgroup),
+            proc_memory_counters: Arc::default(),
+            global_memory_counters: Arc::default(),
+            proc_cpu_counters: CpuCounters::default(),
+            global_cpu_counters: CpuCounters::default(),
+            proc_io_counters: IoCounters::default(),
+            global_io_counters: IoCounters::default(),
+            begin_timestamp: 0,
+            end_timestamp: 0,
+        })
+    }
 
     /// Initializes the cgroup source with the given pid.
     async fn init(&mut self, pid: i32) -> Result<()> {
@@ -364,6 +366,10 @@ impl<B: CgroupBackend> MetricReader for CgroupSource<B> {
     fn get_name() -> &'static str {
         SOURCE_NAME
     }
+
+    fn get_id() -> &'static str {
+        SOURCE_NAME
+    }
 }
 
 fn to_metrics(
@@ -378,7 +384,7 @@ fn to_metrics(
                 format!("{prefix}_{}", $name),
                 $value,
                 $unit,
-                CgroupSource::<SysFsBackend>::get_name(),
+                Cgroup::<SysFsBackend>::get_name(),
             ));
         };
     }
@@ -497,7 +503,7 @@ mod tests {
         }
     }
 
-    fn setup_source() -> (CgroupSource<MockCgroupBackend>, MockCgroupBackend) {
+    fn setup_source() -> (Cgroup<MockCgroupBackend>, MockCgroupBackend) {
         let backend = MockCgroupBackend::default();
 
         let root = Arc::new(RootCgroup::new(PathBuf::from("/tmp/root"), backend.clone()));
@@ -508,7 +514,7 @@ mod tests {
             backend.clone(),
         ));
 
-        let source = CgroupSource {
+        let source = Cgroup {
             config: CgroupConfig::default(),
             handle: None,
             root_cgroup: root,
@@ -625,7 +631,7 @@ mod tests {
     async fn test_worker_updates_counters() {
         let (src, backend) = setup_source();
 
-        let (token, handle) = CgroupSource::create_worker(
+        let (token, handle) = Cgroup::create_worker(
             src.proc_cgroup.clone(),
             src.root_cgroup.clone(),
             src.proc_memory_counters.clone(),
