@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "AMD AMI GPU energy measurement source for joule-profiler"
+description = "AMD GPU source for joule-profiler"
 keywords = ["energy", "amdsmi", "AMD", "GPU", "hardware"]
 readme = "README.md"
 
