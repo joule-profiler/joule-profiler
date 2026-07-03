@@ -34,7 +34,7 @@ pub struct ProfilerConfig {
     /// Output file for CSV/JSON (else `data<TIMESTAMP>`.csv/json)
     pub output_file: Option<String>,
 
-    /// The output format to use (e.g., text, Json, CSV)
+    /// The output format to use (e.g., terminal, json, csv)
     #[serde(default)]
     pub output_format: OutputFormat,
 
