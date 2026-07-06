@@ -8,8 +8,8 @@ use crate::{
     domain_type::RaplDomainType,
     error::{PerfParanoidError, RaplError},
     perf::{
-        event::{RaplEvent, open_counters},
-        socket::{Socket, SocketInfo, discover_socket_topology},
+        event::RaplEvent,
+        socket::{SocketInfo, discover_socket_topology},
     },
 };
 
@@ -55,8 +55,8 @@ impl PerfRaplDomain {
 /// * Some PMUs, such as RAPL energy counters, are only accessible via a
 ///   specific CPU on the socket (often the first CPU). This function ensures
 ///   portability by trying all CPUs in the socket.
-pub fn build_group_for_socket(socket_info: &SocketInfo) -> Result<Group> {
-    for cpu in &socket_info.cpus_id {
+pub fn build_group_for_socket(socket: &SocketInfo) -> Result<Group> {
+    for cpu in &socket.cpus {
         debug!("Trying to build perf group on CPU {cpu}");
 
         match Builder::new(Software::DUMMY)
@@ -82,23 +82,16 @@ pub fn build_group_for_socket(socket_info: &SocketInfo) -> Result<Group> {
 
     Err(RaplError::FailToOpenDomainCounter(format!(
         "unable to find a CPU associate to the {} socket's PMU",
-        socket_info.socket_id
+        socket.id
     )))
 }
 
-/// Discover the system's socket topology.
+/// Discover the system's socket topology. The returned sockets aren't opened
+/// yet (see [`crate::perf::event::open_counters`]).
 pub fn discover_domains(domains_to_discover: Option<&HashSet<u32>>) -> Result<Vec<SocketInfo>> {
     let socket_topology = discover_socket_topology(domains_to_discover)?;
-    debug!("Socket topology: {socket_topology:?}");
+    debug!("Discovered {} socket(s)", socket_topology.len());
     Ok(socket_topology)
-}
-
-/// Discover available RAPL domains and open perf counters for each.
-pub fn discover_domains_and_open_counters(
-    domains_to_discover: Option<&HashSet<u32>>,
-) -> Result<Vec<Socket>> {
-    let socket_topology = discover_domains(domains_to_discover)?;
-    open_counters(socket_topology)
 }
 
 #[cfg(test)]
@@ -108,7 +101,7 @@ mod tests {
     use crate::perf::event::RaplEvent;
     use std::mem::ManuallyDrop;
 
-    fn fake_domain(domain_type: RaplDomainType, scale: f64) -> ManuallyDrop<PerfRaplDomain> {
+    fn mock_domain(domain_type: RaplDomainType, scale: f64) -> ManuallyDrop<PerfRaplDomain> {
         let event = RaplEvent {
             scale,
             counter: unsafe { std::mem::zeroed() },
@@ -118,43 +111,43 @@ mod tests {
 
     #[test]
     fn compute_scale_multiplies_raw_value_by_scale() {
-        let d = fake_domain(RaplDomainType::Package, 2.5);
+        let d = mock_domain(RaplDomainType::Package, 2.5);
         assert_eq!(d.compute_scale(4), 10.0);
     }
 
     #[test]
     fn compute_scale_zero_value_returns_zero() {
-        let d = fake_domain(RaplDomainType::Package, 2.5);
+        let d = mock_domain(RaplDomainType::Package, 2.5);
         assert_eq!(d.compute_scale(0), 0.0);
     }
 
     #[test]
     fn compute_scale_scale_of_one_is_identity() {
-        let d = fake_domain(RaplDomainType::Dram, 1.0);
+        let d = mock_domain(RaplDomainType::Dram, 1.0);
         assert_eq!(d.compute_scale(42), 42.0);
     }
 
     #[test]
     fn get_name_includes_socket_for_regular_domains() {
         assert_eq!(
-            fake_domain(RaplDomainType::Package, 1.0).get_name(0),
+            mock_domain(RaplDomainType::Package, 1.0).get_name(0),
             "PACKAGE-0"
         );
         assert_eq!(
-            fake_domain(RaplDomainType::Package, 1.0).get_name(1),
+            mock_domain(RaplDomainType::Package, 1.0).get_name(1),
             "PACKAGE-1"
         );
-        assert_eq!(fake_domain(RaplDomainType::Core, 1.0).get_name(0), "CORE-0");
-        assert_eq!(fake_domain(RaplDomainType::Dram, 1.0).get_name(2), "DRAM-2");
+        assert_eq!(mock_domain(RaplDomainType::Core, 1.0).get_name(0), "CORE-0");
+        assert_eq!(mock_domain(RaplDomainType::Dram, 1.0).get_name(2), "DRAM-2");
         assert_eq!(
-            fake_domain(RaplDomainType::Uncore, 1.0).get_name(0),
+            mock_domain(RaplDomainType::Uncore, 1.0).get_name(0),
             "UNCORE-0"
         );
     }
 
     #[test]
     fn get_name_psys_omits_socket_number() {
-        assert_eq!(fake_domain(RaplDomainType::Psys, 1.0).get_name(0), "PSYS");
-        assert_eq!(fake_domain(RaplDomainType::Psys, 1.0).get_name(99), "PSYS");
+        assert_eq!(mock_domain(RaplDomainType::Psys, 1.0).get_name(0), "PSYS");
+        assert_eq!(mock_domain(RaplDomainType::Psys, 1.0).get_name(99), "PSYS");
     }
 }

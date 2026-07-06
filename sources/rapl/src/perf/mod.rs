@@ -17,8 +17,9 @@ use crate::{
     error::{PerfParanoidError, RaplError},
     perf::{
         compute::{compute_measurement_from_snapshots, joules_to_micro_joules},
-        domain::discover_domains_and_open_counters,
-        socket::Socket,
+        domain::discover_domains,
+        event::open_counters,
+        socket::{Socket, SocketInfo},
     },
     snapshot::{Phase, Snapshot},
     util::check_os,
@@ -45,7 +46,10 @@ const PERF_PARANOID_PATH: &str = "/proc/sys/kernel/perf_event_paranoid";
 ///
 /// Provides energy readings per RAPL domain (e.g., package, core, dram).
 pub struct Rapl {
-    /// Discovered RAPL domains and associated counters.
+    /// Discovered socket topology, not yet opened. Consumed by [`MetricReader::pre_init`].
+    socket_topology: Vec<SocketInfo>,
+
+    /// Opened sockets with their associated counters. Empty until [`MetricReader::pre_init`] runs.
     sockets: Vec<Socket>,
 
     /// Begin snapshot of the current phase.
@@ -56,37 +60,26 @@ pub struct Rapl {
 }
 
 impl Rapl {
-    /// Initializes a new RAPL reader with the specified sockets specification.
+    /// Discovers a new RAPL reader with the specified sockets specification.
+    /// The discovered sockets aren't opened yet (see [`MetricReader::pre_init`]).
     ///
     /// # Errors
     ///
     /// It returns an error if:
     /// - OS is unsupported
-    /// - RAPL counters cannot be read
-    /// - Perf PMU type cannot be retrieved
+    /// - The socket topology cannot be discovered
     pub fn new(sockets_spec: Option<&HashSet<u32>>) -> Result<Self> {
         check_os()?;
 
-        let paranoid_level = read_paranoid_level()?;
-        trace!(
-            "Perf paranoid level set to {paranoid_level}
-        Attempting to initialize RAPL reader: sockets={sockets_spec:?}"
-        );
+        trace!("Attempting to initialize RAPL reader: sockets={sockets_spec:?}");
 
-        let sockets = discover_domains_and_open_counters(sockets_spec).map_err(|err| {
-            if let RaplError::PerfParanoid(_) = err
-                && paranoid_level > 0
-            {
-                PerfParanoidError::ParanoidLevelTooHigh(paranoid_level).into()
-            } else {
-                err
-            }
-        })?;
+        let socket_topology = discover_domains(sockets_spec)?;
 
-        info!("Discovered {} socket(s)", sockets.len());
+        info!("Discovered {} socket(s)", socket_topology.len());
 
         Ok(Self {
-            sockets,
+            socket_topology,
+            sockets: Vec::new(),
             begin_snapshot: None,
             end_snapshot: None,
         })
@@ -132,9 +125,18 @@ impl MetricReader for Rapl {
     }
 
     async fn pre_init(&mut self) -> Result<()> {
-        self.sockets
-            .iter_mut()
-            .try_for_each(|socket| socket.group.enable().map_err(RaplError::from))?;
+        let paranoid_level = read_paranoid_level()?;
+
+        self.sockets = open_counters(std::mem::take(&mut self.socket_topology)).map_err(|err| {
+            if let RaplError::PerfParanoid(_) = err
+                && paranoid_level > 0
+            {
+                PerfParanoidError::ParanoidLevelTooHigh(paranoid_level).into()
+            } else {
+                err
+            }
+        })?;
+
         Ok(())
     }
 
