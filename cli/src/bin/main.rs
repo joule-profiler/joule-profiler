@@ -29,10 +29,13 @@ async fn main() -> Result<()> {
             .map_err(|e| anyhow!("configuration file error. Cause: {e}"))?;
         let value: GlobalConfig = toml::from_str(&content)
             .map_err(|e| anyhow!("error parsing configuration file. Cause: {e}"))?;
+
         ConfigTable::new(value, &cli.sources)
     } else {
         ConfigTable::new(GlobalConfig::default(), &cli.sources)
     };
+
+    config_table.apply_cli(&mut cli);
 
     match config_table.profiler_config.rapl_backend {
         RaplBackend::Perf => register_source_override::<perf::Rapl, CliArgs>(
@@ -66,7 +69,7 @@ async fn main() -> Result<()> {
     register_source::<Nvml>(&mut profiler, &mut config_table)?;
     register_source::<AmdSmi>(&mut profiler, &mut config_table)?;
 
-    let mut displayer = config_table_to_displayer(&config_table, &cli)?;
+    let mut displayer = config_table_to_displayer(&config_table)?;
     let config = config_table.to_config(cli)?;
 
     match config.command {

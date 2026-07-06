@@ -132,7 +132,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     }
 
     fn get_id() -> &'static str {
-        "perf_event"
+        "perf"
     }
 }
 

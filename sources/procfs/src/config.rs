@@ -17,6 +17,7 @@ fn default_process_detection_poll_interval() -> Duration {
 
 /// Configuration for the `Procfs` metric source.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ProcfsConfig {
     /// Polling interval.
     #[serde(default = "default_poll_interval", with = "humantime_serde")]
