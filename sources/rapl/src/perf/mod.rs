@@ -131,8 +131,7 @@ impl MetricReader for Rapl {
         Self::new(config.sockets_spec.as_ref())
     }
 
-    /// Enable the `perf_event` counters.
-    async fn init(&mut self, _: i32) -> Result<()> {
+    async fn pre_init(&mut self) -> Result<()> {
         self.sockets
             .iter_mut()
             .try_for_each(|socket| socket.group.enable().map_err(RaplError::from))?;
