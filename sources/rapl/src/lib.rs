@@ -6,8 +6,8 @@
 //! # Backends
 //!
 //! This module supports **two backends** for reading energy metrics:
-//! - [`powercap`] — uses the Linux `powercap` interface for energy readings.
-//! - [`perf`] — uses `perf_event` counters (`perf_event_open`) for RAPL domains.
+//! - [`powercap`] - uses the Linux `powercap` interface for energy readings.
+//! - [`perf`] - uses `perf_event` counters (`perf_event_open`) for RAPL domains.
 
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 

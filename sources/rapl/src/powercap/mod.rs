@@ -1,4 +1,4 @@
-//! Module `rapl` — Intel RAPL metric source.
+//! Module `rapl` - Intel RAPL metric source.
 //!
 //! This module provides an implementation of a [`MetricReader`] for
 //! collecting energy metrics from Intel RAPL (Running Average Power Limit) domains.

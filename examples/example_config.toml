@@ -30,7 +30,7 @@ poll_interval = "1s"
 rapl_path = "/sys/devices/virtual/powercap/intel-rapl"
 
 # perf_event
-[sources.perf_event]
+[sources.perf]
 ignore_on_failure = true
 events = ["cpu-cycles", "instructions", "cache-misses", "branch-misses"]
 
