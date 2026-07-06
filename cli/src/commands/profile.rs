@@ -9,7 +9,7 @@ pub struct ProfileArgs {
     /// Regex pattern to detect phase tokens in program output. (default: __[A-Z0-9_]+__)
     ///
     /// Matches tokens in stdout; if the pattern has a capture group, the
-    /// captured text is used as the token name. Energy phases computed:
+    /// captured text is used as the token name. Phases computed:
     ///   - global (START -> END)
     ///   - START -> `first_token`
     ///   - `token_i` -> `token_i+1`

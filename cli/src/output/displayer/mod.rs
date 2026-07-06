@@ -6,8 +6,8 @@
 //!
 //! # Overview
 //!
-//! - [`Displayer`] — Trait defining methods for displaying phases and sensors.
-//! - [`Terminal`][`super::formats::terminal::TerminalOutput`], [`JsonOutput`][`super::formats::json::JsonOutput`], [`CsvOutput`][`super::formats::csv::CsvOutput`] — Standard output formats.
+//! - [`Displayer`] - Trait defining methods for displaying phases and sensors.
+//! - [`Terminal`][`super::formats::terminal::TerminalOutput`], [`JsonOutput`][`super::formats::json::JsonOutput`], [`CsvOutput`][`super::formats::csv::CsvOutput`] - Standard output formats.
 
 pub mod error;
 pub use error::DisplayerError;
@@ -28,9 +28,9 @@ pub trait Displayer {
     ///
     /// # Parameters
     ///
-    /// - `cmd` — Command and arguments that were profiled.
-    /// - `token_pattern` — Regex used to detect phases in output.
-    /// - `results` — Results containing phases to display.
+    /// - `cmd` - Command and arguments that were profiled.
+    /// - `token_pattern` - Regex used to detect phases in output.
+    /// - `results` - Results containing phases to display.
     fn display_results(
         &mut self,
         cmd: &[String],
@@ -44,7 +44,7 @@ pub trait Displayer {
     ///
     /// # Parameters
     ///
-    /// - `_sensors` — Slice of sensors to list.
+    /// - `_sensors` - Slice of sensors to list.
     fn list_sensors(&mut self, _sensors: &[Sensor]) -> Result<()> {
         Err(DisplayerError::NotImplementedForFormat)
     }

@@ -6,8 +6,8 @@
 //!
 //! # Overview
 //!
-//! - [`OutputFormat`] — Enum representing the available output formats.
-//! - `csv`, `json`, `terminal` — Submodules implementing the actual display logic for default output formats.
+//! - [`OutputFormat`] - Enum representing the available output formats.
+//! - `csv`, `json`, `terminal` - Submodules implementing the actual display logic for default output formats.
 
 use clap::ValueEnum;
 use std::fmt::{Display, Formatter, Result};

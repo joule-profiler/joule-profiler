@@ -247,7 +247,7 @@ select_target() {
 
     # No ELF tools, using musl
     if ! command_exists objdump && ! command_exists readelf; then
-        log_info "No ELF inspection tools found (objdump/readelf) — using musl build"
+        log_info "No ELF inspection tools found (objdump/readelf) - using musl build"
         echo "${arch}-unknown-linux-musl"
         return
     fi
@@ -261,13 +261,13 @@ select_target() {
     log_debug "URL: $download_url"
 
     if ! curl -fsSL -o "$tmp_dir/$tarball" "$download_url" 2>/dev/null; then
-        log_warning "Could not fetch GNU binary for inspection — using musl build"
+        log_warning "Could not fetch GNU binary for inspection - using musl build"
         echo "${arch}-unknown-linux-musl"
         return
     fi
 
     if ! tar xzf "$tmp_dir/$tarball" -C "$tmp_dir" 2>/dev/null; then
-        log_warning "Could not extract GNU binary for inspection — using musl build"
+        log_warning "Could not extract GNU binary for inspection - using musl build"
         echo "${arch}-unknown-linux-musl"
         return
     fi
@@ -278,7 +278,7 @@ select_target() {
     log_debug "Binary requires GLIBC: ${required_GLIBC:-unknown}"
 
     if [ -z "$required_glibc" ]; then
-        log_warning "Could not read GLIBC requirements from binary — using musl build"
+        log_warning "Could not read GLIBC requirements from binary - using musl build"
         rm -f "$tmp_dir/$BINARY_NAME"
         echo "${arch}-unknown-linux-musl"
         return
@@ -290,14 +290,14 @@ select_target() {
     log_debug "System GLIBC: ${system_glibc:-not found}"
 
     if [ -n "$system_glibc" ] && version_gte "$system_glibc" "$required_glibc"; then
-        log_success "Compatible GLIBC ($system_glibc >= $required_glibc) — using GNU build"
+        log_success "Compatible GLIBC ($system_glibc >= $required_glibc) - using GNU build"
         _GNU_PREDOWNLOADED=true # binary already in tmp_dir, skip re-download
         echo "$gnu_target"
     else
         if [ -z "$system_glibc" ]; then
-            log_info "No GLIBC detected — using musl build"
+            log_info "No GLIBC detected - using musl build"
         else
-            log_info "GLIBC too old ($system_glibc < $required_glibc) — using musl build"
+            log_info "GLIBC too old ($system_glibc < $required_glibc) - using musl build"
         fi
 
         # discard unusable gnu binary
