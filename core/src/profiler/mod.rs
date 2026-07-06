@@ -118,6 +118,7 @@ impl JouleProfiler {
             return Err(JouleProfilerError::NoSourceConfigured);
         }
         let mut orchestrator = Orchestrator::new(sources);
+        orchestrator.pre_init().await?;
 
         debug!("Spawning command: {:?}", config.cmd);
         let mut child = spawn_profiled_command(config)?;

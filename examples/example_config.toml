@@ -33,6 +33,7 @@ rapl_path = "/sys/devices/virtual/powercap/intel-rapl"
 [sources.perf]
 ignore_on_failure = true
 events = ["cpu-cycles", "instructions", "cache-misses", "branch-misses"]
+#cgroup_name = "joule_profiler" # use cgroup instead of the process id
 
 # cgroup v2
 [sources.cgroup]
