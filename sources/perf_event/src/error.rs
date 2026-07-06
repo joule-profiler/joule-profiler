@@ -20,4 +20,20 @@ pub enum PerfEventError {
     /// Not enough snapshots have been taken to compute the delta between two measures.
     #[error("Not enough measures to compute perf counters differences")]
     NotEnoughSamples,
+
+    /// Failed to parse the online CPU list from sysfs.
+    #[error("Failed to parse online CPU list: {0}")]
+    ParseCpuList(
+        #[from]
+        #[source]
+        std::num::ParseIntError,
+    ),
+
+    /// A blocking task (opening or reading counters) panicked or was cancelled.
+    #[error("Failed to join a blocking perf_event task: {0}")]
+    JoinError(
+        #[from]
+        #[source]
+        tokio::task::JoinError,
+    ),
 }

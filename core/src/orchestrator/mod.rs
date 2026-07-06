@@ -48,6 +48,21 @@ impl Orchestrator {
         }
     }
 
+    /// Pre-initializes each metric source before the profiled process is spawned.
+    ///
+    /// Lets sources that don't depend on the process pid (e.g. cgroup-scoped
+    /// `perf_event` counters) start monitoring before the process exists, so
+    /// they don't miss activity between spawn and [`Orchestrator::init`].
+    ///
+    /// Unlike [`Orchestrator::init`], sources aren't spawned into their own
+    /// task: there's no timeout to enforce here, so a plain concurrent await
+    /// over borrowed sources is enough.
+    pub async fn pre_init(&mut self) -> Result<(), OrchestratorError> {
+        trace!("Pre-initializing {} source(s)", self.sources.len());
+        try_join_all(self.sources.iter_mut().map(|source| source.pre_init())).await?;
+        Ok(())
+    }
+
     /// Initializes each metric source with the profiled program's pid, bounded by `init_timeout`.
     ///
     /// Used by some sources for per-process profiling (e.g. `perf_event`).

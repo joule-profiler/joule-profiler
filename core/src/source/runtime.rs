@@ -103,6 +103,17 @@ impl<R> MetricSource for MetricSourceRuntime<R>
 where
     R: MetricReader,
 {
+    fn pre_init(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>> {
+        Box::pin(async move {
+            self.source
+                .pre_init()
+                .await
+                .map_err(IntoMetricSourceError::into_metric_source_error)
+        })
+    }
+
     /// Initializes the source with the profiled program's pid.
     fn init(
         &mut self,

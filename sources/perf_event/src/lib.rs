@@ -6,19 +6,22 @@
 //! Note: Counters are created individually (not grouped) because
 //! `inherit(true)` is incompatible with `perf_event` groups on Linux.
 
+use std::fs::File;
+
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
     source::MetricReader,
+    time::get_timestamp_micros,
     types::{Metric, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
 };
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 use crate::{
     config::PerfConfig,
     error::PerfEventError,
     event::{EVENTS, Event},
-    hardware::{PerfEventCounters, PerfEventHardware},
+    hardware::{PerfEventCounters, PerfEventHardware, Target},
     snapshot::{Phase, Snapshot},
 };
 
@@ -35,16 +38,22 @@ const PERF_EVENT_METRIC_UNIT: MetricUnit = MetricUnit {
     unit: Unit::Count,
 };
 
+/// Root of the cgroup v2 hierarchy that `PerfConfig::cgroup_name` is
+/// resolved against.
+const CGROUP_ROOT: &str = "/sys/fs/cgroup";
+
 /// Hardware performance counter source using `perf_event`.
 ///
 /// Tracks CPU performance metrics (cycles, instructions, cache/branch misses)
-/// for a specific process.
+/// for a specific process, or for every process inside a cgroup if
+/// `PerfConfig::cgroup_name` is set.
 ///
 /// The hardware generic type is used for testing purposes, it allows to change the implementation
 /// used to interact with `perf_event`. The default adapter use the `perf_event2` library.
 pub struct PerfEvent<H: PerfEventHardware = PerfEventCounters> {
     hardware: H,
     events: Vec<Event>,
+    cgroup_name: Option<std::path::PathBuf>,
     begin_snapshot: Option<Snapshot>,
     last_snapshot: Option<Snapshot>,
 }
@@ -52,7 +61,6 @@ pub struct PerfEvent<H: PerfEventHardware = PerfEventCounters> {
 impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     type Type = Phase;
     type Error = PerfEventError;
-
     type Config = PerfConfig;
 
     fn from_config(config: PerfConfig) -> Result<Self> {
@@ -60,22 +68,51 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
             events: config
                 .events
                 .map_or(EVENTS.to_vec(), |e| e.into_iter().collect()),
+            cgroup_name: config.cgroup_name,
             hardware: H::default(),
             begin_snapshot: None,
             last_snapshot: None,
         })
     }
 
-    /// Initialize counters for a specific process and start monitoring.
+    async fn pre_init(&mut self) -> Result<()> {
+        if let Some(name) = &self.cgroup_name {
+            let path = std::path::Path::new(CGROUP_ROOT).join(name);
+            info!(
+                "Initializing perf_event source for cgroup {}",
+                path.display()
+            );
+            let target = Target::Cgroup(File::open(path)?);
+            let begin = get_timestamp_micros();
+            self.hardware.init_counters(&self.events, target).await?;
+            let end = get_timestamp_micros();
+            warn!("init cgroup {}", end - begin);
+        }
+        Ok(())
+    }
+
+    /// Initialize counters and start monitoring: either the given process's
+    /// pid, or the configured cgroup if `PerfConfig::cgroup_name` was set.
     async fn init(&mut self, pid: i32) -> Result<()> {
-        info!("Initializing perf_event source for PID {pid}");
-        self.hardware.init_counters(&self.events, pid)
+        if self.cgroup_name.is_none() {
+            info!("Initializing perf_event source for PID {pid}");
+            let begin = get_timestamp_micros();
+            self.hardware
+                .init_counters(&self.events, Target::Pid(pid))
+                .await?;
+            let end = get_timestamp_micros();
+            warn!("init pid {}", end - begin);
+        }
+        Ok(())
     }
 
     /// Read current counter values and compute delta since last measurement.
     async fn measure(&mut self) -> Result<()> {
         trace!("Reading perf_event counters");
-        let new_snapshot = self.hardware.read_snapshot()?;
+        let begin = get_timestamp_micros();
+        let new_snapshot = self.hardware.read_snapshot().await?;
+        let end = get_timestamp_micros();
+        warn!("measure {}", end - begin);
         if self.begin_snapshot.is_none() {
             self.begin_snapshot = Some(new_snapshot);
         } else {
@@ -112,6 +149,9 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     }
 
     /// Convert raw counter values to metrics with metadata.
+    ///
+    /// Per-CPU deltas are summed into a single total per event here, once,
+    /// rather than in `read_snapshot` on every measurement.
     fn to_metrics(&self, result: Self::Type) -> Result<Metrics> {
         trace!(
             "Converting {} counters to metrics",
@@ -121,8 +161,9 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
         Ok(diff
             .metrics
             .into_iter()
-            .map(|(event, counter)| {
-                Metric::new(event, counter, PERF_EVENT_METRIC_UNIT, Self::get_name())
+            .map(|(event, per_cpu)| {
+                let value: u64 = per_cpu.values().sum();
+                Metric::new(event, value, PERF_EVENT_METRIC_UNIT, Self::get_name())
             })
             .collect())
     }
@@ -143,16 +184,25 @@ mod tests {
     use super::*;
     use crate::{event::Event, hardware::MockPerfEventHardware, snapshot::Snapshot};
 
+    /// A single-CPU snapshot, as PID-scoped counters always are.
     fn snapshot(entries: Vec<(Event, u64)>) -> Snapshot {
         Snapshot {
-            metrics: entries.into_iter().collect(),
+            metrics: entries
+                .into_iter()
+                .map(|(event, value)| (event, std::collections::HashMap::from([(0, value)])))
+                .collect(),
         }
+    }
+
+    fn total(snapshot: &Snapshot, event: Event) -> u64 {
+        snapshot.metrics[&event].values().sum()
     }
 
     fn with_hardware(hardware: MockPerfEventHardware) -> PerfEvent<MockPerfEventHardware> {
         PerfEvent {
             hardware,
             events: EVENTS.to_vec(),
+            cgroup_name: None,
             begin_snapshot: None,
             last_snapshot: None,
         }
@@ -163,7 +213,7 @@ mod tests {
         let mut hardware = MockPerfEventHardware::new();
         hardware
             .expect_read_snapshot()
-            .returning(|| Ok(snapshot(vec![(Event::CpuCycles, 100)])));
+            .returning(|| Box::pin(async { Ok(snapshot(vec![(Event::CpuCycles, 100)])) }));
 
         let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
@@ -178,10 +228,12 @@ mod tests {
         let mut read_snapshot_call_count = 0u64;
         hardware.expect_read_snapshot().returning(move || {
             read_snapshot_call_count += 1;
-            Ok(snapshot(vec![(
-                Event::CpuCycles,
-                read_snapshot_call_count * 100,
-            )]))
+            Box::pin(async move {
+                Ok(snapshot(vec![(
+                    Event::CpuCycles,
+                    read_snapshot_call_count * 100,
+                )]))
+            })
         });
 
         let mut source = with_hardware(hardware);
@@ -197,7 +249,7 @@ mod tests {
         let mut hardware = MockPerfEventHardware::new();
         hardware
             .expect_read_snapshot()
-            .returning(|| Ok(snapshot(vec![(Event::CpuCycles, 100)])));
+            .returning(|| Box::pin(async { Ok(snapshot(vec![(Event::CpuCycles, 100)])) }));
 
         let mut source = with_hardware(hardware);
         source.measure().await.unwrap();
@@ -214,10 +266,12 @@ mod tests {
         let mut read_snapshot_call_count = 0u64;
         hardware.expect_read_snapshot().returning(move || {
             read_snapshot_call_count += 1;
-            Ok(snapshot(vec![(
-                Event::CpuCycles,
-                read_snapshot_call_count * 100,
-            )]))
+            Box::pin(async move {
+                Ok(snapshot(vec![(
+                    Event::CpuCycles,
+                    read_snapshot_call_count * 100,
+                )]))
+            })
         });
 
         let mut source = with_hardware(hardware);
@@ -225,8 +279,8 @@ mod tests {
         source.measure().await.unwrap();
         let phase = source.retrieve().await.unwrap();
 
-        assert_eq!(phase.begin.metrics[&Event::CpuCycles], 100);
-        assert_eq!(phase.end.metrics[&Event::CpuCycles], 200);
+        assert_eq!(total(&phase.begin, Event::CpuCycles), 100);
+        assert_eq!(total(&phase.end, Event::CpuCycles), 200);
     }
 
     #[tokio::test]
@@ -235,10 +289,12 @@ mod tests {
         let mut read_snapshot_call_count = 0u64;
         hardware.expect_read_snapshot().returning(move || {
             read_snapshot_call_count += 1;
-            Ok(snapshot(vec![(
-                Event::CpuCycles,
-                read_snapshot_call_count * 100,
-            )]))
+            Box::pin(async move {
+                Ok(snapshot(vec![(
+                    Event::CpuCycles,
+                    read_snapshot_call_count * 100,
+                )]))
+            })
         });
 
         let mut source = with_hardware(hardware);
@@ -246,7 +302,7 @@ mod tests {
         source.measure().await.unwrap();
         source.retrieve().await.unwrap();
         assert_eq!(
-            source.begin_snapshot.as_ref().unwrap().metrics[&Event::CpuCycles],
+            total(source.begin_snapshot.as_ref().unwrap(), Event::CpuCycles),
             200
         );
         assert!(source.last_snapshot.is_none());
@@ -258,9 +314,11 @@ mod tests {
         let mut read_snapshot_call_count = 0;
         hardware.expect_read_snapshot().returning(move || {
             read_snapshot_call_count += 1;
-            Ok(match read_snapshot_call_count {
-                1 => snapshot(vec![(Event::CpuCycles, 0)]),
-                _ => snapshot(vec![(Event::CpuCycles, 500)]),
+            Box::pin(async move {
+                Ok(match read_snapshot_call_count {
+                    1 => snapshot(vec![(Event::CpuCycles, 0)]),
+                    _ => snapshot(vec![(Event::CpuCycles, 500)]),
+                })
             })
         });
 
