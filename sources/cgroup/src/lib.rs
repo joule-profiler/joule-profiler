@@ -159,11 +159,16 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
         })
     }
 
-    /// Initializes the cgroup source with the given pid.
-    async fn init(&mut self, pid: i32) -> Result<()> {
+    /// Creates the cgroup if configured.
+    async fn pre_init(&mut self) -> Result<()> {
         if self.config.create_cgroup {
             self.proc_cgroup.create()?;
         }
+        Ok(())
+    }
+
+    /// Initializes the cgroup source with the given pid.
+    async fn init(&mut self, pid: i32) -> Result<()> {
         if self.config.attach_pid {
             self.proc_cgroup.attach_pid(pid)?;
         }

@@ -27,6 +27,7 @@ use crate::source::{MetricReaderErrorBound, MetricReaderTypeBound};
 ///
 /// # Optional Methods
 ///
+/// - [`MetricReader::pre_init`] - Source pre-initialization logic if there is one, called before spawning the profile process.
 /// - [`MetricReader::init`] - Source initialization logic if there is one, called before the measurements.
 /// - [`MetricReader::join`] - Source destruction logic if there is one, called before the measurements (no Drop implementation because the source is reusable).
 pub trait MetricReader: Send + 'static {
@@ -42,6 +43,11 @@ pub trait MetricReader: Send + 'static {
     fn from_config(config: Self::Config) -> Result<Self, Self::Error>
     where
         Self: Sized;
+
+    /// Pre-initialize the source, called before the process is spawned.
+    fn pre_init(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async { Ok(()) }
+    }
 
     /// Init the source if it implements custom logic underneath.
     fn init(&mut self, _pid: i32) -> impl Future<Output = Result<(), Self::Error>> + Send {

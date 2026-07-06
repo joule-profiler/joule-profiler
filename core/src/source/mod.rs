@@ -28,6 +28,11 @@ pub use types::{MetricReaderErrorBound, MetricReaderTypeBound};
 /// This trait is used to erase the type of the metric source, to be able to have a
 /// convenient API for users while maintaining performance with monomorphization during hot paths.
 pub(crate) trait MetricSource: Send {
+    /// Pre-initialize the source before the process is spawned.
+    fn pre_init(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>>;
+
     /// Initialize the source with the profiled program's pid.
     ///
     /// Must be awaited (and completed) before [`MetricSource::run`] is called.

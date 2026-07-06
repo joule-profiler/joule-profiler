@@ -31,4 +31,13 @@ sudo sysctl --system
 
 ## Scope
 
-At the moment, Joule Profiler attaches `perf_event` counters to the **monitored process** only (per-process mode).
+By default, Joule Profiler attaches `perf_event` counters to the **monitored process** only (per-process mode, via the pid), following it and any children it spawns across every CPU it runs on.
+
+Alternatively, counters can be scoped to a **cgroup v2** instead of the process's pid, by setting `cgroup_name` in the source configuration:
+
+```toml
+[sources.perf]
+cgroup_name = "my-cgroup" # relative to /sys/fs/cgroup; use "parent/child" for a nested cgroup
+```
+
+This tracks every process inside the cgroup rather than a single pid and its children, it can be useful for containers profiling, and lets counters be opened *before* the profiled process is spawned (the cgroup must already exist).
