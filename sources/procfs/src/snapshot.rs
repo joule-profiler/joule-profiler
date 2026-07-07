@@ -26,6 +26,18 @@ pub struct ProcSnapshot {
     pub write_bytes: u64,
 }
 
+impl std::ops::AddAssign for ProcSnapshot {
+    fn add_assign(&mut self, other: Self) {
+        self.vm_size += other.vm_size;
+        self.rss += other.rss;
+        self.pss += other.pss;
+        self.shared += other.shared;
+        self.anon += other.anon;
+        self.read_bytes += other.read_bytes;
+        self.write_bytes += other.write_bytes;
+    }
+}
+
 /// Point-in-time system-wide memory statistics from `/proc/meminfo`.
 ///
 /// All values are in bytes. Optional fields are absent when the kernel

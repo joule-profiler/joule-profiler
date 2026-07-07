@@ -25,4 +25,7 @@ pub enum ProcfsError {
         #[source]
         JoinError,
     ),
+
+    #[error("procfs source mutex poisoned.")]
+    MutexPoisoned,
 }
