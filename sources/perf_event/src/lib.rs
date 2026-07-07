@@ -14,7 +14,7 @@ use joule_profiler_core::{
     types::{Metric, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
 };
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 use crate::{
     config::PerfConfig,
@@ -76,6 +76,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
 
     async fn pre_init(&mut self) -> Result<()> {
         if let Some(name) = &self.cgroup_name {
+            warn!("cgroup");
             let path = std::path::Path::new(CGROUP_ROOT).join(name);
             info!(
                 "Initializing perf_event source for cgroup {}",
@@ -91,6 +92,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     /// pid, or the configured cgroup if `PerfConfig::cgroup_name` was set.
     async fn init(&mut self, pid: i32) -> Result<()> {
         if self.cgroup_name.is_none() {
+            warn!("pid");
             info!("Initializing perf_event source for PID {pid}");
             self.hardware
                 .init_counters(&self.events, Target::Pid(pid))
