@@ -32,14 +32,10 @@ pub struct CliArgs {
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
     pub verbose: u8,
 
-    /// Override the base path used to read Intel RAPL counters.
+    /// Override the base path used to read Intel RAPL counters (powercap backend only).
     ///
-    /// By default, the profiler reads from:
-    ///   /sys/devices/virtual/powercap/intel-rapl
-    ///
-    /// If not provided, the profiler uses (by priority):
-    ///   1. $`JOULE_PROFILER_RAPL_PATH` (if set)
-    ///   2. /sys/devices/virtual/powercap/intel-rapl
+    /// Resolved by priority: this flag, then the config file's `rapl_path`,
+    /// then `$JOULE_PROFILER_RAPL_PATH`, then `/sys/devices/virtual/powercap/intel-rapl`.
     #[arg(long = "rapl-path")]
     pub rapl_path: Option<String>,
 

@@ -88,4 +88,4 @@ Here is the list of the metrics implemented.
 | Requirement | Version |
 | - | - |
 | Linux kernel | cgroup v2 enabled (Linux 4.5) |
-| Permissions | write access to cgroup filesystem (usually root privileges) |
+| Permissions | Write access to the cgroup hierarchy: root, or a delegated subtree (e.g. a systemd user session) with the required controllers enabled |
