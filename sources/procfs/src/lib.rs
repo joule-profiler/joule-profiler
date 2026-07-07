@@ -3,7 +3,7 @@
 //! Provides memory and I/O metrics for a process and it's children and system-wide,
 //! by reading Linux's `/proc` filesystem via the `procfs` crate.
 
-use futures::StreamExt;
+use futures::{StreamExt, future::try_join_all, try_join};
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
     source::MetricReader,
@@ -11,9 +11,13 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use log::{debug, trace};
-use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::sync::Mutex;
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::task::JoinHandle;
+use tokio::task::spawn_blocking;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
@@ -46,14 +50,7 @@ type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 /// Procfs-based metric source.
 ///
 /// Reads memory and I/O metrics from `/proc` for a target process and its
-/// entire child hierarchy, as well as system-wide memory statistics.
-///
-/// Metrics are accumulated as min/max over each measurement phase.
-/// A phase starts on [`MetricReader::measure`] and ends on [`MetricReader::retrieve`],
-/// which returns the counters and resets them for the next phase.
-///
-/// If a `poll_interval` is configured, a background task polls `/proc` continuously
-/// at that interval in addition to explicit [`MetricReader::measure`] calls.
+/// entire child hierarchy, as well as system-wide memory metrics.
 ///
 /// # Example
 ///
@@ -151,7 +148,10 @@ impl<B: Backend> Procfs<B> {
                 tokio::select! {
                     _ = ticker.next() => {
                         trace!("Polled procfs discovery task.");
-                        *detected_processes.lock().await = backend.collect_children(pid);
+                        let backend_clone = backend.clone();
+                        let children = spawn_blocking(move || backend_clone.collect_children(pid)).await?;
+                        let mut lock = detected_processes.lock().map_err(|_| ProcfsError::MutexPoisoned)?;
+                        *lock = children;
                     }
                     () = cancellation_token.cancelled() => {
                         debug!("procfs process discovery worker stopped.");
@@ -165,44 +165,65 @@ impl<B: Backend> Procfs<B> {
     }
 
     async fn measure_and_update_pids(
-        backend: &B,
+        backend: &Arc<B>,
         counters: &Arc<Mutex<Counters>>,
         detected_processes: &Arc<Mutex<HashSet<i32>>>,
     ) -> Result<()> {
+        let pids = detected_processes
+            .lock()
+            .map_err(|_| ProcfsError::MutexPoisoned)?
+            .clone();
+
+        let proc_reads: Vec<_> = pids
+            .into_iter()
+            .map(|pid| {
+                let backend = Arc::clone(backend);
+                spawn_blocking(move || {
+                    let result = backend.read_proc(pid);
+                    (pid, result)
+                })
+            })
+            .collect();
+
+        let backend_global = Arc::clone(backend);
+        let global_read = spawn_blocking(move || backend_global.measure_global());
+
+        let (proc_results, global_result) = try_join!(try_join_all(proc_reads), global_read)?;
+        let global = global_result?;
+
         let mut present_pids = HashSet::new();
-        let pids = detected_processes.lock().await.clone();
         let mut snapshot = ProcSnapshot::default();
         let mut pids_updated = false;
 
-        for pid in pids {
-            match backend.read_proc(pid, &mut snapshot) {
-                Ok(()) => {
+        for (pid, result) in proc_results {
+            match result {
+                Ok(proc_snapshot) => {
                     present_pids.insert(pid);
-                    Ok(())
+                    snapshot += proc_snapshot;
                 }
                 Err(ProcfsError::Procfs(procfs::ProcError::NotFound(_))) => {
                     trace!("PID {pid} not present, removing it from processes list.");
                     pids_updated = true;
-                    Ok(())
                 }
                 Err(ProcfsError::Procfs(procfs::ProcError::Incomplete(_))) => {
                     trace!(
                         "PID {pid} data incomplete (process exited during read), removing it from processes list."
                     );
                     pids_updated = true;
-                    Ok(())
                 }
-                r => r,
-            }?;
+                Err(err) => return Err(err),
+            }
         }
 
-        let global = backend.measure_global()?;
-        let mut counters = counters.lock().await;
+        let mut counters = counters.lock().map_err(|_| ProcfsError::MutexPoisoned)?;
         counters.update(&snapshot, &global);
 
         if pids_updated {
             trace!("Updating processes list: {present_pids:?}");
-            *detected_processes.lock().await = present_pids;
+            let mut lock = detected_processes
+                .lock()
+                .map_err(|_| ProcfsError::MutexPoisoned)?;
+            *lock = present_pids;
         }
 
         Ok(())
@@ -226,11 +247,20 @@ impl<B: Backend> MetricReader for Procfs<B> {
         })
     }
 
+    async fn pre_init(&mut self) -> Result<()> {
+        self.mem_total = self.backend.mem_total()?;
+        Ok(())
+    }
+
     /// Initializes the source to `pid` and starts the background poller if a `poll_interval` is configured.
     async fn init(&mut self, pid: i32) -> Result<()> {
         debug!("Initializing procfs source.");
-        self.mem_total = self.backend.mem_total()?;
-        *self.detected_processes.lock().await = self.backend.collect_children(pid);
+
+        let mut lock = self
+            .detected_processes
+            .lock()
+            .map_err(|_| ProcfsError::MutexPoisoned)?;
+        *lock = self.backend.collect_children(pid);
 
         self.process_discovery_task_handle = Some(Self::spawn_process_discovery_worker(
             self.backend.clone(),
@@ -258,6 +288,10 @@ impl<B: Backend> MetricReader for Procfs<B> {
             cancellation_token.cancel();
             handle.await??;
         }
+        if let Some((cancellation_token, handle)) = self.process_discovery_task_handle.take() {
+            cancellation_token.cancel();
+            handle.await??;
+        }
         Ok(())
     }
 
@@ -272,7 +306,10 @@ impl<B: Backend> MetricReader for Procfs<B> {
 
     /// Returns the accumulated counters for the current phase and resets them.
     async fn retrieve(&mut self) -> Result<Self::Type> {
-        let mut lock = self.counters.lock().await;
+        let mut lock = self
+            .counters
+            .lock()
+            .map_err(|_| ProcfsError::MutexPoisoned)?;
         let counters = *lock;
         lock.reset();
         Ok(counters)
@@ -455,8 +492,11 @@ mod tests {
     use tokio::time::sleep;
 
     use crate::{
-        Procfs, backend::MockBackend, config::ProcfsConfig, error::ProcfsError,
-        snapshot::GlobalSnapshot,
+        Procfs,
+        backend::MockBackend,
+        config::ProcfsConfig,
+        error::ProcfsError,
+        snapshot::{GlobalSnapshot, ProcSnapshot},
     };
 
     fn create_source(backend: MockBackend) -> Procfs<MockBackend> {
@@ -493,7 +533,7 @@ mod tests {
         source.init(pid).await.unwrap();
 
         assert_eq!(source.mem_total, mem_total);
-        assert!(source.detected_processes.lock().await.eq(&children));
+        assert!(source.detected_processes.lock().unwrap().eq(&children));
     }
 
     #[tokio::test]
@@ -513,13 +553,19 @@ mod tests {
         backend.expect_mem_total().once().returning(|| Ok(0));
         let mut source = create_source(backend);
         source.config.process_detection_poll_interval = Duration::from_millis(1);
-        assert!(source.detected_processes.lock().await.eq(&HashSet::new()));
+        assert!(
+            source
+                .detected_processes
+                .lock()
+                .unwrap()
+                .eq(&HashSet::new())
+        );
 
         source.init(1).await.unwrap();
 
         sleep(Duration::from_millis(5)).await;
 
-        assert!(source.detected_processes.lock().await.eq(&children));
+        assert!(source.detected_processes.lock().unwrap().eq(&children));
     }
 
     #[tokio::test]
@@ -539,7 +585,9 @@ mod tests {
             })
         });
 
-        backend.expect_read_proc().returning(|_, _| Ok(()));
+        backend
+            .expect_read_proc()
+            .returning(|_| Ok(ProcSnapshot::default()));
 
         backend.expect_measure_global().once().returning(|| {
             Ok(GlobalSnapshot {
@@ -554,7 +602,7 @@ mod tests {
         backend.expect_mem_total().once().returning(|| Ok(0));
 
         let mut source = create_source(backend);
-        let global_counters = source.counters.lock().await.global;
+        let global_counters = source.counters.lock().unwrap().global;
         assert!(global_counters.anon.is_none());
         assert!(global_counters.cached.min().is_none());
         assert!(global_counters.cached.max().is_none());
@@ -569,7 +617,7 @@ mod tests {
 
         sleep(Duration::from_millis(20)).await;
 
-        let global_counters = source.counters.lock().await.global;
+        let global_counters = source.counters.lock().unwrap().global;
 
         assert_eq!(global_counters.anon.unwrap().min(), Some(100));
         assert_eq!(global_counters.anon.unwrap().max(), Some(200));
@@ -591,7 +639,9 @@ mod tests {
             .expect_collect_children()
             .returning(|_| vec![1].into_iter().collect());
 
-        backend.expect_read_proc().returning(|_, _| Ok(()));
+        backend
+            .expect_read_proc()
+            .returning(|_| Ok(ProcSnapshot::default()));
 
         backend.expect_measure_global().returning(|| {
             Ok(GlobalSnapshot {
@@ -610,7 +660,7 @@ mod tests {
         source.init(1).await.unwrap();
         source.measure().await.unwrap();
 
-        let counters = source.counters.lock().await;
+        let counters = source.counters.lock().unwrap();
 
         assert_eq!(counters.global.cached.max(), Some(200));
         assert_eq!(counters.global.cached.max(), Some(200));
@@ -627,7 +677,9 @@ mod tests {
             .expect_collect_children()
             .returning(|_| vec![1].into_iter().collect());
 
-        backend.expect_read_proc().returning(|_, _| Ok(()));
+        backend
+            .expect_read_proc()
+            .returning(|_| Ok(ProcSnapshot::default()));
 
         backend.expect_measure_global().returning(|| {
             Ok(GlobalSnapshot {
@@ -663,13 +715,13 @@ mod tests {
             .expect_collect_children()
             .returning(|_| vec![1, 2].into_iter().collect());
 
-        backend.expect_read_proc().returning(|pid, _| {
+        backend.expect_read_proc().returning(|pid| {
             if pid == 2 {
                 Err(ProcfsError::Procfs(ProcError::NotFound(Some(
                     PathBuf::new(),
                 ))))
             } else {
-                Ok(())
+                Ok(ProcSnapshot::default())
             }
         });
 
@@ -684,7 +736,7 @@ mod tests {
 
         source.measure().await.unwrap();
 
-        let processes = source.detected_processes.lock().await;
+        let processes = source.detected_processes.lock().unwrap();
 
         assert!(processes.contains(&1));
         assert!(!processes.contains(&2));
@@ -700,7 +752,9 @@ mod tests {
 
         backend.expect_mem_total().once().returning(|| Ok(0));
 
-        backend.expect_read_proc().returning(|_, _| Ok(()));
+        backend
+            .expect_read_proc()
+            .returning(|_| Ok(ProcSnapshot::default()));
 
         backend
             .expect_measure_global()

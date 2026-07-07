@@ -13,7 +13,7 @@ use crate::{
 #[cfg_attr(test, mockall::automock)]
 pub trait Backend: Default + Send + Sync + 'static {
     // Reads memory and I/O stats for a single pid and adds them into `snapshot`.
-    fn read_proc(&self, pid: i32, snapshot: &mut ProcSnapshot) -> Result<()>;
+    fn read_proc(&self, pid: i32) -> Result<ProcSnapshot>;
 
     /// Reads the current global system memory.
     fn measure_global(&self) -> Result<GlobalSnapshot>;
@@ -29,12 +29,13 @@ pub trait Backend: Default + Send + Sync + 'static {
 pub struct ProcfsBackend;
 
 impl Backend for ProcfsBackend {
-    /// Reads memory and I/O stats for a single pid and adds them into `snapshot`.
+    /// Reads memory and I/O stats for a single pid.
     ///
     /// Silently ignores `PermissionDenied` on I/O reads, which can happen
     /// if the process exits between the smaps and io reads.
-    fn read_proc(&self, pid: i32, snapshot: &mut ProcSnapshot) -> Result<()> {
+    fn read_proc(&self, pid: i32) -> Result<ProcSnapshot> {
         let process = Process::new(pid)?;
+        let mut snapshot = ProcSnapshot::default();
 
         trace!("Querying process {} stat.", process.pid);
         snapshot.vm_size += process.stat()?.vsize;
@@ -60,7 +61,7 @@ impl Backend for ProcfsBackend {
             Err(err) => return Err(err.into()),
         }
 
-        Ok(())
+        Ok(snapshot)
     }
 
     /// Reads system-wide memory statistics from `/proc/meminfo`.
