@@ -40,10 +40,10 @@ sudo cp target/release/joule-profiler /usr/local/bin/
 sudo joule-profiler profile -- python workload.py
 
 # JSON output
-sudo joule-profiler --json profile -- ./benchmark
+sudo joule-profiler --output-format json profile -- ./benchmark
 
 # GPU profiling (NVIDIA)
-sudo joule-profiler --gpu profile-- ./gpu-workload
+sudo joule-profiler --sources rapl,nvml profile -- ./gpu-workload
 ```
 
 ## Documentation
@@ -76,18 +76,21 @@ sudo joule-profiler profile -- python example.py
 
 ### Multiple Metric Sources
 
-| Source              | Metrics              | Requirements                  |
-|---------------------|----------------------|-------------------------------|
-| **RAPL** (powercap) | RAPL domains energy  | Intel CPU, kernel 3.13+       |
-| **RAPL** (perf)     | RAPL domains energy  | Intel CPU, perf_event support |
-| **perf_event**      | Performance counters | Linux perf support            |
-| **NVML**            | GPU energy           | NVIDIA GPU                    |
+| Source | Metrics | Requirements |
+|-|-|-|
+| **RAPL** (powercap) | RAPL domains energy | Intel CPU, kernel 3.13+ |
+| **RAPL** (perf) | RAPL domains energy | Intel CPU, perf_event support |
+| **perf_event** | Performance counters | Linux perf support |
+| **cgroup** | CPU/memory/IO usage | cgroup v2, root if cgroup creation |
+| **procfs** | Memory/IO usage | Linux, `/proc` access |
+| **NVML** | NVIDIA GPU energy | NVIDIA GPU |
+| **AMD SMI** | AMD GPU energy | AMD GPU, `amd-smi-lib` |
 
 ## Platform Support
 
 - **OS**: Linux (kernel 3.13+)
 - **CPU**: Intel (RAPL)
-- **GPU**: NVIDIA (NVML support)
+- **GPU**: NVIDIA (NVML) and AMD (AMD SMI)
 - **Permissions**: Root or appropriate capabilities required
 
 ## Common Use Cases
