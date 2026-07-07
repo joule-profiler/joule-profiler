@@ -8,7 +8,6 @@
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
-use joule_profiler_core::sys::is_root;
 use joule_profiler_core::time::get_timestamp_micros;
 use joule_profiler_core::types::{Metric, MetricValue, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
@@ -155,12 +154,11 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
     }
 
     /// Creates the cgroup if configured.
+    ///
+    /// Creating the directory or attaching a pid fails with `CgroupError::PermissionDenied`
+    /// if the caller lacks access, which also lets delegated (non-root-owned) cgroup
+    /// subtrees work.
     async fn pre_init(&mut self) -> Result<()> {
-        if (self.config.attach_pid || self.config.create_cgroup) && !is_root() {
-            return Err(CgroupError::PermissionDenied(
-                "the cgroup source requires root privileges to create a cgroup or attach a process.",
-            ));
-        }
         if self.config.create_cgroup {
             self.proc_cgroup.create()?;
         }
