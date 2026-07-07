@@ -10,6 +10,7 @@ use crate::{
 
 /// Trait for abstracting the backend of AMD SMI library. Used for testing.
 #[cfg_attr(test, mockall::automock)]
+#[allow(clippy::ref_option_ref)]
 pub trait AmdSmiHardware: Send + Sync + 'static {
     /// Creates an hardware instance.
     fn new() -> Result<Self>

@@ -203,7 +203,7 @@ mod tests {
         energy: u64,
         max_energy: u64,
     ) -> PathBuf {
-        let dir = base.join(format!("intel-rapl:{}", socket));
+        let dir = base.join(format!("intel-rapl:{socket}"));
         create_dir_all(&dir).unwrap();
 
         write(dir.join("name"), name).unwrap();
