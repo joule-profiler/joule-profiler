@@ -61,13 +61,6 @@ pub struct Rapl {
 
 impl Rapl {
     /// Discovers a new RAPL reader with the specified sockets specification.
-    /// The discovered sockets aren't opened yet (see [`MetricReader::pre_init`]).
-    ///
-    /// # Errors
-    ///
-    /// It returns an error if:
-    /// - OS is unsupported
-    /// - The socket topology cannot be discovered
     pub fn new(sockets_spec: Option<&HashSet<u32>>) -> Result<Self> {
         check_os()?;
 
@@ -92,8 +85,6 @@ impl Rapl {
     }
 
     /// Read the current counter values for all domains.
-    ///
-    /// Returns a `Snapshot` containing domain metrics.
     fn read_domains_counter(&mut self) -> Result<Snapshot> {
         let mut metrics = HashMap::new();
 
@@ -127,7 +118,7 @@ impl MetricReader for Rapl {
     async fn pre_init(&mut self) -> Result<()> {
         let paranoid_level = read_paranoid_level()?;
 
-        self.sockets = open_counters(std::mem::take(&mut self.socket_topology)).map_err(|err| {
+        self.sockets = open_counters(&self.socket_topology).map_err(|err| {
             if let RaplError::PerfParanoid(_) = err
                 && paranoid_level > 0
             {

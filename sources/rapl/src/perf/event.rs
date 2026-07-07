@@ -75,7 +75,7 @@ impl RaplEvent {
 /// Sockets with no CPUs are skipped with a warning.
 ///
 /// Returns an error if any counter fails to open for a non-empty socket.
-pub fn open_counters(socket_topology: Vec<SocketInfo>) -> Result<Vec<Socket>> {
+pub fn open_counters(socket_topology: &[SocketInfo]) -> Result<Vec<Socket>> {
     let mut sockets = Vec::new();
 
     for socket_info in socket_topology {
@@ -89,8 +89,8 @@ pub fn open_counters(socket_topology: Vec<SocketInfo>) -> Result<Vec<Socket>> {
             continue;
         }
 
-        let mut group = build_group_for_socket(&socket_info)?;
-        let domains = open_counters_for_socket(&socket_info, &mut group)?;
+        let mut group = build_group_for_socket(socket_info)?;
+        let domains = open_counters_for_socket(socket_info, &mut group)?;
         group.enable().map_err(RaplError::from)?;
 
         info!(
@@ -194,13 +194,13 @@ mod tests {
 
     #[test]
     fn open_counters_empty_topology_returns_empty() {
-        let result = open_counters(vec![]).unwrap();
+        let result = open_counters(&[]).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn open_counters_skips_socket_with_no_cpus() {
-        let result = open_counters(vec![socket(0, vec![])]).unwrap();
+        let result = open_counters(&[socket(0, vec![])]).unwrap();
         assert!(result.is_empty());
     }
 }
