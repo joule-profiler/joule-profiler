@@ -229,7 +229,7 @@ mod tests {
         });
 
         m.expect_get_sensors().returning(|| Ok(vec![]));
-        m.expect_to_metrics().returning(|_| Ok(Metrics::default()));
+        m.expect_to_metrics().returning(|()| Ok(Metrics::default()));
 
         (m, counts)
     }

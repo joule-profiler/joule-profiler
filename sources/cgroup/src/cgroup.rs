@@ -296,15 +296,15 @@ mod tests {
 
     impl CgroupBackend for MockCgroupBackend {
         fn memory(&self, _path: &Path) -> Result<MemorySnapshot> {
-            Ok(self.memory.clone())
+            Ok(self.memory)
         }
 
         fn cpu(&self, _path: &Path) -> Result<CpuSnapshot> {
-            Ok(self.cpu.clone())
+            Ok(self.cpu)
         }
 
         fn io(&self, _path: &Path) -> Result<IoSnapshot> {
-            Ok(self.io.clone())
+            Ok(self.io)
         }
 
         fn create(&self, _path: &Path) -> Result<()> {

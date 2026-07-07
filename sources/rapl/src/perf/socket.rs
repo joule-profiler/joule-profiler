@@ -186,12 +186,12 @@ mod tests {
                 .map(|(id, _)| id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            fs::write(base.join("online"), format!("{}\n", online)).unwrap();
+            fs::write(base.join("online"), format!("{online}\n")).unwrap();
 
             for (cpu_id, socket_id) in cpus {
-                let topo = base.join(format!("cpu{}/topology", cpu_id));
+                let topo = base.join(format!("cpu{cpu_id}/topology"));
                 fs::create_dir_all(&topo).unwrap();
-                fs::write(topo.join("physical_package_id"), format!("{}\n", socket_id)).unwrap();
+                fs::write(topo.join("physical_package_id"), format!("{socket_id}\n")).unwrap();
             }
 
             fs::create_dir_all(base.join("cpufreq")).unwrap();
@@ -283,9 +283,9 @@ mod tests {
         // only cpu0 is online and cpu1 exists but must be ignored
         fs::write(base.join("online"), "0\n").unwrap();
         for (cpu_id, socket_id) in [(0u32, 0u32), (1, 0)] {
-            let topo = base.join(format!("cpu{}/topology", cpu_id));
+            let topo = base.join(format!("cpu{cpu_id}/topology"));
             fs::create_dir_all(&topo).unwrap();
-            fs::write(topo.join("physical_package_id"), format!("{}\n", socket_id)).unwrap();
+            fs::write(topo.join("physical_package_id"), format!("{socket_id}\n")).unwrap();
         }
 
         let online_path = base.join("online").to_str().unwrap().to_owned();

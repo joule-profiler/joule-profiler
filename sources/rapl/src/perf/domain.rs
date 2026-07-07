@@ -95,6 +95,7 @@ pub fn discover_domains(domains_to_discover: Option<&HashSet<u32>>) -> Result<Ve
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::domain_type::RaplDomainType;
