@@ -70,56 +70,31 @@ impl PerfEventHardware for PerfEventCounters {
     }
 
     /// Reads all performance counters and returns a snapshot.
-    ///
-    /// Values are kept per-CPU rather than summed here: summing on every
-    /// read would redo the same work for both the begin and end snapshot of
-    /// each phase, whereas `PerfEvent::to_metrics` only needs to do it once,
-    /// on the already-diffed deltas.
-    ///
-    /// An error can occur if an event counter cannot be read.
     async fn read_snapshot(&mut self) -> Result<Snapshot> {
         match &mut self.state {
             State::Pid(counters) => {
-                let taken = std::mem::take(counters);
-                let (metrics, restored) = spawn_blocking(move || {
-                    let mut counters = taken;
-                    let result = counters
-                        .iter_mut()
-                        .map(|(event, counter)| {
-                            let value = counter
-                                .read()
-                                .map_err(|_| PerfEventError::ErrorReadingCounter(*event))?;
-                            Ok((*event, HashMap::from([(PID_CPU, value)])))
-                        })
-                        .collect::<Result<HashMap<_, _>>>();
-                    (result, counters)
-                })
-                .await?;
-                *counters = restored;
-                Ok(Snapshot { metrics: metrics? })
+                let metrics = counters
+                    .iter_mut()
+                    .map(|(event, counter)| {
+                        let value = counter
+                            .read()
+                            .map_err(|_| PerfEventError::ErrorReadingCounter(*event))?;
+                        Ok((*event, HashMap::from([(PID_CPU, value)])))
+                    })
+                    .collect::<Result<HashMap<_, _>>>()?;
+                Ok(Snapshot { metrics })
             }
             State::Cgroup(CgroupGroups {
                 groups, counters, ..
             }) => {
-                let taken_groups: Vec<(usize, Group)> =
-                    std::mem::take(groups).into_iter().collect();
-
-                let tasks = taken_groups.into_iter().map(|(cpu, mut group)| {
-                    spawn_blocking(move || {
-                        let result = group.read();
-                        (cpu, group, result)
-                    })
-                });
-
                 let mut metrics: HashMap<Event, HashMap<usize, u64>> = HashMap::new();
-                for (cpu, group, group_data) in try_join_all(tasks).await? {
-                    groups.insert(cpu, group);
-                    let group_data = group_data?;
-                    for (event, counter) in counters.get(&cpu).into_iter().flatten() {
+                for (cpu, group) in groups.iter_mut() {
+                    let group_data = group.read()?;
+                    for (event, counter) in counters.get(cpu).into_iter().flatten() {
                         metrics
                             .entry(*event)
                             .or_default()
-                            .insert(cpu, group_data[counter]);
+                            .insert(*cpu, group_data[counter]);
                     }
                 }
 
@@ -148,12 +123,9 @@ impl PerfEventCounters {
                     .observe_pid(pid)
                     .include_hv()
                     .include_kernel()
+                    .enabled(true)
                     .build()?;
                 counters.insert(event, counter);
-            }
-            for counter in counters.values_mut() {
-                trace!("Enabling counter");
-                counter.enable()?;
             }
             Ok::<_, PerfEventError>(counters)
         })
