@@ -19,4 +19,7 @@ pub struct PerfConfig {
     ///
     /// The cgroup must be created before opening the counters.
     pub cgroup_name: Option<PathBuf>,
+
+    /// The root path of the cgroup if cgroup name is provided.
+    pub cgroup_root: Option<PathBuf>,
 }
