@@ -67,5 +67,6 @@ pub struct GlobalConfig {
     pub profiler: ProfilerConfig,
 
     /// The sources configurations.
+    #[serde(default)]
     pub sources: HashMap<String, toml::Value>,
 }

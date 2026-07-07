@@ -3,10 +3,6 @@
 Performance counter source for `joule-profiler`. using the Linux perf_event subsystem.
 This crate implements `MetricSource` from `joule-profiler-core` and collects hardware and software performance counters (CPU cycles, instructions, cache misses, branch mispredictions…) via the perf_event_open(2) syscall, per phase.
 
-## Overview
-
-`perf_event` is the Linux kernel's performance monitoring API, available since kernel 2.6.31. It provides access to a wide range of hardware PMU counters, software counters, and kernel tracepoints. In the context of `joule-profiler`, these counters complement energy measurements by revealing the execution characteristics of each phase allowing you to correlate energy with IPC, cache efficiency, etc.
-
 ## Requirements
 
 | Requirement | Details |
