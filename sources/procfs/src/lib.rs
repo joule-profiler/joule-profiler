@@ -530,6 +530,7 @@ mod tests {
 
         let mut source = create_source(backend);
 
+        source.pre_init().await.unwrap();
         source.init(pid).await.unwrap();
 
         assert_eq!(source.mem_total, mem_total);
@@ -561,6 +562,7 @@ mod tests {
                 .eq(&HashSet::new())
         );
 
+        source.pre_init().await.unwrap();
         source.init(1).await.unwrap();
 
         sleep(Duration::from_millis(5)).await;
@@ -613,6 +615,7 @@ mod tests {
         assert!(global_counters.swap_free.max().is_none());
 
         source.config.poll_interval = Duration::from_millis(10);
+        source.pre_init().await.unwrap();
         source.init(1).await.unwrap();
 
         sleep(Duration::from_millis(20)).await;
@@ -657,6 +660,7 @@ mod tests {
 
         let mut source = create_source(backend);
 
+        source.pre_init().await.unwrap();
         source.init(1).await.unwrap();
         source.measure().await.unwrap();
 
@@ -694,6 +698,7 @@ mod tests {
         backend.expect_mem_total().once().returning(|| Ok(1000));
 
         let mut source = create_source(backend);
+        source.pre_init().await.unwrap();
         source.init(1).await.unwrap();
 
         source.measure().await.unwrap();
@@ -732,6 +737,7 @@ mod tests {
         backend.expect_mem_total().once().returning(|| Ok(1000));
 
         let mut source = create_source(backend);
+        source.pre_init().await.unwrap();
         source.init(1).await.unwrap();
 
         source.measure().await.unwrap();
@@ -762,6 +768,7 @@ mod tests {
 
         let mut source = create_source(backend);
         source.config.poll_interval = Duration::from_millis(5);
+        source.pre_init().await.unwrap();
         source.init(1).await.unwrap();
         sleep(Duration::from_millis(15)).await;
 
