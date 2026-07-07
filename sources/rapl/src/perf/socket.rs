@@ -27,9 +27,7 @@ pub struct SocketInfo {
     /// List of CPU IDs associated with this socket.
     pub cpus: Vec<u32>,
 
-    /// RAPL domain types the hardware exposes for this socket, discovered
-    /// from sysfs (see [`crate::perf::event::discover_supported_domain_types`]).
-    /// Empty until [`crate::perf::domain::discover_domains`] populates it.
+    /// RAPL domain types the hardware exposes for this socket.
     pub domain_types: Vec<RaplDomainType>,
 }
 
@@ -47,10 +45,6 @@ pub struct Socket {
 }
 
 /// Discover the CPU socket topology of the system with an optional filter to discover only specific socket IDs.
-///
-/// It returns a list containing each discovered socket and its CPUs, not yet
-/// opened (see [`crate::perf::event::open_counters`]).
-/// An error occurs if reading sysfs files fails or parsing fails.
 pub fn discover_socket_topology(
     sockets_to_discover: Option<&HashSet<u32>>,
 ) -> Result<Vec<SocketInfo>> {

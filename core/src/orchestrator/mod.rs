@@ -51,12 +51,7 @@ impl Orchestrator {
     /// Pre-initializes each metric source before the profiled process is spawned.
     ///
     /// Lets sources that don't depend on the process pid (e.g. cgroup-scoped
-    /// `perf_event` counters) start monitoring before the process exists, so
-    /// they don't miss activity between spawn and [`Orchestrator::init`].
-    ///
-    /// Unlike [`Orchestrator::init`], sources aren't spawned into their own
-    /// task: there's no timeout to enforce here, so a plain concurrent await
-    /// over borrowed sources is enough.
+    /// `perf_event` counters) start monitoring before the process exists.
     pub async fn pre_init(&mut self) -> Result<(), OrchestratorError> {
         trace!("Pre-initializing {} source(s)", self.sources.len());
         try_join_all(self.sources.iter_mut().map(|source| source.pre_init())).await?;
@@ -67,10 +62,6 @@ impl Orchestrator {
     ///
     /// Used by some sources for per-process profiling (e.g. `perf_event`).
     /// Stores the initialized sources, ready to be started with [`SourceOrchestrator::run`].
-    ///
-    /// Each source is initialized in its own task: some [`MetricReader::init`](`crate::source::MetricReader::init`)
-    /// implementations perform blocking work without yielding, which would otherwise prevent
-    /// `init_timeout` from being enforced if awaited directly on the calling task.
     pub async fn init(
         &mut self,
         pid: i32,

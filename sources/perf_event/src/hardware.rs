@@ -6,7 +6,7 @@ use perf_event::{
     events::{Hardware, Software},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     sync::Arc,
 };
@@ -194,10 +194,10 @@ impl PerfEventCounters {
 }
 
 /// Reads the set of online CPU ids from sysfs (e.g. `0-2,4`).
-fn list_online_cpus() -> Result<Vec<usize>> {
+fn list_online_cpus() -> Result<HashSet<usize>> {
     let content = fs::read_to_string("/sys/devices/system/cpu/online")?;
 
-    let mut cpus = Vec::new();
+    let mut cpus = HashSet::new();
     for part in content.trim().split(',') {
         if part.is_empty() {
             continue;
@@ -207,12 +207,9 @@ fn list_online_cpus() -> Result<Vec<usize>> {
             let end: usize = end.parse()?;
             cpus.extend(start..=end);
         } else {
-            cpus.push(part.parse()?);
+            cpus.insert(part.parse()?);
         }
     }
-
-    cpus.sort_unstable();
-    cpus.dedup();
     Ok(cpus)
 }
 
