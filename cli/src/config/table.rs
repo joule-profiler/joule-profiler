@@ -1,8 +1,4 @@
-//! Configuration management for the profiler CLI.
-//!
-//! This module provides [`ConfigTable`], which bridges raw CLI arguments and
-//! global config file settings into a unified [`Config`] object consumed by
-//! the profiler core.
+//! Configuration management for Joule Profiler.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,8 +14,7 @@ use crate::{
     config::{GlobalConfig, ProfilerConfig, source::MetricSourceConfig},
 };
 
-/// Holds the resolved configuration state, merging values from the global
-/// config file and CLI arguments before they are built into a final.
+/// The structure used to resolve sources from toml configuration and the profiler config.
 #[derive(Debug)]
 pub struct ConfigTable {
     /// Global Joule Profiler configuration.
