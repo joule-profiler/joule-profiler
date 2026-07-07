@@ -2,10 +2,14 @@
 //!
 //! This module provides energy consumption, VRAM usage and GPU utilization metrics forNVIDIA GPUs using the NVML library.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use bitflags::bitflags;
-use futures::StreamExt;
+use futures::{StreamExt, TryFutureExt, future::try_join_all, try_join};
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
     source::MetricReader,
@@ -13,7 +17,7 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use log::{debug, trace};
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::task::{JoinHandle, spawn_blocking};
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
@@ -63,7 +67,7 @@ type Result<T> = std::result::Result<T, NvmlError>;
 /// Polling task handle and its cancellation token.
 type WorkerHandle = (CancellationToken, JoinHandle<Result<()>>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Device {
     /// The index of the device.
     index: u32,
@@ -142,7 +146,11 @@ impl<H: NvmlHardware> Nvml<H> {
         Ok((cancellation_token_clone, handle))
     }
 
-    /// Reads the power and vram counters for each processors and updates the current counters.
+    /// Reads the power, vram and utilization counters for each processors and updates the current counters.
+    ///
+    /// Each device is read on its own blocking thread, in parallel, since NVML calls
+    /// perform blocking driver ioctls. All the queries applicable to a device (vram,
+    /// utilization, power) are grouped in that single blocking task.
     async fn read_polled_counters(
         hardware: &Arc<H>,
         processors: &Arc<Vec<Device>>,
@@ -150,42 +158,43 @@ impl<H: NvmlHardware> Nvml<H> {
         vram_counters: &Arc<Mutex<HashMap<u32, VramCounter>>>,
         utilization_counters: &Arc<Mutex<HashMap<u32, UtilizationCounter>>>,
     ) -> Result<()> {
-        let mut vram_updates = Vec::new();
-        let mut utilization_updates = Vec::new();
-        let mut power_updates = Vec::new();
+        let tasks = processors.iter().copied().map(|device| {
+            let hardware = hardware.clone();
+            spawn_blocking(move || {
+                let vram = device
+                    .support
+                    .contains(DeviceSupport::Vram)
+                    .then(|| hardware.get_vram_usage(device));
+                let utilization = device
+                    .support
+                    .contains(DeviceSupport::Utilization)
+                    .then(|| hardware.get_utilization(device));
+                let power = device
+                    .support
+                    .contains(DeviceSupport::Power)
+                    .then(|| hardware.get_power(device));
+                (device.index, vram, utilization, power)
+            })
+        });
 
-        for device in processors.iter() {
-            if device.support.contains(DeviceSupport::Vram) {
-                vram_updates.push((device.index, hardware.get_vram_usage(device)?));
+        for (index, vram, utilization, power) in try_join_all(tasks).await? {
+            if let Some(vram) = vram {
+                let mut lock = vram_counters.lock().map_err(|_| NvmlError::MutexPoisoned)?;
+                lock.entry(index).or_default().update(vram?);
             }
 
-            if device.support.contains(DeviceSupport::Utilization) {
-                utilization_updates.push((device.index, hardware.get_utilization(device)?));
+            if let Some(utilization) = utilization {
+                let mut lock = utilization_counters
+                    .lock()
+                    .map_err(|_| NvmlError::MutexPoisoned)?;
+                lock.entry(index).or_default().update(utilization?);
             }
 
-            if device.support.contains(DeviceSupport::Power) {
-                power_updates.push((device.index, hardware.get_power(device)?));
-            }
-        }
-
-        {
-            let mut lock = vram_counters.lock().await;
-            for (index, vram_usage) in vram_updates {
-                lock.entry(index).or_default().update(vram_usage);
-            }
-        }
-
-        {
-            let mut lock = utilization_counters.lock().await;
-            for (index, utilization) in utilization_updates {
-                lock.entry(index).or_default().update(utilization);
-            }
-        }
-
-        {
-            let mut lock = power_counters.lock().await;
-            for (index, power) in power_updates {
-                lock.entry(index).or_default().push(power);
+            if let Some(power) = power {
+                let mut lock = power_counters
+                    .lock()
+                    .map_err(|_| NvmlError::MutexPoisoned)?;
+                lock.entry(index).or_default().push(power?);
             }
         }
 
@@ -220,23 +229,38 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
 
     async fn measure(&mut self) -> Result<()> {
         debug!("NVML measure triggered.");
-        for device in self.devices.iter() {
-            if device.support.contains(DeviceSupport::Energy) {
-                let energy = self.hardware.get_energy(device)?;
-                self.energy_counters
-                    .entry(device.index)
-                    .or_default()
-                    .update(energy);
-            }
-        }
-        Self::read_polled_counters(
+
+        let energy_future = try_join_all(
+            self.devices
+                .iter()
+                .filter(|device| device.support.contains(DeviceSupport::Energy))
+                .copied()
+                .map(|device| {
+                    let hardware = self.hardware.clone();
+                    spawn_blocking(move || {
+                        let energy = hardware.get_energy(device);
+                        (device.index, energy)
+                    })
+                }),
+        )
+        .map_err(NvmlError::JoinError);
+
+        let polled_future = Self::read_polled_counters(
             &self.hardware,
             &self.devices,
             &self.power_counters,
             &self.vram_counters,
             &self.utilization_counters,
-        )
-        .await?;
+        );
+
+        let (energy_results, ()) = try_join!(energy_future, polled_future)?;
+
+        for (index, energy) in energy_results {
+            self.energy_counters
+                .entry(index)
+                .or_default()
+                .update(energy?);
+        }
         Ok(())
     }
 
@@ -248,19 +272,28 @@ impl<H: NvmlHardware> MetricReader for Nvml<H> {
             counter.reset();
         }
 
-        let mut lock = self.vram_counters.lock().await;
+        let mut lock = self
+            .vram_counters
+            .lock()
+            .map_err(|_| NvmlError::MutexPoisoned)?;
         let mut vram_counters = lock.clone();
         for counter in lock.values_mut() {
             counter.reset();
         }
 
-        let mut lock = self.utilization_counters.lock().await;
+        let mut lock = self
+            .utilization_counters
+            .lock()
+            .map_err(|_| NvmlError::MutexPoisoned)?;
         let mut utilization_counters = lock.clone();
         for counter in lock.values_mut() {
             counter.reset();
         }
 
-        let mut lock = self.power_counters.lock().await;
+        let mut lock = self
+            .power_counters
+            .lock()
+            .map_err(|_| NvmlError::MutexPoisoned)?;
         let mut power_counters = lock.clone();
         for counter in lock.values_mut() {
             counter.reset();
@@ -500,7 +533,7 @@ mod tests {
         let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
-        assert!(nvml.power_counters.lock().await.contains_key(&0));
+        assert!(nvml.power_counters.lock().unwrap().contains_key(&0));
     }
 
     #[tokio::test]
@@ -518,7 +551,7 @@ mod tests {
         let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
-        assert!(nvml.vram_counters.lock().await.contains_key(&0));
+        assert!(nvml.vram_counters.lock().unwrap().contains_key(&0));
     }
 
     #[tokio::test]
@@ -534,7 +567,7 @@ mod tests {
         let mut nvml = build_nvml(hw, vec![device], Duration::from_secs(1));
         nvml.measure().await.unwrap();
 
-        assert!(nvml.utilization_counters.lock().await.contains_key(&0));
+        assert!(nvml.utilization_counters.lock().unwrap().contains_key(&0));
     }
 
     #[tokio::test]
@@ -552,7 +585,7 @@ mod tests {
         nvml.measure().await.unwrap();
 
         assert!(nvml.energy_counters.is_empty());
-        assert!(nvml.power_counters.lock().await.is_empty());
+        assert!(nvml.power_counters.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -651,6 +684,6 @@ mod tests {
 
         nvml.join().await.unwrap();
 
-        assert!(nvml.power_counters.lock().await.contains_key(&0));
+        assert!(nvml.power_counters.lock().unwrap().contains_key(&0));
     }
 }
