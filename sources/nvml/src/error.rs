@@ -49,4 +49,7 @@ pub enum NvmlError {
         #[source]
         JoinError,
     ),
+
+    #[error("NVML source mutex poisoned.")]
+    MutexPoisoned,
 }
