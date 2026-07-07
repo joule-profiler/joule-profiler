@@ -11,11 +11,10 @@ use std::fs::File;
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
     source::MetricReader,
-    time::get_timestamp_micros,
     types::{Metric, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
 };
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 
 use crate::{
     config::PerfConfig,
@@ -83,10 +82,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
                 path.display()
             );
             let target = Target::Cgroup(File::open(path)?);
-            let begin = get_timestamp_micros();
             self.hardware.init_counters(&self.events, target).await?;
-            let end = get_timestamp_micros();
-            warn!("init cgroup {}", end - begin);
         }
         Ok(())
     }
@@ -96,12 +92,9 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     async fn init(&mut self, pid: i32) -> Result<()> {
         if self.cgroup_name.is_none() {
             info!("Initializing perf_event source for PID {pid}");
-            let begin = get_timestamp_micros();
             self.hardware
                 .init_counters(&self.events, Target::Pid(pid))
                 .await?;
-            let end = get_timestamp_micros();
-            warn!("init pid {}", end - begin);
         }
         Ok(())
     }
@@ -109,10 +102,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     /// Read current counter values and compute delta since last measurement.
     async fn measure(&mut self) -> Result<()> {
         trace!("Reading perf_event counters");
-        let begin = get_timestamp_micros();
         let new_snapshot = self.hardware.read_snapshot().await?;
-        let end = get_timestamp_micros();
-        warn!("measure {}", end - begin);
         if self.begin_snapshot.is_none() {
             self.begin_snapshot = Some(new_snapshot);
         } else {
