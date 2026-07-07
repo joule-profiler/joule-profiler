@@ -126,7 +126,8 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     /// Returns available hardware performance counter sensors.
     fn get_sensors(&self) -> Result<Sensors> {
         trace!("Building perf_event sensor list");
-        let sensors: Sensors = EVENTS
+        let sensors: Sensors = self
+            .events
             .iter()
             .map(|event| {
                 trace!("Registering sensor: {event}");
