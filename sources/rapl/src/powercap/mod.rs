@@ -44,13 +44,13 @@
 //! - [`RaplError::UnsupportedOS`] - only Linux is supported.
 //! - [`RaplError::RaplReadError`] or [`RaplError::InvalidRaplPath`] - problems reading counters or invalid paths.
 
-use crate::MICRO_JOULE_UNIT;
 use crate::error::RaplError;
 use crate::powercap::compute::compute_measurement_from_snapshots;
 use crate::powercap::config::RaplConfig;
 use crate::powercap::domain::{RaplDomain, get_domains, read_energy};
 use crate::snapshot::Snapshot;
 use crate::util::check_os;
+use crate::{MICRO_JOULE_UNIT, RAPL_SOURCE_ID};
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
@@ -320,7 +320,7 @@ impl MetricReader for Rapl {
     }
 
     fn get_id() -> &'static str {
-        "rapl"
+        RAPL_SOURCE_ID
     }
 }
 

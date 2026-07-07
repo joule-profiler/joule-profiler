@@ -13,7 +13,7 @@ use log::{info, trace};
 use perf_event::GroupData;
 
 use crate::{
-    MICRO_JOULE_UNIT, Result,
+    MICRO_JOULE_UNIT, RAPL_SOURCE_ID, Result,
     error::{PerfParanoidError, RaplError},
     perf::{
         compute::{compute_measurement_from_snapshots, joules_to_micro_joules},
@@ -229,7 +229,7 @@ impl MetricReader for Rapl {
     }
 
     fn get_id() -> &'static str {
-        "rapl"
+        RAPL_SOURCE_ID
     }
 }
 
