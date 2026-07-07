@@ -159,15 +159,35 @@ impl MetricReader for Rapl {
     }
 
     /// Return the list of available sensors for this source.
+    ///
+    /// If perf counters have already been opened (see [`MetricReader::pre_init`]),
+    /// the actually opened domains are listed. Otherwise (e.g. `list-sensors`,
+    /// which never calls `pre_init`), this falls back to the domain types
+    /// discovered at construction time (see [`discover_domains`]), so no
+    /// sysfs rescan or perf counter is needed here.
     fn get_sensors(&self) -> Result<Sensors> {
         trace!("Building RAPL sensor list");
 
+        if !self.sockets.is_empty() {
+            return Ok(self
+                .sockets
+                .iter()
+                .flat_map(|socket| {
+                    socket.domains.iter().map(|domain| {
+                        let domain_name = domain.get_name(socket.id);
+                        trace!("Registering sensor: {domain_name}");
+                        Sensor::new(domain_name, MICRO_JOULE_UNIT, Self::get_name())
+                    })
+                })
+                .collect());
+        }
+
         let sensors = self
-            .sockets
+            .socket_topology
             .iter()
             .flat_map(|socket| {
-                socket.domains.iter().map(|domain| {
-                    let domain_name = domain.get_name(socket.id);
+                socket.domain_types.iter().map(|domain_type| {
+                    let domain_name = domain_type.to_string_socket(socket.id);
                     trace!("Registering sensor: {domain_name}");
                     Sensor::new(domain_name, MICRO_JOULE_UNIT, Self::get_name())
                 })

@@ -42,6 +42,10 @@ pub enum OrchestratorError {
     NoSensorResults,
 
     /// An error thrown by a metric source.
-    #[error(transparent)]
-    MetricSourceError(#[from] MetricSourceError),
+    #[error("Metric source error.")]
+    MetricSourceError(
+        #[from]
+        #[source]
+        MetricSourceError,
+    ),
 }
