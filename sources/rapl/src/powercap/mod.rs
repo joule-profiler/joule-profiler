@@ -35,14 +35,6 @@
 //!     let counters = rapl.retrieve().await.unwrap();
 //! }
 //! ```
-//!
-//! # Errors
-//!
-//! All RAPL operations return a [`RaplError`]. Possible errors include:
-//! - [`RaplError::RaplNotAvailable`] - no RAPL domains found at the specified path.
-//! - [`RaplError::InsufficientPermissions`] - requires elevated privileges to read powercap files.
-//! - [`RaplError::UnsupportedOS`] - only Linux is supported.
-//! - [`RaplError::RaplReadError`] or [`RaplError::InvalidRaplPath`] - problems reading counters or invalid paths.
 
 use crate::error::RaplError;
 use crate::powercap::compute::compute_measurement_from_snapshots;
