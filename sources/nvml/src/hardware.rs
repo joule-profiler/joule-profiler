@@ -20,16 +20,16 @@ pub trait NvmlHardware: Send + Sync + 'static {
     fn init_devices<'a>(&mut self, spec: Option<&'a HashSet<u32>>) -> Result<Vec<Device>>;
 
     /// Retrieve the energy count of a device.
-    fn get_energy(&self, device: &Device) -> Result<u64>;
+    fn get_energy(&self, device: Device) -> Result<u64>;
 
     /// Retrieve the instantaneous power of a device.
-    fn get_power(&self, device: &Device) -> Result<PowerMeasurement>;
+    fn get_power(&self, device: Device) -> Result<PowerMeasurement>;
 
     /// Retrieve the current vram usage of a device.
-    fn get_vram_usage(&self, device: &Device) -> Result<u64>;
+    fn get_vram_usage(&self, device: Device) -> Result<u64>;
 
     /// Retrieve the current GPU utilization info.
-    fn get_utilization(&self, device: &Device) -> Result<u32>;
+    fn get_utilization(&self, device: Device) -> Result<u32>;
 }
 
 /// Hardware adapter for NVML library.
@@ -103,7 +103,7 @@ impl NvmlHardware for NvmlWrapperHardware {
         Ok(devices)
     }
 
-    fn get_energy(&self, device: &Device) -> Result<u64> {
+    fn get_energy(&self, device: Device) -> Result<u64> {
         trace!("Retrieving energy for GPU device {}.", device.index);
         Ok(self
             .nvml
@@ -111,7 +111,7 @@ impl NvmlHardware for NvmlWrapperHardware {
             .total_energy_consumption()?)
     }
 
-    fn get_power(&self, device: &Device) -> Result<PowerMeasurement> {
+    fn get_power(&self, device: Device) -> Result<PowerMeasurement> {
         trace!("Retrieving power for GPU device {}.", device.index);
         Ok(self
             .nvml
@@ -123,12 +123,12 @@ impl NvmlHardware for NvmlWrapperHardware {
             })?)
     }
 
-    fn get_vram_usage(&self, device: &Device) -> Result<u64> {
+    fn get_vram_usage(&self, device: Device) -> Result<u64> {
         trace!("Retrieving VRAM usage for GPU device {}.", device.index);
         Ok(self.nvml.device_by_index(device.index)?.memory_info()?.used)
     }
 
-    fn get_utilization(&self, device: &Device) -> Result<u32> {
+    fn get_utilization(&self, device: Device) -> Result<u32> {
         trace!(
             "Retrieving GPU utilization for GPU device {}.",
             device.index

@@ -39,13 +39,11 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
         mut self,
         mut receiver: mpsc::Receiver<SourceEvent>,
     ) -> Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError> {
-        loop {
-            if let Some(event) = receiver.recv().await {
-                match event {
-                    SourceEvent::Measure => self.measure_source().await?,
-                    SourceEvent::NewPhase => self.init_new_phase().await?,
-                    SourceEvent::JoinWorker => break,
-                }
+        while let Some(event) = receiver.recv().await {
+            match event {
+                SourceEvent::Measure => self.measure_source().await?,
+                SourceEvent::NewPhase => self.init_new_phase().await?,
+                SourceEvent::JoinWorker => break,
             }
         }
 
