@@ -6,7 +6,7 @@ use std::{
 use log::{debug, trace};
 use perf_event::Group;
 
-use crate::{Result, perf::domain::PerfRaplDomain};
+use crate::{Result, domain_type::RaplDomainType, perf::domain::PerfRaplDomain};
 
 /// Path to CPU sysfs directory.
 const CPU_SYSFS_PATH: &str = "/sys/devices/system/cpu";
@@ -26,6 +26,11 @@ pub struct SocketInfo {
 
     /// List of CPU IDs associated with this socket.
     pub cpus: Vec<u32>,
+
+    /// RAPL domain types the hardware exposes for this socket, discovered
+    /// from sysfs (see [`crate::perf::event::discover_supported_domain_types`]).
+    /// Empty until [`crate::perf::domain::discover_domains`] populates it.
+    pub domain_types: Vec<RaplDomainType>,
 }
 
 /// Represents an opened CPU socket: its id, its `perf_event` group, and the
@@ -96,7 +101,11 @@ pub(crate) fn discover_socket_topology_from_path(
         .map(|(id, mut cpus)| {
             trace!("Found {cpus:?} cpus for socket {id}");
             cpus.sort_unstable();
-            SocketInfo { id, cpus }
+            SocketInfo {
+                id,
+                cpus,
+                domain_types: Vec::new(),
+            }
         })
         .collect();
 

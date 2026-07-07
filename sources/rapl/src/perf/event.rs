@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+
 use log::{debug, info, warn};
 use perf_event::{Builder, Counter, Group, events::Dynamic};
 
@@ -116,6 +118,45 @@ static PER_SOCKET_DOMAIN_TYPES: &[RaplDomainType] = &[
     RaplDomainType::Dram,
 ];
 
+/// Checks whether `domain_type`'s perf event is exposed by the `power` PMU on
+/// this machine.
+///
+/// This only resolves the event's sysfs definition, it never issues a
+/// `perf_event_open` syscall, so it works even without the permissions
+/// required to actually open a counter (see [`open_counters`]).
+fn is_domain_supported(domain_type: RaplDomainType) -> Result<bool> {
+    let mut builder = Dynamic::builder("power")?;
+    match builder.event(domain_type.to_perf_event()) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Discovers which RAPL domain types the hardware exposes for `socket_id`,
+/// without opening any perf counter.
+///
+/// Mirrors the domains [`open_counters_for_socket`] would open (PACKAGE,
+/// CORE, UNCORE, DRAM for every socket, plus PSYS exclusively on socket 0),
+/// but only probes sysfs instead of requiring perf access. Used to list
+/// sensors before [`open_counters`] has run, e.g. from `list-sensors`, which
+/// never calls [`joule_profiler_core::source::MetricReader::pre_init`].
+pub(crate) fn discover_supported_domain_types(socket_id: u32) -> Result<Vec<RaplDomainType>> {
+    let mut domain_types = Vec::new();
+
+    for domain_type in PER_SOCKET_DOMAIN_TYPES {
+        if is_domain_supported(*domain_type)? {
+            domain_types.push(*domain_type);
+        }
+    }
+
+    if socket_id == 0 && is_domain_supported(RaplDomainType::Psys)? {
+        domain_types.push(RaplDomainType::Psys);
+    }
+
+    Ok(domain_types)
+}
+
 /// Opens available RAPL counters for a socket: PACKAGE, CORE, UNCORE and DRAM
 /// for every socket, plus PSYS exclusively on socket 0. Unsupported domains
 /// are silently skipped.
@@ -189,7 +230,11 @@ mod tests {
     use super::*;
 
     fn socket(id: u32, cpus: Vec<u32>) -> SocketInfo {
-        SocketInfo { id, cpus }
+        SocketInfo {
+            id,
+            cpus,
+            domain_types: Vec::new(),
+        }
     }
 
     #[test]

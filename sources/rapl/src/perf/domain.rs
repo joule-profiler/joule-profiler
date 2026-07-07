@@ -8,7 +8,7 @@ use crate::{
     domain_type::RaplDomainType,
     error::{PerfParanoidError, RaplError},
     perf::{
-        event::RaplEvent,
+        event::{RaplEvent, discover_supported_domain_types},
         socket::{SocketInfo, discover_socket_topology},
     },
 };
@@ -86,11 +86,20 @@ pub fn build_group_for_socket(socket: &SocketInfo) -> Result<Group> {
     )))
 }
 
-/// Discover the system's socket topology. The returned sockets aren't opened
+/// Discover the system's socket topology and, for each socket, which RAPL
+/// domain types the hardware exposes. The returned sockets aren't opened
 /// yet (see [`crate::perf::event::open_counters`]).
+///
+/// `domain_types` is populated once here so callers (e.g. `get_sensors`
+/// before perf counters are opened) don't need to re-probe sysfs later.
 pub fn discover_domains(domains_to_discover: Option<&HashSet<u32>>) -> Result<Vec<SocketInfo>> {
-    let socket_topology = discover_socket_topology(domains_to_discover)?;
+    let mut socket_topology = discover_socket_topology(domains_to_discover)?;
     debug!("Discovered {} socket(s)", socket_topology.len());
+
+    for socket in &mut socket_topology {
+        socket.domain_types = discover_supported_domain_types(socket.id)?;
+    }
+
     Ok(socket_topology)
 }
 
