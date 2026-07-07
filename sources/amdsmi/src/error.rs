@@ -44,4 +44,7 @@ pub enum AmdSmiError {
     /// AMD SMI library error.
     #[error("AMD SMI error: {0}.")]
     AmdSmiError(#[from] amdsmi::error::AmdSmiError),
+
+    #[error("amdsmi source mutex poisoned.")]
+    MutexPoisoned,
 }

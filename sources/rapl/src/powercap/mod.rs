@@ -60,9 +60,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, env, time::Duration};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 
@@ -229,7 +228,9 @@ impl MetricReader for Rapl {
                     let metrics =
                         compute_measurement_from_snapshots(&domains, prev, &new_snapshot)?;
 
-                    let mut counters = current_counters.lock().await;
+                    let mut counters = current_counters
+                        .lock()
+                        .map_err(|_| RaplError::MutexPoisoned)?;
                     *counters += metrics;
                 }
 
@@ -257,12 +258,18 @@ impl MetricReader for Rapl {
     async fn measure(&mut self) -> Result<()> {
         let new_snapshot = self.read_snapshot()?;
 
-        let mut last = self.last_snapshot.lock().await;
+        let mut last = self
+            .last_snapshot
+            .lock()
+            .map_err(|_| RaplError::MutexPoisoned)?;
 
         if let Some(prev) = last.as_ref() {
             let metrics = compute_measurement_from_snapshots(&self.domains, prev, &new_snapshot)?;
 
-            let mut counters = self.current_counters.lock().await;
+            let mut counters = self
+                .current_counters
+                .lock()
+                .map_err(|_| RaplError::MutexPoisoned)?;
             *counters += metrics;
         }
 
@@ -271,7 +278,10 @@ impl MetricReader for Rapl {
     }
 
     async fn retrieve(&mut self) -> Result<Snapshot> {
-        let mut lock = self.current_counters.lock().await;
+        let mut lock = self
+            .current_counters
+            .lock()
+            .map_err(|_| RaplError::MutexPoisoned)?;
         Ok(std::mem::take(&mut *lock))
     }
 

@@ -88,6 +88,9 @@ pub enum RaplError {
     /// Not enough snapshots have been taken to compute an energy delta.
     #[error("Not enough measures to compute RAPL counters differences")]
     NotEnoughSamples,
+
+    #[error("RAPL source mutex poisoned.")]
+    MutexPoisoned,
 }
 
 impl From<std::io::Error> for RaplError {

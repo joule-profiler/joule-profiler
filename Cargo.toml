@@ -6,6 +6,11 @@ members = [
     "sources/*",
     "examples/library_usage"
 ]
+default-members = [
+    "core",
+    "cli",
+    "sources/*",
+]
 
 [workspace.package]
 edition = "2024"
