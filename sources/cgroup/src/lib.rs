@@ -13,9 +13,8 @@ use joule_profiler_core::time::get_timestamp_micros;
 use joule_profiler_core::types::{Metric, MetricValue, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 use log::{debug, trace};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
@@ -101,12 +100,16 @@ impl<B: CgroupBackend> Cgroup<B> {
                         trace!("Polled cgroup source.");
                         {
                             let snapshot = proc_cgroup.memory()?;
-                            let mut lock = proc_memory_counters.lock().await;
+                            let mut lock = proc_memory_counters
+                                .lock()
+                                .map_err(|_| CgroupError::MutexPoisoned)?;
                             lock.update(&snapshot);
                         }
                         {
                             let snapshot = root_cgroup.memory()?;
-                            let mut lock = global_memory_counters.lock().await;
+                            let mut lock = global_memory_counters
+                                .lock()
+                                .map_err(|_| CgroupError::MutexPoisoned)?;
                             lock.update(&snapshot);
                         }
                     }
@@ -196,7 +199,10 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
         self.end_timestamp = get_timestamp_micros();
         {
             let snapshot = self.proc_cgroup.memory()?;
-            let mut lock = self.proc_memory_counters.lock().await;
+            let mut lock = self
+                .proc_memory_counters
+                .lock()
+                .map_err(|_| CgroupError::MutexPoisoned)?;
             lock.update(&snapshot);
         }
         self.proc_cpu_counters.update(&self.proc_cgroup.cpu()?);
@@ -204,7 +210,10 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
 
         {
             let snapshot = self.root_cgroup.memory()?;
-            let mut lock = self.global_memory_counters.lock().await;
+            let mut lock = self
+                .global_memory_counters
+                .lock()
+                .map_err(|_| CgroupError::MutexPoisoned)?;
             lock.update(&snapshot);
         }
         self.global_cpu_counters.update(&self.root_cgroup.cpu()?);
@@ -218,7 +227,10 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
         debug!("Retrieving cgroup counters.");
 
         let proc_memory = {
-            let mut lock = self.proc_memory_counters.lock().await;
+            let mut lock = self
+                .proc_memory_counters
+                .lock()
+                .map_err(|_| CgroupError::MutexPoisoned)?;
             let counters = *lock;
             lock.reset();
             counters
@@ -231,7 +243,10 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
         self.proc_io_counters.new_phase();
 
         let global_memory = {
-            let mut lock = self.global_memory_counters.lock().await;
+            let mut lock = self
+                .global_memory_counters
+                .lock()
+                .map_err(|_| CgroupError::MutexPoisoned)?;
             let counters = *lock;
             lock.reset();
             counters
@@ -542,7 +557,7 @@ mod tests {
         let (mut src, backend) = setup_source();
 
         {
-            let mem = src.proc_memory_counters.lock().await;
+            let mem = src.proc_memory_counters.lock().unwrap();
             assert!(mem.anon.is_none());
         }
 
@@ -553,7 +568,7 @@ mod tests {
         src.measure().await.unwrap();
 
         {
-            let mem = src.proc_memory_counters.lock().await;
+            let mem = src.proc_memory_counters.lock().unwrap();
             let anon = mem.anon.unwrap();
 
             assert_eq!(anon.min(), Some(200));
@@ -583,7 +598,7 @@ mod tests {
 
         src.measure().await.unwrap();
 
-        let mem = src.proc_memory_counters.lock().await;
+        let mem = src.proc_memory_counters.lock().unwrap();
         let anon = mem.anon.unwrap();
         let current = mem.current.unwrap();
         let peak = mem.peak.unwrap();
@@ -646,7 +661,7 @@ mod tests {
         .unwrap();
 
         {
-            let mem = src.proc_memory_counters.lock().await;
+            let mem = src.proc_memory_counters.lock().unwrap();
             assert!(mem.anon.is_none());
         }
 
@@ -657,7 +672,7 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         {
-            let mem = src.proc_memory_counters.lock().await;
+            let mem = src.proc_memory_counters.lock().unwrap();
             assert_eq!(mem.anon.unwrap().max().unwrap(), 200);
             assert_eq!(mem.anon.unwrap().min().unwrap(), 200);
         }
@@ -669,7 +684,7 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         {
-            let mem = src.proc_memory_counters.lock().await;
+            let mem = src.proc_memory_counters.lock().unwrap();
             assert_eq!(mem.anon.unwrap().max().unwrap(), 200);
             assert_eq!(mem.anon.unwrap().min().unwrap(), 100);
         }

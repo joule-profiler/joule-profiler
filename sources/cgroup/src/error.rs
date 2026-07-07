@@ -75,6 +75,9 @@ pub enum CgroupError {
         #[source]
         JoinError,
     ),
+
+    #[error("cgroup source mutex poisoned.")]
+    MutexPoisoned,
 }
 
 impl CgroupError {

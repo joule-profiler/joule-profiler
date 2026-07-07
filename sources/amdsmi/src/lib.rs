@@ -2,7 +2,11 @@
 //!
 //! This module provides energy consumption, VRAM usage and GPU utilization metrics for AMD GPUs using the AMD SMI library.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use bitflags::bitflags;
 use futures::{StreamExt, future::try_join_all};
@@ -13,10 +17,7 @@ use joule_profiler_core::{
     unit::{MetricUnit, Unit, UnitPrefix},
 };
 use log::{debug, trace};
-use tokio::{
-    sync::Mutex,
-    task::{JoinHandle, spawn_blocking},
-};
+use tokio::task::{JoinHandle, spawn_blocking};
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
@@ -190,21 +191,27 @@ impl<H: AmdSmiHardware> AmdSmi<H> {
         let utilization_updates = try_join_all(utilization_tasks).await?;
 
         {
-            let mut lock = vram_counters.lock().await;
+            let mut lock = vram_counters
+                .lock()
+                .map_err(|_| AmdSmiError::MutexPoisoned)?;
             for (index, vram_usage) in vram_updates.into_iter().collect::<Result<Vec<_>>>()? {
                 lock.entry(index).or_default().update(vram_usage);
             }
         }
 
         {
-            let mut lock = power_counters.lock().await;
+            let mut lock = power_counters
+                .lock()
+                .map_err(|_| AmdSmiError::MutexPoisoned)?;
             for (index, power) in power_updates.into_iter().collect::<Result<Vec<_>>>()? {
                 lock.entry(index).or_default().push(power);
             }
         }
 
         {
-            let mut lock = utilization_counters.lock().await;
+            let mut lock = utilization_counters
+                .lock()
+                .map_err(|_| AmdSmiError::MutexPoisoned)?;
             for (index, utilization) in utilization_updates
                 .into_iter()
                 .collect::<Result<Vec<_>>>()?
@@ -292,19 +299,28 @@ impl<H: AmdSmiHardware> MetricReader for AmdSmi<H> {
             counter.reset();
         }
 
-        let mut lock = self.vram_counters.lock().await;
+        let mut lock = self
+            .vram_counters
+            .lock()
+            .map_err(|_| AmdSmiError::MutexPoisoned)?;
         let mut vram_counters = lock.clone();
         for counter in lock.values_mut() {
             counter.reset();
         }
 
-        let mut lock = self.power_counters.lock().await;
+        let mut lock = self
+            .power_counters
+            .lock()
+            .map_err(|_| AmdSmiError::MutexPoisoned)?;
         let mut power_counters = lock.clone();
         for counter in lock.values_mut() {
             counter.reset();
         }
 
-        let mut lock = self.utilization_counters.lock().await;
+        let mut lock = self
+            .utilization_counters
+            .lock()
+            .map_err(|_| AmdSmiError::MutexPoisoned)?;
         let mut utilization_counters = lock.clone();
         for counter in lock.values_mut() {
             counter.reset();
@@ -677,7 +693,7 @@ mod tests {
         let mut amdsmi = build_amdsmi(hw, processors, Duration::from_secs(1));
         amdsmi.measure().await.unwrap();
 
-        assert!(amdsmi.power_counters.lock().await.contains_key(&0));
+        assert!(amdsmi.power_counters.lock().unwrap().contains_key(&0));
     }
 
     #[tokio::test]
@@ -693,7 +709,7 @@ mod tests {
         let mut amdsmi = build_amdsmi(hw, processors, Duration::from_secs(1));
         amdsmi.measure().await.unwrap();
 
-        assert!(amdsmi.vram_counters.lock().await.contains_key(&0));
+        assert!(amdsmi.vram_counters.lock().unwrap().contains_key(&0));
     }
 
     #[tokio::test]
@@ -712,7 +728,7 @@ mod tests {
         let mut amdsmi = build_amdsmi(hw, processors, Duration::from_secs(1));
         amdsmi.measure().await.unwrap();
 
-        assert!(amdsmi.utilization_counters.lock().await.contains_key(&0));
+        assert!(amdsmi.utilization_counters.lock().unwrap().contains_key(&0));
     }
 
     #[tokio::test]
@@ -730,7 +746,7 @@ mod tests {
         amdsmi.measure().await.unwrap();
 
         assert!(amdsmi.energy_counters.is_empty());
-        assert!(amdsmi.power_counters.lock().await.is_empty());
+        assert!(amdsmi.power_counters.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -872,6 +888,6 @@ mod tests {
 
         amdsmi.join().await.unwrap();
 
-        assert!(amdsmi.power_counters.lock().await.contains_key(&0));
+        assert!(amdsmi.power_counters.lock().unwrap().contains_key(&0));
     }
 }
