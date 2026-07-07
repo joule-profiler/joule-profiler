@@ -89,9 +89,6 @@ pub fn build_group_for_socket(socket: &SocketInfo) -> Result<Group> {
 /// Discover the system's socket topology and, for each socket, which RAPL
 /// domain types the hardware exposes. The returned sockets aren't opened
 /// yet (see [`crate::perf::event::open_counters`]).
-///
-/// `domain_types` is populated once here so callers (e.g. `get_sensors`
-/// before perf counters are opened) don't need to re-probe sysfs later.
 pub fn discover_domains(domains_to_discover: Option<&HashSet<u32>>) -> Result<Vec<SocketInfo>> {
     let mut socket_topology = discover_socket_topology(domains_to_discover)?;
     debug!("Discovered {} socket(s)", socket_topology.len());

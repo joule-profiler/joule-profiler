@@ -55,7 +55,7 @@ pub struct CliArgs {
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
-    /// Choose RAPL backend between powercap or perf.
+    /// Choose RAPL backend between powercap or perf. (default: perf)
     #[arg(long = "rapl-backend", value_enum)]
     pub rapl_backend: Option<RaplBackend>,
 

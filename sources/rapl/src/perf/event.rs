@@ -120,10 +120,6 @@ static PER_SOCKET_DOMAIN_TYPES: &[RaplDomainType] = &[
 
 /// Checks whether `domain_type`'s perf event is exposed by the `power` PMU on
 /// this machine.
-///
-/// This only resolves the event's sysfs definition, it never issues a
-/// `perf_event_open` syscall, so it works even without the permissions
-/// required to actually open a counter (see [`open_counters`]).
 fn is_domain_supported(domain_type: RaplDomainType) -> Result<bool> {
     let mut builder = Dynamic::builder("power")?;
     match builder.event(domain_type.to_perf_event()) {
@@ -135,12 +131,6 @@ fn is_domain_supported(domain_type: RaplDomainType) -> Result<bool> {
 
 /// Discovers which RAPL domain types the hardware exposes for `socket_id`,
 /// without opening any perf counter.
-///
-/// Mirrors the domains [`open_counters_for_socket`] would open (PACKAGE,
-/// CORE, UNCORE, DRAM for every socket, plus PSYS exclusively on socket 0),
-/// but only probes sysfs instead of requiring perf access. Used to list
-/// sensors before [`open_counters`] has run, e.g. from `list-sensors`, which
-/// never calls [`joule_profiler_core::source::MetricReader::pre_init`].
 pub(crate) fn discover_supported_domain_types(socket_id: u32) -> Result<Vec<RaplDomainType>> {
     let mut domain_types = Vec::new();
 

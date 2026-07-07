@@ -27,3 +27,5 @@ const MICRO_JOULE_UNIT: MetricUnit = MetricUnit {
     prefix: UnitPrefix::Micro,
     unit: Unit::Joule,
 };
+
+const RAPL_SOURCE_ID: &str = "rapl";

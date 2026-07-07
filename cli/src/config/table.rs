@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn profiler_config_default_matches_documented_defaults() {
+    fn profiler_config_uses_default_config_when_not_override() {
         let config = ProfilerConfig::default();
 
         assert_eq!(config.stdout_file, None);
