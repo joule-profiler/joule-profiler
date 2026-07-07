@@ -42,6 +42,38 @@ echo "+cpu +memory +io" | sudo tee /sys/fs/cgroup/nested_cgroup/cgroup.subtree_c
 > [!NOTE]
 > On systemd-based systems, some controllers may already be enabled. Check `/sys/fs/cgroup/cgroup.subtree_control` first.
 
+### Manual cgroup creation / process attachment
+
+Alternatively, you can configure the source to not create the cgroup or not attach the pid to the configured cgroup with the `create_cgroup` and `attach_pid` options in the config.
+
+To create a cgroup, do:
+
+```bash
+sudo mkdir /sys/fs/cgroup/{your_cgroup_path}
+```
+
+You can also create a cgroup slice using systemd to be able to spawn processes directly in it:
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/{your_slice_name} >/dev/null
+[Unit]
+Description={description}
+
+[Slice]
+CPUWeight=100
+IOWeight=100
+MemoryMax=infinity
+EOF
+```
+
+After that you can use systemd to spawn a process directly in your slice:
+
+```bash
+systemd-run --scope --slice={your_slice_name} {your_command}
+```
+
+By configuring the cgroup source with `create_cgroup` and `attach_pid` to false, Joule Profiler will be able to profile the process directly at spawn.
+This configuration can also benefits to the `perf_event` source. See [perf_event](../perf_event/README.md) source documentation for further information.
+
 ## Implemented metrics
 
 All metrics are reported for both the process cgroup and the root cgroup, thus they are prefixed with a `proc` or a `global`.

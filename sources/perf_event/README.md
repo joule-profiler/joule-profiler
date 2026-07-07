@@ -33,7 +33,8 @@ Alternatively, counters can be scoped to a **cgroup v2** instead of the process'
 
 ```toml
 [sources.perf]
-cgroup_name = "my-cgroup" # relative to /sys/fs/cgroup; use "parent/child" for a nested cgroup
+cgroup_name = "my-cgroup" # use "parent/child" for a nested cgroup
+#cgroup_root = "/my/cgroup/hierarchy" # default is /sys/fs/cgroup
 ```
 
 This tracks every process inside the cgroup rather than a single pid and its children, it can be useful for containers profiling, and lets counters be opened *before* the profiled process is spawned (the cgroup must already exist).
