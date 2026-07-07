@@ -6,7 +6,10 @@
 //! Note: Counters are created individually (not grouped) because
 //! `inherit(true)` is incompatible with `perf_event` groups on Linux.
 
-use std::fs::File;
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use joule_profiler_core::{
     sensor::{Sensor, Sensors},
@@ -14,7 +17,7 @@ use joule_profiler_core::{
     types::{Metric, Metrics},
     unit::{MetricUnit, Unit, UnitPrefix},
 };
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 
 use crate::{
     config::PerfConfig,
@@ -41,6 +44,11 @@ const PERF_EVENT_METRIC_UNIT: MetricUnit = MetricUnit {
 /// resolved against.
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
+struct CgroupConfig {
+    name: PathBuf,
+    root: PathBuf,
+}
+
 /// Hardware performance counter source using `perf_event`.
 ///
 /// Tracks CPU performance metrics (cycles, instructions, cache/branch misses)
@@ -52,7 +60,7 @@ const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 pub struct PerfEvent<H: PerfEventHardware = PerfEventCounters> {
     hardware: H,
     events: Vec<Event>,
-    cgroup_name: Option<std::path::PathBuf>,
+    cgroup_config: Option<CgroupConfig>,
     begin_snapshot: Option<Snapshot>,
     last_snapshot: Option<Snapshot>,
 }
@@ -62,12 +70,21 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     type Error = PerfEventError;
     type Config = PerfConfig;
 
-    fn from_config(config: PerfConfig) -> Result<Self> {
+    fn from_config(mut config: PerfConfig) -> Result<Self> {
+        let cgroup_config = if let Some(cgroup_name) = config.cgroup_name {
+            Some(CgroupConfig {
+                name: cgroup_name,
+                root: config.cgroup_root.take().unwrap_or(CGROUP_ROOT.into()),
+            })
+        } else {
+            None
+        };
+
         Ok(Self {
             events: config
                 .events
                 .map_or(EVENTS.to_vec(), |e| e.into_iter().collect()),
-            cgroup_name: config.cgroup_name,
+            cgroup_config,
             hardware: H::default(),
             begin_snapshot: None,
             last_snapshot: None,
@@ -75,9 +92,8 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     }
 
     async fn pre_init(&mut self) -> Result<()> {
-        if let Some(name) = &self.cgroup_name {
-            warn!("cgroup");
-            let path = std::path::Path::new(CGROUP_ROOT).join(name);
+        if let Some(cgroup_config) = &self.cgroup_config {
+            let path = Path::new(&cgroup_config.root).join(&cgroup_config.name);
             info!(
                 "Initializing perf_event source for cgroup {}",
                 path.display()
@@ -91,8 +107,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     /// Initialize counters and start monitoring: either the given process's
     /// pid, or the configured cgroup if `PerfConfig::cgroup_name` was set.
     async fn init(&mut self, pid: i32) -> Result<()> {
-        if self.cgroup_name.is_none() {
-            warn!("pid");
+        if self.cgroup_config.is_none() {
             info!("Initializing perf_event source for PID {pid}");
             self.hardware
                 .init_counters(&self.events, Target::Pid(pid))
@@ -195,7 +210,7 @@ mod tests {
         PerfEvent {
             hardware,
             events: EVENTS.to_vec(),
-            cgroup_name: None,
+            cgroup_config: None,
             begin_snapshot: None,
             last_snapshot: None,
         }
