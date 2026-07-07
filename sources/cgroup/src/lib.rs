@@ -133,16 +133,8 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
     type Error = CgroupError;
     type Config = CgroupConfig;
 
-    /// Builds the cgroup handles for `config`, generic over any [`CgroupBackend`].
-    ///
-    /// Does not initialize or attach any PID yet, see [`MetricReader::init`].
+    /// Builds the cgroup handles.
     fn from_config(config: Self::Config) -> Result<Self> {
-        if (config.attach_pid || config.create_cgroup) && !is_root() {
-            return Err(CgroupError::PermissionDenied(
-                "the cgroup source requires root privileges to create a cgroup or attach a process.",
-            ));
-        }
-
         let (root_cgroup, proc_cgroup) =
             RootCgroup::build(config.cgroup_root.clone(), &config.cgroup_name);
 
@@ -164,6 +156,11 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
 
     /// Creates the cgroup if configured.
     async fn pre_init(&mut self) -> Result<()> {
+        if (self.config.attach_pid || self.config.create_cgroup) && !is_root() {
+            return Err(CgroupError::PermissionDenied(
+                "the cgroup source requires root privileges to create a cgroup or attach a process.",
+            ));
+        }
         if self.config.create_cgroup {
             self.proc_cgroup.create()?;
         }

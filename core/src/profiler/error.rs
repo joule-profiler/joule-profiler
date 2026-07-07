@@ -66,10 +66,10 @@ pub enum JouleProfilerError {
     ProcessControlFailed(String),
 
     /// Error propagated from a metric source.
-    #[error(transparent)]
+    #[error("Metric source error.")]
     MetricSourceError(#[from] MetricSourceError),
 
     /// Error propagated from the source orchestrator.
-    #[error(transparent)]
+    #[error("Orchestrator error.")]
     OrchestratorError(#[from] OrchestratorError),
 }
