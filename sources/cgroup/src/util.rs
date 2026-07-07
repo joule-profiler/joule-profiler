@@ -108,7 +108,7 @@ mod tests {
         let mut path = std::env::temp_dir();
         path.push(name);
         let mut file = File::create(&path).unwrap();
-        write!(file, "{}", content).unwrap();
+        write!(file, "{content}").unwrap();
         path
     }
 

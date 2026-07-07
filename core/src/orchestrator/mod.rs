@@ -302,7 +302,7 @@ mod tests {
 
         mock.expect_get_sensors().returning(|| Ok(vec![]));
         mock.expect_to_metrics()
-            .returning(|_| Ok(Metrics::default()));
+            .returning(|()| Ok(Metrics::default()));
 
         (mock, state_arc)
     }

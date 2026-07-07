@@ -191,6 +191,7 @@ mod tests {
         Metric::new(name, value, unit(), "rapl")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn phase(
         index: usize,
         start: PhaseToken,
@@ -286,7 +287,7 @@ mod tests {
         assert!(content.contains("500")); // duration_ms
         assert!(content.contains("MY_PATTERN"));
         assert!(content.contains("my_cmd --flag"));
-        assert!(content.contains("3")); // exit_code
+        assert!(content.contains('3')); // exit_code
     }
 
     #[test]
@@ -309,8 +310,8 @@ mod tests {
         let content = read(&tmp);
         assert!(content.contains("__A__"));
         assert!(content.contains("__B__"));
-        assert!(content.contains("3"));
-        assert!(content.contains("7"));
+        assert!(content.contains('3'));
+        assert!(content.contains('7'));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::{Device, DeviceSupport, Result, counters::PowerMeasurement, error::Nv
 
 /// Trait for abstracting the backend of NVML library. Used for testing.
 #[cfg_attr(test, mockall::automock)]
+#[allow(clippy::ref_option_ref)]
 pub trait NvmlHardware: Send + Sync + 'static {
     /// Creates an hardware instance.
     fn new() -> Result<Self>

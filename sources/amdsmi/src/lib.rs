@@ -821,7 +821,7 @@ mod tests {
             counter
                 .energy
                 .as_ref()
-                .and_then(|e| e.diff())
+                .and_then(super::counters::EnergyCounter::diff)
                 .is_none_or(|v| v == 0)
         );
     }

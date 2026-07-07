@@ -47,7 +47,7 @@ fn mock_reader() -> MockMetricReader {
     mock.expect_get_sensors()
         .returning(|| Ok(Sensors::default()));
     mock.expect_to_metrics()
-        .returning(|_| Ok(Metrics::default()));
+        .returning(|()| Ok(Metrics::default()));
     mock
 }
 

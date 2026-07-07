@@ -484,15 +484,15 @@ mod tests {
 
     impl CgroupBackend for MockCgroupBackend {
         fn memory(&self, _path: &Path) -> Result<MemorySnapshot> {
-            Ok(self.memory.lock().unwrap().clone())
+            Ok(*self.memory.lock().unwrap())
         }
 
         fn cpu(&self, _path: &Path) -> Result<CpuSnapshot> {
-            Ok(self.cpu.lock().unwrap().clone())
+            Ok(*self.cpu.lock().unwrap())
         }
 
         fn io(&self, _path: &Path) -> Result<IoSnapshot> {
-            Ok(self.io.lock().unwrap().clone())
+            Ok(*self.io.lock().unwrap())
         }
 
         fn cleanup(&self, _path: &Path, _root: &Path) -> Result<()> {
@@ -526,10 +526,10 @@ mod tests {
             proc_cgroup: proc,
             proc_memory_counters: Arc::default(),
             global_memory_counters: Arc::default(),
-            proc_cpu_counters: Default::default(),
-            global_cpu_counters: Default::default(),
-            proc_io_counters: Default::default(),
-            global_io_counters: Default::default(),
+            proc_cpu_counters: CpuCounters::default(),
+            global_cpu_counters: CpuCounters::default(),
+            proc_io_counters: IoCounters::default(),
+            global_io_counters: IoCounters::default(),
             begin_timestamp: 0,
             end_timestamp: 0,
         };

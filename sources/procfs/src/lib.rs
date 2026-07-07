@@ -460,7 +460,7 @@ mod tests {
     };
 
     fn create_source(backend: MockBackend) -> Procfs<MockBackend> {
-        let source = Procfs {
+        Procfs {
             backend: Arc::new(backend),
             config: ProcfsConfig::default(),
             mem_total: 0,
@@ -468,8 +468,7 @@ mod tests {
             detected_processes: Arc::default(),
             polling_task_handle: None,
             process_discovery_task_handle: None,
-        };
-        source
+        }
     }
 
     #[tokio::test]
