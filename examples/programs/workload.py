@@ -3,7 +3,7 @@
 Simple workload for testing joule-profiler phase detection.
 
 Usage:
-    sudo joule-profiler phases -- python3 workload.py
+    joule-profiler profile -- python3 workload.py
 """
 
 import argparse

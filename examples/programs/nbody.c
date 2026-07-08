@@ -4,7 +4,7 @@
  *      gcc -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge  examples/programs/nbody.c -o examples/programs/nbody
  * 
  * Usage:
- *      sudo joule-profiler phases -- ./nbody {n}
+ *      joule-profiler profile -- ./nbody {n}
  *   with n = 10000000 < 1s
  *        n = 100000000 < 3s
  *        n = 1000000000 < 30s 
