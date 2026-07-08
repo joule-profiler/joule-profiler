@@ -36,4 +36,7 @@ pub enum PerfEventError {
         #[source]
         tokio::task::JoinError,
     ),
+
+    #[error("CPU specification invalid, the provided CPU core {0} is not an online CPU.")]
+    InvalidCpuCore(u32),
 }

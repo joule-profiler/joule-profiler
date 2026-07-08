@@ -18,8 +18,9 @@ pub enum Target {
     /// it runs on (via `inherit`).
     Pid(i32),
     /// Track every process inside a cgroup. Cgroup-scoped events don't
-    /// support `inherit`, so this is monitored with one group per online CPU.
-    Cgroup(File),
+    /// support `inherit`, so this is monitored with one group per online CPU
+    /// or per CPU in the specification if provided.
+    Cgroup(File, Option<HashSet<u32>>),
 }
 
 #[cfg_attr(test, mockall::automock)]
@@ -65,7 +66,9 @@ impl PerfEventHardware for PerfEventCounters {
     async fn init_counters(&mut self, events: &[Event], target: Target) -> Result<()> {
         match target {
             Target::Pid(pid) => self.init_pid_counters(events, pid).await,
-            Target::Cgroup(cgroup_fd) => self.init_cgroup_counters(events, cgroup_fd).await,
+            Target::Cgroup(cgroup_fd, cpu_spec) => {
+                self.init_cgroup_counters(events, cpu_spec, cgroup_fd).await
+            }
         }
     }
 
@@ -144,11 +147,30 @@ impl PerfEventCounters {
     /// event later, in `PerfEvent::to_metrics`. Each group is opened on its
     /// own blocking thread, in parallel, since building it and adding its
     /// events are all blocking `perf_event_open`/ioctl calls.
-    async fn init_cgroup_counters(&mut self, events: &[Event], cgroup_fd: File) -> Result<()> {
-        let cpus = list_online_cpus()?;
+    async fn init_cgroup_counters(
+        &mut self,
+        events: &[Event],
+        cpu_spec: Option<HashSet<u32>>,
+        cgroup_fd: File,
+    ) -> Result<()> {
+        let online_cpus = list_online_cpus()?;
+        let cpus = if let Some(cpu_spec) = cpu_spec {
+            for cpu in &cpu_spec {
+                if !online_cpus.contains(cpu) {
+                    return Err(PerfEventError::InvalidCpuCore(*cpu));
+                }
+            }
+            cpu_spec
+        } else {
+            online_cpus
+        };
+
+        debug!("Initializing perf_event counters with cgroup for cores: {cpus:?}");
+
         let cgroup_fd = Arc::new(cgroup_fd);
 
         let tasks = cpus.into_iter().map(|cpu| {
+            let cpu = cpu as usize;
             let cgroup_fd = cgroup_fd.clone();
             let events = events.to_vec();
             spawn_blocking(move || -> Result<(usize, Group, HashMap<Event, Counter>)> {
@@ -194,7 +216,7 @@ impl PerfEventCounters {
 }
 
 /// Reads the set of online CPU ids from sysfs (e.g. `0-2,4`).
-fn list_online_cpus() -> Result<HashSet<usize>> {
+fn list_online_cpus() -> Result<HashSet<u32>> {
     let content = fs::read_to_string("/sys/devices/system/cpu/online")?;
 
     let mut cpus = HashSet::new();
@@ -203,8 +225,8 @@ fn list_online_cpus() -> Result<HashSet<usize>> {
             continue;
         }
         if let Some((start, end)) = part.split_once('-') {
-            let start: usize = start.parse()?;
-            let end: usize = end.parse()?;
+            let start: u32 = start.parse()?;
+            let end: u32 = end.parse()?;
             cpus.extend(start..=end);
         } else {
             cpus.insert(part.parse()?);
