@@ -7,6 +7,7 @@
 //! `inherit(true)` is incompatible with `perf_event` groups on Linux.
 
 use std::{
+    collections::HashSet,
     fs::File,
     path::{Path, PathBuf},
 };
@@ -47,6 +48,7 @@ const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 struct CgroupConfig {
     name: PathBuf,
     root: PathBuf,
+    cpu_spec: Option<HashSet<u32>>,
 }
 
 /// Hardware performance counter source using `perf_event`.
@@ -75,6 +77,7 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
             Some(CgroupConfig {
                 name: cgroup_name,
                 root: config.cgroup_root.take().unwrap_or(CGROUP_ROOT.into()),
+                cpu_spec: config.cpu_spec,
             })
         } else {
             None
@@ -92,13 +95,13 @@ impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
     }
 
     async fn pre_init(&mut self) -> Result<()> {
-        if let Some(cgroup_config) = &self.cgroup_config {
+        if let Some(cgroup_config) = &mut self.cgroup_config {
             let path = Path::new(&cgroup_config.root).join(&cgroup_config.name);
             info!(
                 "Initializing perf_event source for cgroup {}",
                 path.display()
             );
-            let target = Target::Cgroup(File::open(path)?);
+            let target = Target::Cgroup(File::open(path)?, cgroup_config.cpu_spec.take());
             self.hardware.init_counters(&self.events, target).await?;
         }
         Ok(())
