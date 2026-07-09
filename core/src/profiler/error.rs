@@ -65,6 +65,14 @@ pub enum JouleProfilerError {
     #[error("Process control failed: {0}")]
     ProcessControlFailed(String),
 
+    /// Failed to spawn the stdout reader thread.
+    #[error("Failed to spawn stdout reader thread: {0}")]
+    ReaderThreadSpawnFailed(String),
+
+    /// The stdout reader thread panicked before completing.
+    #[error("Stdout reader thread panicked")]
+    ReaderThreadPanicked,
+
     /// Error propagated from a metric source.
     #[error("Metric source error.")]
     MetricSourceError(#[from] MetricSourceError),
