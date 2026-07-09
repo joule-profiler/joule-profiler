@@ -8,11 +8,13 @@ use log::{debug, info, trace};
 use regex::Regex;
 use std::io::BufWriter;
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command};
+use std::process::{Child, ChildStdout, Command};
+use std::thread::JoinHandle;
 use std::{
     io::{BufRead, BufReader, ErrorKind, Write},
     process::{self, Stdio},
 };
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub mod error;
 
@@ -28,6 +30,8 @@ use crate::util::time::get_timestamp_micros;
 pub use error::JouleProfilerError;
 
 pub mod types;
+
+const PHASE_CHANNEL_SIZE: usize = 2;
 
 /// Orchestrates program profiling and metric collection.
 ///
@@ -118,6 +122,9 @@ impl JouleProfiler {
             return Err(JouleProfilerError::NoSourceConfigured);
         }
         let mut orchestrator = Orchestrator::new(sources);
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<PhaseInfo>(PHASE_CHANNEL_SIZE);
+
         orchestrator.pre_init().await?;
 
         debug!("Spawning command: {:?}", config.cmd);
@@ -125,15 +132,24 @@ impl JouleProfiler {
         let pid = child.id().cast_signed();
 
         pause_prosess(pid)?;
+
+        let child_stdout = child
+            .stdout
+            .take()
+            .ok_or(JouleProfilerError::StdOutCaptureFail)?;
+        let reader_thread =
+            spawn_reader_thread(child_stdout, regex, config.stdout_file.clone(), tx)?;
+
         orchestrator.init(pid, config.init_timeout).await?;
         orchestrator.run();
 
         info!("Starting measurements");
         let (command_duration_ms, timestamp, exit_code, detected_phases) = self
-            .measure_phases(&mut orchestrator, config, &regex, &mut child, pid)
+            .measure_phases(&mut orchestrator, &mut child, rx, pid)
             .await?;
 
         let (sources_results, sources) = orchestrator.finalize().await?;
+        join_reader_thread(reader_thread)?;
         self.sources = sources;
 
         let mut phases: Vec<_> = detected_phases
@@ -160,7 +176,7 @@ impl JouleProfiler {
         if phases.is_empty()
             && let Some(end_phase) = sources_results.phases.into_iter().last()
         {
-            let phase = Phase {
+            phases.push(Phase {
                 index: 0,
                 metrics: end_phase.metrics,
                 start_token: PhaseToken::Start,
@@ -169,8 +185,7 @@ impl JouleProfiler {
                 duration_ms: command_duration_ms,
                 start_token_line: None,
                 end_token_line: None,
-            };
-            phases.push(phase);
+            });
         }
 
         debug!("Collected {} sensor phase(s)", phases.len());
@@ -197,40 +212,24 @@ impl JouleProfiler {
     async fn measure_phases(
         &mut self,
         orchestrator: &mut Orchestrator,
-        config: &ProfileConfig,
-        regex: &Regex,
         child: &mut Child,
+        mut rx: Receiver<PhaseInfo>,
         pid: i32,
     ) -> Result<MeasurePhasesReturnType> {
-        let mut sink = create_output_sink(config.stdout_file.as_ref())?;
-
-        let child_stdout = child
-            .stdout
-            .take()
-            .ok_or(JouleProfilerError::StdOutCaptureFail)?;
-
-        let reader = BufReader::new(child_stdout);
         let mut detected_phases = Vec::with_capacity(2);
 
         let begin_timestamp = get_timestamp_micros();
         trace!("Begin timestamp: {begin_timestamp}");
 
         orchestrator.measure().await?;
-
         resume_process(pid)?;
-
         detected_phases.push(PhaseInfo::start(begin_timestamp));
 
-        self.detect_and_handle_phases_from_program_output(
-            orchestrator,
-            &mut detected_phases,
-            reader,
-            regex,
-            &mut sink,
-        )
-        .await?;
-
-        sink.flush()?;
+        while let Some(phase_info) = rx.recv().await {
+            orchestrator.measure().await?;
+            orchestrator.new_phase().await?;
+            detected_phases.push(phase_info);
+        }
 
         let end_timestamp = get_timestamp_micros();
         trace!("End timestamp: {end_timestamp}");
@@ -239,83 +238,97 @@ impl JouleProfiler {
         orchestrator.new_phase().await?;
 
         let duration_ms = (end_timestamp - begin_timestamp) / 1000;
-
         detected_phases.push(PhaseInfo::end(end_timestamp));
 
         let exit_code = wait_for_child_exit(child)?;
-
         info!("Command finished: duration={duration_ms} ms exit_code={exit_code}");
 
         Ok((duration_ms, begin_timestamp, exit_code, detected_phases))
     }
+}
 
-    /// Detects and measures the phases from the profiled program standard output.
-    ///
-    /// When a token in the standard output matches the specified regular expression,
-    /// a measure is made and a new phase begins.
-    async fn detect_and_handle_phases_from_program_output<R, W>(
-        &mut self,
-        orchestrator: &mut Orchestrator,
-        phases: &mut Vec<PhaseInfo>,
-        mut reader: R,
-        regex: &Regex,
-        sink: &mut W,
-    ) -> Result<()>
-    where
-        R: BufRead,
-        W: Write + ?Sized,
-    {
-        let mut line = String::new();
-        let mut line_number: usize = 0;
+fn spawn_reader_thread(
+    child_stdout: ChildStdout,
+    regex: Regex,
+    stdout_file: Option<String>,
+    tx: Sender<PhaseInfo>,
+) -> Result<JoinHandle<Result<()>>> {
+    let reader = BufReader::new(child_stdout);
 
-        loop {
-            line.clear();
+    std::thread::Builder::new()
+        .name("phase-reader".to_string())
+        .spawn(move || {
+            let sink = create_output_sink(stdout_file.as_ref())?;
+            read_and_detect_phases(reader, &regex, sink, &tx)
+        })
+        .map_err(|err| JouleProfilerError::ReaderThreadSpawnFailed(err.to_string()))
+}
 
-            let n = match reader.read_line(&mut line) {
-                Ok(n) => n,
-                Err(e) if e.kind() == ErrorKind::InvalidData => {
-                    trace!("Skipping invalid UTF-8 output at line {line_number}");
-                    line_number += 1;
-                    continue;
-                }
-                Err(e) => return Err(e.into()),
-            };
+fn join_reader_thread(handle: JoinHandle<Result<()>>) -> Result<()> {
+    match handle.join() {
+        Ok(inner) => inner,
+        Err(_) => Err(JouleProfilerError::ReaderThreadPanicked),
+    }
+}
 
-            if n == 0 {
-                break;
+/// Reads the child's stdout line by line, and emits a [`PhaseInfo`]
+/// in the channel for every line whose content matches the regex pattern.
+fn read_and_detect_phases<R, W>(
+    mut reader: R,
+    regex: &Regex,
+    mut sink: W,
+    tx: &Sender<PhaseInfo>,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+{
+    let mut line = String::new();
+    let mut line_number: usize = 0;
+
+    loop {
+        line.clear();
+
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::InvalidData => {
+                trace!("Skipping invalid UTF-8 output at line {line_number}");
+                line_number += 1;
+                continue;
             }
-
-            if line.ends_with('\n') {
-                line.pop();
-                if line.ends_with('\r') {
-                    line.pop();
-                }
-            }
-
-            writeln!(sink, "{line}")?;
-
-            if let Some(token) = phase_token_in_line(regex, &line) {
-                let phase_timestamp = get_timestamp_micros();
-
-                debug!("Detected phase at line {line_number}, token '{token}'");
-
-                orchestrator.measure().await?;
-                orchestrator.new_phase().await?;
-
-                let phase_info = PhaseInfo {
-                    token: PhaseToken::Token(token.to_owned()),
-                    timestamp: phase_timestamp,
-                    line_number: Some(line_number),
-                };
-
-                phases.push(phase_info);
-            }
-
-            line_number += 1;
+            Err(e) => return Err(e.into()),
         }
 
-        Ok(())
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+
+        writeln!(sink, "{line}")?;
+
+        if let Some(token) = phase_token_in_line(regex, &line) {
+            let phase_timestamp = get_timestamp_micros();
+            debug!("Detected phase at line {line_number}, token '{token}'");
+
+            let phase_info = PhaseInfo {
+                token: PhaseToken::Token(token.to_owned()),
+                timestamp: phase_timestamp,
+                line_number: Some(line_number),
+            };
+
+            if tx.blocking_send(phase_info).is_err() {
+                break;
+            }
+        }
+
+        line_number += 1;
     }
+
+    sink.flush()?;
+    Ok(())
 }
 
 /// Checks whether a line matches the specified regular expression.
@@ -430,10 +443,10 @@ fn resume_process(pid: i32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::config::ProfileConfig;
-    use crate::orchestrator::Orchestrator;
-    use crate::phase::PhaseToken;
+    use crate::phase::{PhaseInfo, PhaseToken};
     use crate::profiler::{
-        create_output_sink, phase_token_in_line, spawn_profiled_command, wait_for_child_exit,
+        create_output_sink, join_reader_thread, phase_token_in_line, read_and_detect_phases,
+        spawn_profiled_command, wait_for_child_exit,
     };
     use crate::sensor::Sensors;
     use crate::source::MetricReader;
@@ -442,7 +455,7 @@ mod tests {
     use mockall::mock;
     use regex::Regex;
     use std::fs;
-    use std::io::{BufReader, Cursor, Read};
+    use std::io::{BufReader, Cursor, Read, Write};
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -452,8 +465,25 @@ mod tests {
         }
     }
 
-    fn orchestrator() -> Orchestrator {
-        Orchestrator::new(Vec::new())
+    /// Drives [`read_and_detect_phases`] to completion over an in-memory reader and
+    /// collects every [`PhaseInfo`] it emitted through the channel.
+    fn collect_phases<R, W>(
+        reader: R,
+        regex: &Regex,
+        sink: W,
+    ) -> crate::profiler::types::Result<Vec<PhaseInfo>>
+    where
+        R: std::io::BufRead,
+        W: Write,
+    {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<PhaseInfo>(16);
+        read_and_detect_phases(reader, regex, sink, &tx)?;
+
+        let mut phases = Vec::new();
+        while let Ok(phase) = rx.try_recv() {
+            phases.push(phase);
+        }
+        Ok(phases)
     }
 
     fn create_test_config(cmd: Vec<String>) -> ProfileConfig {
@@ -496,26 +526,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn detect_multiple_phases() {
-        let mut profiler = joule_profiler();
-        let mut orchestrator = orchestrator();
+    #[test]
+    fn detect_multiple_phases() {
         let regex = Regex::new("__[A-Z0-9_]+__").unwrap();
         let cursor = Cursor::new("__PHASE1__\n__PHASE2__\n__PHASE3__");
         let reader = BufReader::new(cursor);
-        let mut phases = Vec::new();
-        let mut sink: Vec<u8> = Vec::new();
+        let sink: Vec<u8> = Vec::new();
 
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                &mut sink,
-            )
-            .await
-            .unwrap();
+        let phases = collect_phases(reader, &regex, sink).unwrap();
 
         assert_eq!(3, phases.len());
         assert_eq!(PhaseToken::Token("__PHASE1__".to_string()), phases[0].token);
@@ -523,129 +541,70 @@ mod tests {
         assert_eq!(PhaseToken::Token("__PHASE3__".to_string()), phases[2].token);
     }
 
-    #[tokio::test]
-    async fn detect_no_phases() {
-        let mut profiler = joule_profiler();
-        let mut orchestrator = orchestrator();
+    #[test]
+    fn detect_no_phases() {
         let regex = Regex::new("__[A-Z0-9_]+__").unwrap();
         let cursor = Cursor::new("hello\nworld\nno phases here");
         let reader = BufReader::new(cursor);
-        let mut phases = Vec::new();
-        let mut sink: Vec<u8> = Vec::new();
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                &mut sink,
-            )
-            .await
-            .unwrap();
+        let sink: Vec<u8> = Vec::new();
+
+        let phases = collect_phases(reader, &regex, sink).unwrap();
 
         assert!(phases.is_empty());
     }
 
-    #[tokio::test]
-    async fn detect_empty_output() {
-        let mut profiler = joule_profiler();
-        let mut orchestrator = orchestrator();
+    #[test]
+    fn detect_empty_output() {
         let regex = Regex::new("__PHASE__").unwrap();
         let cursor = Cursor::new("");
         let reader = BufReader::new(cursor);
-        let mut phases = Vec::new();
-        let mut sink: Vec<u8> = Vec::new();
+        let sink: Vec<u8> = Vec::new();
 
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                &mut sink,
-            )
-            .await
-            .unwrap();
+        let phases = collect_phases(reader, &regex, sink).unwrap();
 
         assert_eq!(phases.len(), 0);
     }
 
-    #[tokio::test]
-    async fn detect_phase_in_middle_of_line() {
-        let mut profiler = joule_profiler();
-        let mut orchestrator = orchestrator();
+    #[test]
+    fn detect_phase_in_middle_of_line() {
         let regex = Regex::new("__PHASE[0-9]+__").unwrap();
         let cursor = Cursor::new("start __PHASE1__ end");
         let reader = BufReader::new(cursor);
-        let mut phases = Vec::new();
-        let mut sink: Vec<u8> = Vec::new();
+        let sink: Vec<u8> = Vec::new();
 
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                &mut sink,
-            )
-            .await
-            .unwrap();
+        let phases = collect_phases(reader, &regex, sink).unwrap();
 
         assert_eq!(phases.len(), 1);
         assert_eq!(phases[0].token, PhaseToken::Token("__PHASE1__".to_string()));
         assert_eq!(phases[0].line_number, Some(0));
     }
 
-    #[tokio::test]
-    async fn detect_correct_line_numbers() {
-        let mut profiler = joule_profiler();
-        let mut orchestrator = Orchestrator::new(Vec::new());
+    #[test]
+    fn detect_correct_line_numbers() {
         let regex = Regex::new("__PHASE[0-9]+__").unwrap();
         let cursor = Cursor::new("a\nb\n__PHASE1__\nc\n__PHASE2__");
         let reader = BufReader::new(cursor);
-        let mut phases = Vec::new();
-        let mut sink: Vec<u8> = Vec::new();
+        let sink: Vec<u8> = Vec::new();
 
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                &mut sink,
-            )
-            .await
-            .unwrap();
+        let phases = collect_phases(reader, &regex, sink).unwrap();
 
         assert_eq!(phases.len(), 2);
         assert_eq!(phases[0].line_number, Some(2));
         assert_eq!(phases[1].line_number, Some(4));
     }
 
-    #[tokio::test]
-    async fn writes_stdout_to_file() {
+    #[test]
+    fn writes_stdout_to_file() {
         use std::fs;
         use tempfile::NamedTempFile;
 
-        let mut profiler = joule_profiler();
-        let mut orchestrator = orchestrator();
         let regex = Regex::new("__PHASE__").unwrap();
         let cursor = Cursor::new("hello\n__PHASE__\nworld");
         let reader = BufReader::new(cursor);
 
         let mut temp_file = NamedTempFile::new().unwrap();
-        let mut phases = Vec::new();
 
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                temp_file.as_file_mut(),
-            )
-            .await
-            .unwrap();
+        collect_phases(reader, &regex, temp_file.as_file_mut()).unwrap();
 
         let content = fs::read_to_string(temp_file.path()).unwrap();
         assert!(content.contains("hello"));
@@ -653,10 +612,8 @@ mod tests {
         assert!(content.contains("world"));
     }
 
-    #[tokio::test]
-    async fn skips_invalid_utf8_lines() {
-        let mut profiler = joule_profiler();
-        let mut orchestrator = orchestrator();
+    #[test]
+    fn skips_invalid_utf8_lines() {
         let regex = Regex::new("__PHASE__").unwrap();
 
         let bytes = vec![
@@ -664,21 +621,51 @@ mod tests {
         ];
         let cursor = Cursor::new(bytes);
         let reader = BufReader::new(cursor);
-        let mut phases = Vec::new();
-        let mut sink: Vec<u8> = Vec::new();
+        let sink: Vec<u8> = Vec::new();
 
-        profiler
-            .detect_and_handle_phases_from_program_output(
-                &mut orchestrator,
-                &mut phases,
-                reader,
-                &regex,
-                &mut sink,
-            )
-            .await
-            .unwrap();
+        let phases = collect_phases(reader, &regex, sink).unwrap();
 
         assert_eq!(phases.len(), 1);
+    }
+
+    #[test]
+    fn read_and_detect_phases_stops_when_receiver_dropped() {
+        let regex = Regex::new("__PHASE__").unwrap();
+        let cursor = Cursor::new("__PHASE__\n__PHASE__\n__PHASE__");
+        let reader = BufReader::new(cursor);
+        let sink: Vec<u8> = Vec::new();
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<PhaseInfo>(1);
+        drop(rx);
+
+        let result = read_and_detect_phases(reader, &regex, sink, &tx);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn join_reader_thread_propagates_panic_as_error() {
+        let handle = std::thread::spawn(|| -> crate::profiler::types::Result<()> {
+            panic!("boom");
+        });
+
+        let result = join_reader_thread(handle);
+
+        assert!(matches!(
+            result,
+            Err(JouleProfilerError::ReaderThreadPanicked)
+        ));
+    }
+
+    #[test]
+    fn join_reader_thread_propagates_inner_error() {
+        let handle = std::thread::spawn(|| -> crate::profiler::types::Result<()> {
+            Err(JouleProfilerError::StdOutCaptureFail)
+        });
+
+        let result = join_reader_thread(handle);
+
+        assert!(matches!(result, Err(JouleProfilerError::StdOutCaptureFail)));
     }
 
     #[test]
