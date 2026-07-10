@@ -31,7 +31,7 @@ repository: https://github.com/joule-profiler/joule-profiler
 
 # Summary
 
-Joule Profiler is a lightweight Linux command-line tool for measuring a program’s energy consumption with minimal instrumentation overhead. It enables users to break execution into user-defined phases (e.g., data loading, computation) and to attribute energy use to each. The tool detects phase triggers in program output and automatically queries sources such as Intel RAPL (CPUs) or NVML (GPUs) to report system-wide energy consumption.
+Joule Profiler is a lightweight Linux command-line tool for profiling a program’s energy consumption with minimal instrumentation overhead. It enables users to break execution into user-defined phases (e.g., data loading, computation) and attribute energy use to each phase. The tool detects phase triggers in program output and automatically queries sources such as Intel RAPL (CPUs) or NVML (GPUs) to report system-wide energy consumption.
 
 # Statement of need
 
@@ -64,13 +64,15 @@ When a phase marker is detected, Joule Profiler records energy counter values at
 
 ## Software architecture
 
-Joule Profiler’s modular design separates measurement logic from hardware specifics. It accesses energy and performance metrics using `perf_event` [@linux_perf_event] (or powercap as a fallback) for RAPL and NVML [@nvidia_nvml] for NVIDIA GPUs. The tool can correlate energy with performance counters, supporting extension and maintenance.
+Joule Profiler has been designed to be modular. These modules collect energy and performance metrics from multiple hardware sources while keeping overhead low. To simplify extension and maintenance, the measurement logic is isolated from the hardware-specific implementations. Joule Profiler accesses RAPL counters via the `perf_event` interface [@linux_perf_event], which exposes hardware performance monitoring facilities. If `perf_event` is unavailable, the tool falls back to the powercap interface in Linux `sysfs` [@linux_powercap]. For NVIDIA GPUs, it uses the *NVIDIA Management Library* (NVML)[@nvidia_nvml] to retrieve power consumption on compatible hardware. Joule Profiler can also collect hardware performance counters via `perf_event`, allowing energy measurements to be correlated with performance events or split proportionally when multiple components contribute.
 
-The tool uses a layered structure: the core detects phases and aggregates metrics; sources run asynchronously to enable parallel data collection; the CLI manages user interaction; and hardware backends are abstracted to enable easy integration of new sources.
+![](images/archi.png){ width=90% }
 
-# Validity of the energy measurement
+Internally, the tool is structured into layers. The core layer handles the main logic: detecting phases, aggregating metrics, and coordinating the measurement sources. Each source runs as an asynchronous task, enabling parallel data collection and maintaining temporal precision. The *Command-Line Interface* (CLI) layer manages user interaction, parses configuration options, and displays results. A source abstraction layer encapsulates each hardware backend, such as RAPL, NVML, or performance counters, in a separate module. This separation eases the integration of new sources in the future without affecting the rest of the system. This design allows Joule Profiler to run on a large diversity of machines based on Intel and AMD processors.
 
-To validate its measurements, Joule Profiler was compared with reference tools perf [@perfwiki] and Alumet [@alumet], both using RAPL counters but different strategies. This checks whether Joule Profiler introduces measurement bias.
+# Software assessment
+
+To validate its measurements, the Joule Profiler was compared with the reference tools perf [@perfwiki] and Alumet [@alumet], both of which use RAPL counters but employ different strategies. This checks whether Joule Profiler introduces measurement bias.
 
 Three scenarios were tested: (1) parallel runs of Joule Profiler and perf (with CPU load) or Alumet (with GPU load) alongside a sleep command, ensuring identical hardware activity and measurement noise; (2) Sequential execution of Joule Profiler, perf, and Alumet with workload pinned to a single CPU core, to compare overhead and variability; and (3) A custom workload with periodic output tokens tested phase detection precision.
 
@@ -113,7 +115,7 @@ A sequential execution (2,000 runs) was used to compare the tool's overhead and 
 
 ## Phase attribution precision
 
-To evaluate the temporal accuracy of output-based phase detection, we used a custom program that printed periodic tokens at frequencies from 100 Hz to 1,000 Hz, comparing the timestamp at print time with the timestamp at which Joule Profiler detected each token. This was repeated 40 times at each frequency, with 10,000 measures per iteration, to achieve 80% statistical power.
+To evaluate the temporal accuracy of output-based phase detection, we used a custom program that printed periodic tokens at frequencies from 100 Hz to 1,000 Hz, and compared the print timestamp with the timestamp at which Joule Profiler detected each token. This was repeated 40 times at each frequency, with 10,000 measures per iteration, to achieve 80% statistical power.
 
 \begin{figure}
 	\centering
