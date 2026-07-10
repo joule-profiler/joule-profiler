@@ -9,11 +9,11 @@ use regex::Regex;
 use std::io::BufWriter;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdout, Command};
-use std::thread::JoinHandle;
 use std::{
     io::{BufRead, BufReader, ErrorKind, Write},
     process::{self, Stdio},
 };
+use tokio::sync::oneshot;
 
 pub mod error;
 
@@ -37,8 +37,9 @@ struct MeasureData {
     end_timestamp: u128,
 }
 
-/// Reader thread handle: gives the orchestrator back with the collected data.
-type ReaderThreadHandle = JoinHandle<(Orchestrator, Result<MeasureData>)>;
+/// What the reader thread sends back once done: the orchestrator (to reuse
+/// its sources) alongside the measurement outcome.
+type ReaderResult = (Orchestrator, Result<MeasureData>);
 
 /// Orchestrates program profiling and metric collection.
 ///
@@ -138,16 +139,16 @@ impl JouleProfiler {
 
         pause_process(pid)?;
 
+        orchestrator.init(pid, config.init_timeout).await?;
+        orchestrator.run();
+
         let child_stdout = child
             .stdout
             .take()
             .ok_or(JouleProfilerError::StdOutCaptureFail)?;
 
-        orchestrator.init(pid, config.init_timeout).await?;
-        orchestrator.run();
-
         info!("Starting measurements");
-        let reader_thread = spawn_reader_thread(
+        let reader_result_rx = spawn_reader_thread(
             orchestrator,
             child_stdout,
             regex,
@@ -155,10 +156,9 @@ impl JouleProfiler {
             pid,
         )?;
 
-        let (mut orchestrator, measure_result) =
-            tokio::task::spawn_blocking(move || join_reader_thread(reader_thread))
-                .await
-                .map_err(|_| JouleProfilerError::ReaderThreadPanicked)??;
+        let (mut orchestrator, measure_result) = reader_result_rx
+            .await
+            .map_err(|_| JouleProfilerError::ReaderThreadPanicked)?;
 
         let MeasureData {
             phases: detected_phases,
@@ -176,6 +176,7 @@ impl JouleProfiler {
 
         let command_duration_ms = (end_timestamp - begin_timestamp) / 1000;
         let timestamp = begin_timestamp;
+
         let exit_code = tokio::task::spawn_blocking(move || wait_for_child_exit(&mut child))
             .await
             .map_err(|_| {
@@ -270,15 +271,17 @@ fn measure_phases_blocking(
     })
 }
 
-/// Spawns the reader thread, which owns the orchestrator during the run and
-/// gives it back on join.
+/// Spawns the dedicated reader thread, which owns the orchestrator during the
+/// run and sends it back with the measurement outcome once done.
 fn spawn_reader_thread(
     mut orchestrator: Orchestrator,
     child_stdout: ChildStdout,
     regex: Regex,
     stdout_file: Option<String>,
     pid: i32,
-) -> Result<ReaderThreadHandle> {
+) -> Result<oneshot::Receiver<ReaderResult>> {
+    let (tx, rx) = oneshot::channel();
+
     std::thread::Builder::new()
         .name("phase-reader".to_string())
         .spawn(move || {
@@ -289,15 +292,11 @@ fn spawn_reader_thread(
                 stdout_file.as_ref(),
                 pid,
             );
-            (orchestrator, result)
+            let _ = tx.send((orchestrator, result));
         })
-        .map_err(|err| JouleProfilerError::ReaderThreadSpawnFailed(err.to_string()))
-}
+        .map_err(|err| JouleProfilerError::ReaderThreadSpawnFailed(err.to_string()))?;
 
-fn join_reader_thread<T>(handle: JoinHandle<T>) -> Result<T> {
-    handle
-        .join()
-        .map_err(|_| JouleProfilerError::ReaderThreadPanicked)
+    Ok(rx)
 }
 
 /// Reads the child's stdout line by line; every line matching the regex
@@ -475,8 +474,8 @@ mod tests {
     use crate::orchestrator::Orchestrator;
     use crate::phase::{PhaseInfo, PhaseToken};
     use crate::profiler::{
-        create_output_sink, join_reader_thread, phase_token_in_line, read_and_detect_phases,
-        spawn_profiled_command, wait_for_child_exit,
+        create_output_sink, phase_token_in_line, read_and_detect_phases, spawn_profiled_command,
+        wait_for_child_exit,
     };
     use crate::sensor::Sensors;
     use crate::source::MetricReader;
@@ -654,31 +653,18 @@ mod tests {
         assert_eq!(phases.len(), 1);
     }
 
-    #[test]
-    fn join_reader_thread_propagates_panic_as_error() {
-        let handle = std::thread::spawn(|| -> crate::profiler::types::Result<()> {
-            panic!("boom");
-        });
+    #[tokio::test]
+    async fn reader_channel_dropped_without_send_maps_to_reader_thread_panicked() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        drop(tx);
 
-        let result = join_reader_thread(handle);
+        let result: crate::profiler::types::Result<()> = rx
+            .await
+            .map_err(|_| JouleProfilerError::ReaderThreadPanicked);
 
         assert!(matches!(
             result,
             Err(JouleProfilerError::ReaderThreadPanicked)
-        ));
-    }
-
-    #[test]
-    fn join_reader_thread_returns_thread_result() {
-        let handle = std::thread::spawn(|| -> crate::profiler::types::Result<()> {
-            Err(JouleProfilerError::StdOutCaptureFail)
-        });
-
-        let result = join_reader_thread(handle);
-
-        assert!(matches!(
-            result,
-            Ok(Err(JouleProfilerError::StdOutCaptureFail))
         ));
     }
 
