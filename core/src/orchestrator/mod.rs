@@ -121,20 +121,32 @@ impl Orchestrator {
             .collect();
     }
 
-    /// Send a measure event to each metrics source.
+    /// Sends a measure event to each metric source, blocking.
     ///
-    /// This function ensure event submission, but is does not ensure
-    /// measurement completion and that the measure will be taken directly after it.
-    /// At high concurrency and with many running sources, the measurement can be made lately.
+    /// This function ensures event submission, not measurement completion.
+    /// Must be called from outside the async runtime (e.g. the reader thread).
     #[inline]
-    pub async fn measure(&mut self) -> Result<(), OrchestratorError> {
-        self.send_event(SourceEvent::Measure).await
+    pub fn measure_blocking(&mut self) -> Result<(), OrchestratorError> {
+        self.send_event_blocking(SourceEvent::Measure)
     }
 
-    /// Initializes a new phase for each metric source.
+    /// Initializes a new phase for each metric source, blocking.
+    ///
+    /// Must be called from outside the async runtime (e.g. the reader thread).
     #[inline]
-    pub async fn new_phase(&mut self) -> Result<(), OrchestratorError> {
-        self.send_event(SourceEvent::NewPhase).await
+    pub fn new_phase_blocking(&mut self) -> Result<(), OrchestratorError> {
+        self.send_event_blocking(SourceEvent::NewPhase)
+    }
+
+    /// Sends the provided event to all the metric sources, blocking.
+    ///
+    /// A send only fails when a source worker died: the source error is
+    /// surfaced later, when joining the workers.
+    fn send_event_blocking(&mut self, event: SourceEvent) -> Result<(), OrchestratorError> {
+        for handle in &self.handles {
+            handle.control_sender.blocking_send(event)?;
+        }
+        Ok(())
     }
 
     /// Retrieves and merge results from all sources.
@@ -323,7 +335,13 @@ mod tests {
         orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
         orchestrator.run();
 
-        let _ = orchestrator.measure().await;
+        // blocking_send must run off the async runtime.
+        let mut orchestrator = tokio::task::spawn_blocking(move || {
+            let _ = orchestrator.measure_blocking();
+            orchestrator
+        })
+        .await
+        .unwrap();
         let _ = orchestrator.join().await;
 
         tokio::task::yield_now().await;
@@ -378,7 +396,13 @@ mod tests {
 
         orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
         orchestrator.run();
-        orchestrator.measure().await.unwrap();
+        // blocking_send must run off the async runtime.
+        let mut orchestrator = tokio::task::spawn_blocking(move || {
+            orchestrator.measure_blocking().unwrap();
+            orchestrator
+        })
+        .await
+        .unwrap();
         let result = orchestrator.finalize().await;
 
         assert!(result.is_err());

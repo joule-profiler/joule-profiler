@@ -1,12 +1,10 @@
 use crate::JouleProfilerError;
 use crate::aggregate::Metrics;
-use crate::phase::{PhaseInfo, PhaseToken};
+use crate::phase::PhaseToken;
 use serde::Serialize;
 
 /// Result type for profiler operations.
 pub type Result<T> = std::result::Result<T, JouleProfilerError>;
-
-pub type MeasurePhasesReturnType = (u128, u128, i32, Vec<PhaseInfo>);
 
 /// Represents a profiling phase with metrics and timing.
 #[derive(Debug, Serialize)]

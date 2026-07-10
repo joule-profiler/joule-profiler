@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use log::debug;
+use log::{debug, warn};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
         accumulator::MetricAccumulator,
         error::IntoMetricSourceError,
         types::{SourceEvent, SourceWorkerHandle},
-    },
+    }, time::get_timestamp_micros,
 };
 
 /// Orchestrate a metric source and handle the conversion between raw source results to metrics.
@@ -59,6 +59,7 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
     /// Make a measurement.
     #[inline]
     async fn measure_source(&mut self) -> Result<(), MetricSourceError> {
+        warn!("{}", get_timestamp_micros());
         self.source
             .measure()
             .await
