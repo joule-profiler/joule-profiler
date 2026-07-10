@@ -20,7 +20,7 @@ pub mod error;
 use crate::config::ProfileConfig;
 use crate::orchestrator::Orchestrator;
 use crate::phase::{PhaseInfo, PhaseToken};
-use crate::profiler::types::{Phase, ProfilerResults, Result};
+use crate::profiler::types::{MeasureData, Phase, ProfilerResults, ReaderResult, Result};
 use crate::sensor::{Sensor, Sensors};
 use crate::source::{MetricReader, MetricSource, MetricSourceError};
 use crate::util::fs::create_file_with_user_permissions;
@@ -29,17 +29,6 @@ use crate::util::time::get_timestamp_micros;
 pub use error::JouleProfilerError;
 
 pub mod types;
-
-/// Phases and begin/end timestamps collected by the reader thread.
-struct MeasureData {
-    phases: Vec<PhaseInfo>,
-    begin_timestamp: u128,
-    end_timestamp: u128,
-}
-
-/// What the reader thread sends back once done: the orchestrator (to reuse
-/// its sources) alongside the measurement outcome.
-type ReaderResult = (Orchestrator, Result<MeasureData>);
 
 /// Orchestrates program profiling and metric collection.
 ///
