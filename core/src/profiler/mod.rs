@@ -31,7 +31,11 @@ pub use error::JouleProfilerError;
 pub mod types;
 
 /// Phases and begin/end timestamps collected by the reader thread.
-type MeasureData = (Vec<PhaseInfo>, u128, u128);
+struct MeasureData {
+    phases: Vec<PhaseInfo>,
+    begin_timestamp: u128,
+    end_timestamp: u128,
+}
 
 /// Reader thread handle: gives the orchestrator back with the collected data.
 type ReaderThreadHandle = JoinHandle<(Orchestrator, Result<MeasureData>)>;
@@ -132,7 +136,7 @@ impl JouleProfiler {
         let mut child = spawn_profiled_command(config)?;
         let pid = child.id().cast_signed();
 
-        pause_prosess(pid)?;
+        pause_process(pid)?;
 
         let child_stdout = child
             .stdout
@@ -156,19 +160,27 @@ impl JouleProfiler {
                 .await
                 .map_err(|_| JouleProfilerError::ReaderThreadPanicked)??;
 
-        let (detected_phases, begin_timestamp, end_timestamp) = match measure_result {
+        let MeasureData {
+            phases: detected_phases,
+            begin_timestamp,
+            end_timestamp,
+        } = match measure_result {
             Ok(data) => data,
             Err(err) => {
                 return Err(match orchestrator.finalize().await {
                     Err(source_err) => source_err.into(),
                     Ok(_) => err,
-                })?;
+                });
             }
         };
 
         let command_duration_ms = (end_timestamp - begin_timestamp) / 1000;
         let timestamp = begin_timestamp;
-        let exit_code = wait_for_child_exit(&mut child)?;
+        let exit_code = tokio::task::spawn_blocking(move || wait_for_child_exit(&mut child))
+            .await
+            .map_err(|_| {
+                JouleProfilerError::ProcessControlFailed("wait thread panicked".to_string())
+            })??;
         info!("Command finished: duration={command_duration_ms} ms exit_code={exit_code}");
 
         let (sources_results, sources) = orchestrator.finalize().await?;
@@ -251,7 +263,11 @@ fn measure_phases_blocking(
     orchestrator.new_phase_blocking()?;
     detected_phases.push(PhaseInfo::end(end_timestamp));
 
-    Ok((detected_phases, begin_timestamp, end_timestamp))
+    Ok(MeasureData {
+        phases: detected_phases,
+        begin_timestamp,
+        end_timestamp,
+    })
 }
 
 /// Spawns the reader thread, which owns the orchestrator during the run and
@@ -427,7 +443,7 @@ fn create_output_sink(path: Option<&String>) -> Result<Box<dyn Write>> {
 
 /// Sends `SIGSTOP` to a child process to pause its execution.
 ///
-/// SAFETY
+/// # Preconditions
 ///
 /// - 'pid' must refer to a valid process identifier obtained from
 ///   '`std::process::Child::id()`' immediately after spawning.
@@ -436,13 +452,13 @@ fn create_output_sink(path: Option<&String>) -> Result<Box<dyn Write>> {
 ///
 /// Returns [`JouleProfilerError::ProcessControlFailed`] if the
 /// signal delivery fails.
-fn pause_prosess(pid: i32) -> Result<()> {
+fn pause_process(pid: i32) -> Result<()> {
     signal(pid, libc::SIGSTOP)
 }
 
 /// Sends `SIGCONT` to resume a previously paused process.
 ///
-/// SAFETY
+/// # Preconditions
 ///
 /// - `pid` must refer to a valid, running or stopped child process.
 /// - The process must still exist when the signal is sent.
