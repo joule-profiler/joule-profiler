@@ -126,6 +126,8 @@ impl PerfEventCounters {
                     .observe_pid(pid)
                     .include_hv()
                     .include_kernel()
+                    .exclude_guest(false)
+                    .exclude_host(false)
                     .enabled(true)
                     .build()?;
                 counters.insert(event, counter);
@@ -179,6 +181,10 @@ impl PerfEventCounters {
                 let mut group = new_group_builder()
                     .one_cpu(cpu)
                     .observe_cgroup(&cgroup_fd)
+                    .include_hv()
+                    .include_kernel()
+                    .exclude_guest(false)
+                    .exclude_host(false)
                     .build_group()?;
 
                 let mut cpu_counters = HashMap::with_capacity(events.len());
@@ -186,8 +192,12 @@ impl PerfEventCounters {
                     trace!("Adding event {event:?} on cpu {cpu}");
                     let counter = group.add(
                         Builder::new(Hardware::from(event))
+                            .one_cpu(cpu)
                             .observe_cgroup(&cgroup_fd)
-                            .one_cpu(cpu),
+                            .include_hv()
+                            .include_kernel()
+                            .exclude_guest(false)
+                            .exclude_host(false),
                     )?;
                     cpu_counters.insert(event, counter);
                 }
