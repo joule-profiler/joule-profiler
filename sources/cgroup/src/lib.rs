@@ -85,7 +85,7 @@ impl<B: CgroupBackend> Cgroup<B> {
         global_memory_counters: Arc<Mutex<MemoryCounters>>,
         poll_interval: Duration,
     ) -> Result<WorkerHandle> {
-        let mut ticker = Interval::new_interval(poll_interval)?;
+        let mut ticker = Interval::new_interval(poll_interval).map_err(CgroupError::Timer)?;
 
         let cancellation_token = CancellationToken::new();
         let cancellation_token_clone = cancellation_token.clone();
@@ -153,15 +153,16 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
         })
     }
 
-    /// Creates the cgroup if configured.
-    ///
-    /// Creating the directory or attaching a pid fails with `CgroupError::PermissionDenied`
-    /// if the caller lacks access, which also lets delegated (non-root-owned) cgroup
-    /// subtrees work.
+    /// Creates the cgroup if configured, then checks that it is usable.
     async fn pre_init(&mut self) -> Result<()> {
+        self.root_cgroup.verify()?;
+
         if self.config.create_cgroup {
             self.proc_cgroup.create()?;
         }
+
+        self.proc_cgroup.verify()?;
+
         Ok(())
     }
 
