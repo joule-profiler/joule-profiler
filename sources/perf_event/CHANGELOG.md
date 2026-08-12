@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-perf_event-v1.0.2...joule-profiler-source-perf_event-v2.0.0) - 2026-08-12
+
+### Added
+
+- *(perf)* added cpu specification to not open counters on each core when using cgroup
+- *(perf)* added cgroup_root to configure the cgroup base path
+- *(perf)* added cgroup scoped counters for perf_event source, optimized reading with spawn blocking and added pre_init function to do some sources work before spawning process
+- *(config)* Config deserialization using toml crate, override with CLI using CliOverride trait
+
+### Fixed
+
+- *(perf-event)* include host and guest for virtualization when opening counters
+- sources configurations serialization fixed
+- config file with empty sources serialized as empty
+- *(config)* all sources configurations deserialization fixed
+
+### Other
+
+- update RAPL new functions doc and cli doc
+- fixed warnings and tests
+- *(perf)* removed spawn blocking from read_snapshot because reading is faster than spawning blocking tasks
+- update sources readme
+- update README of cgroup source, also fixed other sources README
+
 ## [1.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-perf_event-v1.0.1...joule-profiler-source-perf_event-v1.0.2) - 2026-04-29
 
 ### Other
