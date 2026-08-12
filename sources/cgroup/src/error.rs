@@ -102,7 +102,6 @@ pub enum CgroupError {
 }
 
 impl CgroupError {
-    /// Builds an [`CgroupError::IoPath`] carrying the file the operation failed on.
     pub(crate) fn io(path: &Path, source: std::io::Error) -> Self {
         CgroupError::IoPath {
             path: path.to_path_buf(),
@@ -110,17 +109,6 @@ impl CgroupError {
         }
     }
 
-    /// Refines a missing controller interface file into its actual cause.
-    ///
-    /// A `memory.stat` (or `cpu.stat`, `io.stat`) that cannot be found has
-    /// several plausible causes, which are checked from the most general to the
-    /// most specific so the reported one is always the first thing to fix:
-    /// the cgroup does not exist, it is not part of a cgroup v2 hierarchy, the
-    /// controller is unknown to that hierarchy, or the parent cgroup does not
-    /// delegate it through `cgroup.subtree_control`.
-    ///
-    /// Any error that is not a missing file, and any cause that cannot be
-    /// established, is returned untouched.
     pub(crate) fn into_controller_error(self, controller: &'static str, cgroup: &Path) -> Self {
         let CgroupError::IoPath { ref source, .. } = self else {
             return self;
@@ -138,9 +126,6 @@ impl CgroupError {
             return CgroupError::NotAvailable(cgroup.to_path_buf());
         }
 
-        // A controller only exposes its interface files in a cgroup once the
-        // *parent* enables it for its children. The hierarchy root has no such
-        // parent, so only the controller availability can be checked there.
         let parent = cgroup.parent().filter(|parent| is_cgroup_dir(parent));
         let scope = parent.unwrap_or(cgroup);
 
