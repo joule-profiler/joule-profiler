@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-rapl-v1.0.2...joule-profiler-source-rapl-v2.0.0) - 2026-08-12
+
+### Added
+
+- *(cli)* override configuration with -D flag
+- *(config-file)* update all sources configuration and improved configuration file example
+- *(config)* RAPL config fix, removed CLI override
+- *(config)* Config deserialization using toml crate, override with CLI using CliOverride trait
+
+### Fixed
+
+- *(config)* all sources configurations deserialization fixed
+- perf_event_paranoid negative level parsing
+
+### Other
+
+- add features flags to enable or disable features
+- *(rapl)* removed module former doc
+- update RAPL new functions doc and cli doc
+- some minor fixes in RAPL and cgroup
+- changed all tokio::sync::Mutex to std::sync::Mutex because there's no contention on Mutexes
+- fixed warnings and tests
+- fix clippy --all-targets warnings
+- *(rapl)* open rapl counters in pre_init instead of in construction
+- *(rapl)* moved perf counters enable to pre_init function
+- update sources readme
+- update README of cgroup source, also fixed other sources README
+- cargo fmt
+- replace TryInto by TryFrom for RaplDomainType and removed unnecessary String allocation
+
 ## [1.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-rapl-v1.0.1...joule-profiler-source-rapl-v1.0.2) - 2026-04-29
 
 ### Other
