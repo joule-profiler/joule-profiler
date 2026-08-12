@@ -46,6 +46,15 @@ joule-profiler --output-format json profile -- <COMMAND>
 joule-profiler --sources rapl,nvml profile -- <COMMAND>
 ```
 
+A configuration file can be used to configure the tool using the CLI flag `--config`, see [configuration file](examples/example_config.toml). The CLI arguments will ALWAYS override the configuration arguments.
+
+Any key of the configuration file can be set from the command line with `-D KEY=VALUE`, where `KEY` is the toml key. This works with or without a `--config` file, and can be repeated:
+
+```bash
+# Switch the RAPL backend and restrict it to the first socket
+joule-profiler -D profiler.rapl_backend=powercap -D 'sources.rapl.sockets_spec=[0]' profile -- <COMMAND>
+```
+
 For the RAPL source with the perf_event backend, you might be asked to run Joule Profiler with the root privileges, you can configure the perf_event_paranoid level to allow using the source without them:
 ```bash
 sudo sysctl kernel.perf_event_paranoid=0
