@@ -219,7 +219,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::{RaplBackend, commands::profile::ProfileArgs, output::formats::OutputFormat};
+    use crate::{commands::profile::ProfileArgs, output::formats::OutputFormat};
 
     #[derive(Debug, Default, Deserialize)]
     struct MockConfig {
@@ -305,7 +305,8 @@ mod tests {
             output_file: Some("configured_output.json".to_owned()),
             output_format: OutputFormat::Json,
             init_timeout: Duration::from_secs(5),
-            rapl_backend: RaplBackend::Powercap,
+            #[cfg(feature = "rapl")]
+            rapl_backend: crate::RaplBackend::default(),
         }
     }
 
@@ -319,14 +320,15 @@ mod tests {
         assert_eq!(config.init_timeout, Duration::from_secs(1));
         assert!(!config.use_root);
         assert!(matches!(config.output_format, OutputFormat::Terminal));
-        assert!(matches!(config.rapl_backend, RaplBackend::Perf));
     }
 
     #[test]
     fn new_enabled_sources_is_union_of_config_file_and_cli() {
+        let from_cli = Source::value_variants()[0].clone();
+
         let mut sources = HashMap::new();
         sources.insert(
-            "rapl".to_owned(),
+            "from_file".to_owned(),
             toml::Value::Table(toml::map::Map::default()),
         );
 
@@ -335,11 +337,11 @@ mod tests {
             sources,
         };
 
-        let table = ConfigTable::new(global, &[Source::Nvml]);
+        let table = ConfigTable::new(global, std::slice::from_ref(&from_cli));
 
-        assert!(table.enabled_sources.contains("rapl"));
-        assert!(table.enabled_sources.contains("nvml"));
-        assert!(!table.enabled_sources.contains("amdsmi"));
+        assert!(table.enabled_sources.contains("from_file"));
+        assert!(table.enabled_sources.contains(&from_cli.to_string()));
+        assert!(!table.enabled_sources.contains("not_configured"));
     }
 
     #[test]
@@ -372,10 +374,6 @@ mod tests {
             OutputFormat::Json
         ));
         assert_eq!(table.profiler_config.init_timeout, Duration::from_secs(5));
-        assert!(matches!(
-            table.profiler_config.rapl_backend,
-            RaplBackend::Powercap
-        ));
         assert!(!table.profiler_config.use_root);
     }
 
@@ -559,11 +557,14 @@ mod tests {
         let mut table = config_table_with(ProfilerConfig::default());
         table
             .sources_config
-            .insert("cgrp".to_owned(), toml::from_str("value = 1").unwrap());
+            .insert("nope".to_owned(), toml::from_str("value = 1").unwrap());
 
         let err = table.ensure_sources_are_known().unwrap_err();
 
-        assert!(err.to_string().contains("cgrp"));
-        assert!(err.to_string().contains("cgroup"));
+        assert!(err.to_string().contains("nope"));
+        assert!(
+            err.to_string()
+                .contains(&Source::value_variants()[0].to_string())
+        );
     }
 }

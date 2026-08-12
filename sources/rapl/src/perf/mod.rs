@@ -21,7 +21,7 @@ use crate::{
         event::open_counters,
         socket::{Socket, SocketInfo},
     },
-    snapshot::{Phase, Snapshot},
+    snapshot::Snapshot,
     util::check_os,
 };
 
@@ -231,6 +231,16 @@ impl MetricReader for Rapl {
     fn get_id() -> &'static str {
         RAPL_SOURCE_ID
     }
+}
+
+/// A pair of snapshots delimiting a phase.
+#[derive(Debug, Clone, Default)]
+pub struct Phase {
+    /// The snapshot made at the start of a phase.
+    pub begin: Snapshot,
+
+    /// End snapshot of the phase.
+    pub end: Snapshot,
 }
 
 /// Read the PMU type from sysfs.

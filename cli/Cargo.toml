@@ -14,12 +14,12 @@ name = "joule-profiler"
 path = "src/bin/main.rs"
 
 [dependencies]
-joule-profiler-source-rapl = { path = "../sources/rapl", version = "1.0.2" }
-joule-profiler-source-nvml = { path = "../sources/nvml", version = "1.0.2" }
-joule-profiler-source-perf_event = { path = "../sources/perf_event", version = "1.0.2" }
-joule-profiler-source-procfs = { path = "../sources/procfs", version = "0.1.0" }
-joule-profiler-source-cgroup = { path = "../sources/cgroup", version = "0.1.0" }
-joule-profiler-source-amdsmi = { path = "../sources/amdsmi", version = "0.1.0" }
+joule-profiler-source-rapl = { path = "../sources/rapl", version = "1.0.2", default-features = false, optional = true }
+joule-profiler-source-perf_event = { path = "../sources/perf_event", version = "1.0.2", optional = true }
+joule-profiler-source-nvml = { path = "../sources/nvml", version = "1.0.2", optional = true }
+joule-profiler-source-amdsmi = { path = "../sources/amdsmi", version = "0.1.0", optional = true }
+joule-profiler-source-procfs = { path = "../sources/procfs", version = "0.1.0", optional = true }
+joule-profiler-source-cgroup = { path = "../sources/cgroup", version = "0.1.0", optional = true }
 
 joule-profiler-core.workspace = true
 log.workspace = true
@@ -36,9 +36,21 @@ toml = "1.1.2"
 humantime = "2.3.0"
 csv = "1.4.0"
 
-
 [dev-dependencies]
 tempfile.workspace = true
+
+[features]
+default = ["rapl", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
+
+rapl = ["dep:joule-profiler-source-rapl", "rapl-backend-perf", "rapl-backend-powercap"]
+perf_event = ["dep:joule-profiler-source-perf_event"]
+nvml = ["dep:joule-profiler-source-nvml"]
+amdsmi = ["dep:joule-profiler-source-amdsmi"]
+procfs = ["dep:joule-profiler-source-procfs"]
+cgroup = ["dep:joule-profiler-source-cgroup"]
+
+rapl-backend-perf = ["rapl", "joule-profiler-source-rapl/backend-perf"]
+rapl-backend-powercap = ["rapl", "joule-profiler-source-rapl/backend-powercap"]
 
 [lints]
 workspace = true

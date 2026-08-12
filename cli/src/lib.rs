@@ -4,6 +4,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 
 use anyhow::{Result, bail};
 pub use commands::ProfilerCommand;
+#[cfg(feature = "rapl")]
 use serde::Deserialize;
 
 use crate::{
@@ -25,7 +26,7 @@ mod output;
 #[command(name = "joule-profiler")]
 #[command(
     version,
-    about = "Measure program metrics from various sources like RAPL"
+    about = "Measure program metrics from various sources like RAPL, perf_event or NVML"
 )]
 pub struct CliArgs {
     /// Verbosity (-v, -vv, -vvv)
@@ -40,8 +41,12 @@ pub struct CliArgs {
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
-    /// Sources activation list. All sources must be separated with a comma (e.g., "perf,nvml").
-    #[arg(long, value_delimiter = ',', default_value = "rapl")]
+    /// Sources activation list. All sources must be separated with a comma (e.g., "rapl,nvml").
+    #[cfg_attr(
+        feature = "rapl",
+        arg(long, value_delimiter = ',', default_value = "rapl")
+    )]
+    #[cfg_attr(not(feature = "rapl"), arg(long, value_delimiter = ','))]
     pub sources: Vec<Source>,
 
     #[allow(clippy::doc_markdown)]
@@ -91,38 +96,86 @@ impl CliArgs {
     }
 }
 
+#[cfg(not(any(
+    feature = "rapl",
+    feature = "perf_event",
+    feature = "nvml",
+    feature = "amdsmi",
+    feature = "procfs",
+    feature = "cgroup",
+)))]
+compile_error!("At least one source feature must be enabled");
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
 pub enum Source {
+    #[cfg(feature = "rapl")]
     Rapl,
-    Nvml,
-    #[value(name = "amdsmi")]
-    AmdSmi,
+
+    #[cfg(feature = "perf_event")]
     #[value(alias = "perf_event")]
     Perf,
+
+    #[cfg(feature = "nvml")]
+    Nvml,
+
+    #[cfg(feature = "amdsmi")]
+    #[value(name = "amdsmi")]
+    AmdSmi,
+
+    #[cfg(feature = "procfs")]
     Procfs,
+
+    #[cfg(feature = "cgroup")]
     Cgroup,
 }
 
 impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            #[cfg(feature = "rapl")]
             Source::Rapl => "rapl",
-            Source::Nvml => "nvml",
-            Source::AmdSmi => "amdsmi",
+
+            #[cfg(feature = "perf_event")]
             Source::Perf => "perf",
+
+            #[cfg(feature = "nvml")]
+            Source::Nvml => "nvml",
+
+            #[cfg(feature = "amdsmi")]
+            Source::AmdSmi => "amdsmi",
+
+            #[cfg(feature = "procfs")]
             Source::Procfs => "procfs",
+
+            #[cfg(feature = "cgroup")]
             Source::Cgroup => "cgroup",
         };
         write!(f, "{s}")
     }
 }
 
+#[cfg(all(
+    feature = "rapl",
+    not(any(feature = "rapl-backend-perf", feature = "rapl-backend-powercap"))
+))]
+compile_error!("Enable at least one backend: `rapl-backend-perf` or `rapl-backend-powercap`.");
+
 /// RAPL backend, selected with `profiler.rapl_backend` in the configuration.
+///
+/// The RAPL source always comes with a backend, so this enum always has at
+/// least one variant.
+#[cfg(feature = "rapl")]
 #[derive(Debug, Default, Clone, Deserialize)]
 pub enum RaplBackend {
+    #[cfg(feature = "rapl-backend-perf")]
     #[default]
     #[serde(rename = "perf")]
     Perf,
+
+    // Only the default when it is the sole backend built in: two `#[default]`
+    // variants do not compile.
+    #[cfg(feature = "rapl-backend-powercap")]
+    #[cfg_attr(not(feature = "rapl-backend-perf"), default)]
     #[serde(rename = "powercap")]
     Powercap,
 }
@@ -168,52 +221,69 @@ mod tests {
 
     #[test]
     fn source_display_matches_every_metric_reader_get_id() {
-        type DefaultPerfEvent = joule_profiler_source_perf_event::PerfEvent;
-        type DefaultCgroup = joule_profiler_source_cgroup::Cgroup;
-        type DefaultProcfs = joule_profiler_source_procfs::Procfs;
-        type DefaultNvml = joule_profiler_source_nvml::Nvml;
-        type DefaultAmdSmi = joule_profiler_source_amdsmi::AmdSmi;
-
+        #[cfg(feature = "rapl-backend-perf")]
         assert_eq!(
             Source::Rapl.to_string(),
             joule_profiler_source_rapl::perf::Rapl::get_id()
         );
+        #[cfg(feature = "rapl-backend-powercap")]
         assert_eq!(
             Source::Rapl.to_string(),
             joule_profiler_source_rapl::powercap::Rapl::get_id()
         );
-        assert_eq!(Source::Perf.to_string(), DefaultPerfEvent::get_id());
-        assert_eq!(Source::Cgroup.to_string(), DefaultCgroup::get_id());
-        assert_eq!(Source::Procfs.to_string(), DefaultProcfs::get_id());
-        assert_eq!(Source::Nvml.to_string(), DefaultNvml::get_id());
-        assert_eq!(Source::AmdSmi.to_string(), DefaultAmdSmi::get_id());
+        #[cfg(feature = "perf_event")]
+        {
+            type DefaultPerfEvent = joule_profiler_source_perf_event::PerfEvent;
+            assert_eq!(Source::Perf.to_string(), DefaultPerfEvent::get_id());
+        }
+        #[cfg(feature = "cgroup")]
+        {
+            type DefaultCgroup = joule_profiler_source_cgroup::Cgroup;
+            assert_eq!(Source::Cgroup.to_string(), DefaultCgroup::get_id());
+        }
+        #[cfg(feature = "procfs")]
+        {
+            type DefaultProcfs = joule_profiler_source_procfs::Procfs;
+            assert_eq!(Source::Procfs.to_string(), DefaultProcfs::get_id());
+        }
+        #[cfg(feature = "nvml")]
+        {
+            type DefaultNvml = joule_profiler_source_nvml::Nvml;
+            assert_eq!(Source::Nvml.to_string(), DefaultNvml::get_id());
+        }
+        #[cfg(feature = "amdsmi")]
+        {
+            type DefaultAmdSmi = joule_profiler_source_amdsmi::AmdSmi;
+            assert_eq!(Source::AmdSmi.to_string(), DefaultAmdSmi::get_id());
+        }
     }
 
+    #[cfg(feature = "perf_event")]
     #[test]
     fn source_value_enum_accepts_perf_event_alias() {
         let parsed = Source::from_str("perf_event", false).unwrap();
         assert_eq!(parsed, Source::Perf);
     }
 
+    /// Every variant this build has must parse back from the name it displays.
     #[test]
     fn source_value_enum_accepts_canonical_names() {
-        assert_eq!(Source::from_str("rapl", false).unwrap(), Source::Rapl);
-        assert_eq!(Source::from_str("nvml", false).unwrap(), Source::Nvml);
-        assert_eq!(Source::from_str("amdsmi", false).unwrap(), Source::AmdSmi);
-        assert_eq!(Source::from_str("perf", false).unwrap(), Source::Perf);
-        assert_eq!(Source::from_str("procfs", false).unwrap(), Source::Procfs);
-        assert_eq!(Source::from_str("cgroup", false).unwrap(), Source::Cgroup);
+        for source in Source::value_variants() {
+            let parsed = Source::from_str(&source.to_string(), false).unwrap();
+            assert_eq!(&parsed, source);
+        }
     }
 
     #[test]
     fn validate_rejects_duplicate_sources() {
-        let cli = cli_args_with_sources(vec![Source::Rapl, Source::Rapl]);
+        let source = Source::value_variants()[0].clone();
+        let cli = cli_args_with_sources(vec![source.clone(), source]);
         assert!(cli.validate().is_err());
     }
 
     #[test]
     fn validate_accepts_distinct_sources() {
-        let cli = cli_args_with_sources(vec![Source::Rapl, Source::Nvml]);
+        let cli = cli_args_with_sources(Source::value_variants().to_vec());
         assert!(cli.validate().is_ok());
     }
 }

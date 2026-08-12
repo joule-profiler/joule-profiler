@@ -13,8 +13,13 @@ use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 
 mod domain_type;
 mod error;
+
+#[cfg(feature = "backend-perf")]
 pub mod perf;
+
+#[cfg(feature = "backend-powercap")]
 pub mod powercap;
+
 mod snapshot;
 mod util;
 

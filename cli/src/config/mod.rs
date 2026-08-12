@@ -3,7 +3,9 @@ use std::{collections::HashMap, fs, path::Path, time::Duration};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::{RaplBackend, config::overrides::ConfigOverride, output::formats::OutputFormat};
+#[cfg(feature = "rapl")]
+use crate::RaplBackend;
+use crate::{config::overrides::ConfigOverride, output::formats::OutputFormat};
 
 pub mod overrides;
 pub mod source;
@@ -47,6 +49,7 @@ pub struct ProfilerConfig {
     #[serde(default = "default_timeout", with = "humantime_serde")]
     pub init_timeout: Duration,
 
+    #[cfg(feature = "rapl")]
     #[serde(default)]
     pub rapl_backend: RaplBackend,
 }
@@ -57,7 +60,8 @@ impl Default for ProfilerConfig {
             token_pattern: default_token_pattern(),
             init_timeout: default_timeout(),
             output_format: OutputFormat::Terminal,
-            rapl_backend: RaplBackend::Perf,
+            #[cfg(feature = "rapl")]
+            rapl_backend: RaplBackend::default(),
             use_root: false,
             stdout_file: None,
             output_file: None,

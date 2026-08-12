@@ -2,15 +2,26 @@ use anyhow::Result;
 use joule_profiler_cli::config::load_global_config;
 use joule_profiler_cli::config::source::register_source;
 use joule_profiler_cli::config::table::ConfigTable;
-use joule_profiler_cli::{CliArgs, RaplBackend, config_table_to_displayer, init_logging};
+use joule_profiler_cli::{CliArgs, config_table_to_displayer, init_logging};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::Command;
+
+#[cfg(feature = "rapl")]
+use joule_profiler_cli::RaplBackend;
+#[cfg(feature = "amdsmi")]
 use joule_profiler_source_amdsmi::AmdSmi;
+#[cfg(feature = "cgroup")]
 use joule_profiler_source_cgroup::Cgroup;
+#[cfg(feature = "nvml")]
 use joule_profiler_source_nvml::Nvml;
+#[cfg(feature = "perf_event")]
 use joule_profiler_source_perf_event::PerfEvent;
+#[cfg(feature = "procfs")]
 use joule_profiler_source_procfs::Procfs;
-use joule_profiler_source_rapl::{perf, powercap};
+#[cfg(feature = "rapl-backend-perf")]
+use joule_profiler_source_rapl::perf;
+#[cfg(feature = "rapl-backend-powercap")]
+use joule_profiler_source_rapl::powercap;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,17 +37,29 @@ async fn main() -> Result<()> {
 
     config_table.apply_cli(&mut cli);
 
+    #[cfg(feature = "rapl")]
     match config_table.profiler_config.rapl_backend {
+        #[cfg(feature = "rapl-backend-perf")]
         RaplBackend::Perf => register_source::<perf::Rapl>(&mut profiler, &mut config_table),
+        #[cfg(feature = "rapl-backend-powercap")]
         RaplBackend::Powercap => {
             register_source::<powercap::Rapl>(&mut profiler, &mut config_table)
         }
     }?;
 
+    #[cfg(feature = "perf_event")]
     register_source::<PerfEvent>(&mut profiler, &mut config_table)?;
+
+    #[cfg(feature = "cgroup")]
     register_source::<Cgroup>(&mut profiler, &mut config_table)?;
+
+    #[cfg(feature = "procfs")]
     register_source::<Procfs>(&mut profiler, &mut config_table)?;
+
+    #[cfg(feature = "nvml")]
     register_source::<Nvml>(&mut profiler, &mut config_table)?;
+
+    #[cfg(feature = "amdsmi")]
     register_source::<AmdSmi>(&mut profiler, &mut config_table)?;
 
     config_table.ensure_sources_are_known()?;
