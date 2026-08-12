@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v2.1.1...joule-profiler-cli-v2.2.0) - 2026-08-12
+
+### Added
+
+- *(cli)* override configuration with -D flag
+- *(config-file)* update all sources configuration and improved configuration file example
+- *(config)* RAPL config fix, removed CLI override
+- *(config)* replace CLI override with function to abstract override logic
+- *(config)* Config deserialization using toml crate, override with CLI using CliOverride trait
+- amdsmi source implementation
+- *(nvml)* added power, vram and GPU usage
+- *(cgroup)* polling implementation for non monotonic counters
+- *(sources)* add cgroup v2 source base implementation
+- *(procfs)* added config struct
+- procfs source implementation, memory done and io operations unstable
+- added default value in CLI for token-pattern and init-timeout for CLI documentation
+- *(cli)* removed per-source cli option and replaced it with comma-separated list
+
+### Fixed
+
+- sources configurations serialization fixed
+- config file with empty sources serialized as empty
+- *(config)* all sources configurations deserialization fixed
+- escape quoted fields and semicolons
+- added CLI flag --init-timeout to be able to configure it on slow devices
+
+### Other
+
+- add features flags to enable or disable features
+- add examples directory link into readme
+- *(cli)* remove rapl polling in profiler config because now it can be set with -D
+- update readme for -D CLI flag
+- update readme with examples directory doc
+- update readme examples
+- update readmes, cli and cgroup doc
+- update config table documentation
+- update RAPL new functions doc and cli doc
+- fix clippy --all-targets warnings
+- changed output format from --json --csv to --output-format and fixed file creation when no parent path is provided.
+- *(config)* fix RAPL sockets spec using config, clippy warnings, cargo fmt
+- *(config)* fix former documentation
+- *(config)* documented all config functions
+- *(amdsmi)* changed default polling interval to 20 milliseconds
+- cargo fmt
+- *(amdsmi)* rename source and error better handling
+- update amdsmi config with default in cli
+- *(nvml)* changed polling interval to 20 hz because the majority of counters does not have a higher frequency
+- *(cgroup)* put default polling interval to 1ms
+- cargo fmt
+- *(procfs)* procfs source tests implementation
+- move configuration directly into procfs struct
+- *(procfs)* improved procfs source code
+- improved ProfileConfig builder usage
+- forbid source duplication in cli --sources
+
 ## [2.1.1](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v2.1.0...joule-profiler-cli-v2.1.1) - 2026-04-29
 
 ### Other
