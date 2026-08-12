@@ -2,7 +2,7 @@
   Source: https://github.com/canonizer/mandelbrot-dyn
 
   Compile: nvcc -O3 -Xcompiler -fopenmp examples/programs/mandelbrot_nvidia.cu -o mandelbrot_nvidia
-  Usage: joule-profiler --gpu profile -- ./mandelbrot_nvidia {n}
+  Usage: joule-profiler --sources nvml profile -- ./mandelbrot_nvidia {n}
 */
 
 /*
