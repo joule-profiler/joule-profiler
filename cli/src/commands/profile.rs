@@ -25,11 +25,6 @@ pub struct ProfileArgs {
     #[arg(last = true, required = true)]
     pub cmd: Vec<String>,
 
-    /// Rapl polling frequency in second. (default: 1s)
-    #[arg(long = "rapl-polling")]
-    #[clap(value_parser = humantime::parse_duration)]
-    pub rapl_polling: Option<Duration>,
-
     /// Executes the profiled command with root privileges if true and Joule Profiler is launched as root.
     #[arg(long = "use-root")]
     pub use_root: bool,
