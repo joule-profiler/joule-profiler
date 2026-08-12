@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v2.0.0...joule-profiler-core-v2.1.0) - 2026-08-12
+
+### Added
+
+- Fix core version
+
 ## [1.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v1.0.1...joule-profiler-core-v1.0.2) - 2026-04-29
 
 ### Fixed

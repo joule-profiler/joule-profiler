@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-nvml-v1.0.2...joule-profiler-source-nvml-v1.1.0) - 2026-08-12
+
+### Added
+
+- *(config-file)* update all sources configuration and improved configuration file example
+- *(config)* replace CLI override with function to abstract override logic
+- *(config)* Config deserialization using toml crate, override with CLI using CliOverride trait
+- *(nvml)* added power, vram and GPU usage
+
+### Other
+
+- *(nvml)* use spawn blocking for each gpu to avoid blocking the async runtime
+- fix clippy --all-targets warnings
+- *(nvml)* removed UUID and use indexes for gpu spec
+- *(nvml)* changed polling interval to 20 hz because the majority of counters does not have a higher frequency
+- *(nvml)* added utilization counters doc
+- *(nvml)* update nvml source README.md
+- *(nvml)* update module doc
+- *(nvml)* document NVML hardware
+- *(nvml)* improved logging
+- *(nvml)* test new version of nvml source
+- update sources readme
+- update README of cgroup source, also fixed other sources README
+
 ## [1.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-nvml-v1.0.1...joule-profiler-source-nvml-v1.0.2) - 2026-04-29
 
 ### Other
