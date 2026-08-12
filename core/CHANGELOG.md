@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.0.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v1.0.2...joule-profiler-core-v2.0.0) - 2026-08-12
+
+### Added
+
+- *(perf)* added cgroup scoped counters for perf_event source, optimized reading with spawn blocking and added pre_init function to do some sources work before spawning process
+- *(config)* Config deserialization using toml crate, override with CLI using CliOverride trait
+- *(cgroup)* added cpu usage metrics, computed with usage_usec and phase time
+- *(cgroup)* polling implementation for non monotonic counters
+- procfs source implementation, memory done and io operations unstable
+- added init validation in orchestrator and refactored orchestrator
+
+### Fixed
+
+- *(config)* all sources configurations deserialization fixed
+- check command not empty before spawning process to avoid panic
+- added CLI flag --init-timeout to be able to configure it on slow devices
+- skip empty sources results and throw an error only when merging different phases counts
+
+### Other
+
+- moved new types into types.rs
+- removed spawn blocking for waiting and put oneshot sender
+- profiler.rs improvement
+- spawn reader task in a separate thread to not block the async runtime
+- spawn phase detection mechanism in its own thread instead of blocking async runtime
+- update RAPL new functions doc and cli doc
+- some minor fixes in RAPL and cgroup
+- *(nvml)* use spawn blocking for each gpu to avoid blocking the async runtime
+- fix clippy --all-targets warnings
+- changed output format from --json --csv to --output-format and fixed file creation when no parent path is provided.
+- *(nvml)* fix tests after updating nvml hardware
+- update doc for metric reader type bound
+- *(cgroup)* improved error handling, readme documentation, improved configuration and removed controller creation (delegated to user for performance)
+- *(procfs)* fmt, fix clippy warnings and clear sentinel values if any in to_metrics
+- orchestrator refactoring
+- orchestrator refactoring for source initialization
+- update orchestrator documentation
+- documented orchestrator measure method to indicate that it does not ensure measurement completion
+- removed former default ProfileConfig values in core
+- improved ProfileConfig builder usage
+- fix doctests with new CLI flag
+
 ## [1.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v1.0.1...joule-profiler-core-v1.0.2) - 2026-04-29
 
 ### Fixed
