@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+"""
+CPU intensive program.
+ Usage:
+    joule-profiler profile -- python3 ./examples/programs/nbody.py {n}
+    with n = 1000000 < 1s
+         n = 10000000 < 3s
+         n = 100000000 < 30s 
+"""
 # The Computer Language Benchmarks Game
 # https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
 #
