@@ -54,6 +54,8 @@ sudo sysctl kernel.perf_event_paranoid=0
 See the [perf_event_paranoid](https://joule-profiler.github.io/sources/perf_event/perf_event_paranoid.html) documentation for further information.
 Some sources like Cgroup or RAPL with the powercap backend can also require root privileges.
 
+Some examples programs and outputs are provided in the examples directory. Also a library usage example is provided.
+
 ## Documentation
 
 **[Full Documentation](https://joule-profiler.github.io/)**
