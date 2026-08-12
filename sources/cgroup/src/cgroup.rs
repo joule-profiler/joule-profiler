@@ -1,9 +1,4 @@
-//! cgroup v2 management utilities.
-//!
-//! This module provides:
-//! - child cgroup creation and cleanup;
-//! - process attachment to cgroups;
-//! - CPU, memory, and I/O statistics collection.
+//! Cgroup v2 management utilities.
 
 use std::{
     fs,
@@ -17,15 +12,17 @@ use crate::{
     Result,
     error::CgroupError,
     snapshot::{CpuSnapshot, IoSnapshot, MemorySnapshot},
-    util::{read_flat_keyed_file, read_io_stat, read_u64_opt},
+    util::{is_cgroup_dir, read_flat_keyed_file, read_io_stat, read_u64_opt},
 };
 
 /// Interface for reading cgroup statistics.
-///
-/// `Default` and `Clone` let [`RootCgroup::build`] construct a backend from
-/// scratch and share that same instance with its child cgroup, for any
-/// implementation of this trait (not just [`SysFsBackend`]).
 pub trait CgroupBackend: Send + Sync + Clone + Default + 'static {
+    /// Checks that `path` is a cgroup the backend can read, `root` being the
+    /// hierarchy it belongs to.
+    fn verify(&self, _path: &Path, _root: &Path) -> Result<()> {
+        Ok(())
+    }
+
     /// Initializes the backend.
     fn create(&self, path: &Path) -> Result<()>;
 
@@ -54,7 +51,11 @@ impl SysFsBackend {
     fn pids(path: &Path) -> Result<Vec<i32>> {
         debug!("Retrieving cgroup `{}` PIDs.", path.display());
         let path = path.join("cgroup.procs");
-        let content = fs::read_to_string(&path)?;
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(CgroupError::io(&path, err)),
+        };
         Ok(content
             .lines()
             .filter_map(|l| l.trim().parse::<i32>().ok())
@@ -63,6 +64,20 @@ impl SysFsBackend {
 }
 
 impl CgroupBackend for SysFsBackend {
+    /// Checks that the hierarchy is mounted and that the cgroup exists in it.
+    fn verify(&self, path: &Path, root: &Path) -> Result<()> {
+        if !is_cgroup_dir(root) {
+            return Err(CgroupError::NotAvailable(root.to_path_buf()));
+        }
+        if !path.exists() {
+            return Err(CgroupError::NotFound(path.to_path_buf()));
+        }
+        if !is_cgroup_dir(path) {
+            return Err(CgroupError::NotAvailable(path.to_path_buf()));
+        }
+        Ok(())
+    }
+
     /// Creates the cgroup directory.
     fn create(&self, path: &Path) -> Result<()> {
         debug!("Initializing cgroup at \"{}\"", path.display());
@@ -70,7 +85,7 @@ impl CgroupBackend for SysFsBackend {
             ErrorKind::PermissionDenied => {
                 CgroupError::PermissionDenied("creating a cgroup requires root privileges.")
             }
-            _ => err.into(),
+            _ => CgroupError::io(path, err),
         })?;
         Ok(())
     }
@@ -82,6 +97,12 @@ impl CgroupBackend for SysFsBackend {
             ErrorKind::PermissionDenied => CgroupError::PermissionDenied(
                 "attaching a process to this cgroup requires root privileges.",
             ),
+            // The kernel reports a missing `cgroup.procs` and a process that
+            // died before being attached the same way, so only the file tells
+            // them apart.
+            ErrorKind::NotFound if !procs_path.exists() => {
+                CgroupError::NotFound(path.to_path_buf())
+            }
             _ => CgroupError::FailedToAttachPid {
                 pid,
                 path: procs_path,
@@ -94,6 +115,14 @@ impl CgroupBackend for SysFsBackend {
 
     /// Moves processes back to the root cgroup and removes the directory.
     fn cleanup(&self, path: &Path, root: &Path) -> Result<()> {
+        if !path.exists() {
+            debug!(
+                "Cgroup `{}` is already gone, nothing to clean.",
+                path.display()
+            );
+            return Ok(());
+        }
+
         debug!("Cleaning cgroup `{}`.", path.display());
 
         let root_procs = root.join("cgroup.procs");
@@ -102,15 +131,13 @@ impl CgroupBackend for SysFsBackend {
                 warn!("Could not move PID {pid} back to root cgroup: {e}");
             }
         }
-        if path.exists() {
-            if let Err(e) = fs::remove_dir(path) {
-                warn!(
-                    "Could not remove cgroup {} (may still have live tasks): {e}",
-                    path.display()
-                );
-            } else {
-                debug!("Removed cgroup {}", path.display());
-            }
+        match fs::remove_dir(path) {
+            Ok(()) => debug!("Removed cgroup {}", path.display()),
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => warn!(
+                "Could not remove cgroup {} (may still have live tasks): {e}",
+                path.display()
+            ),
         }
         Ok(())
     }
@@ -221,6 +248,11 @@ impl<B: CgroupBackend> RootCgroup<B> {
     pub fn io(&self) -> Result<IoSnapshot> {
         self.backend.io(&self.path)
     }
+
+    /// Checks that the cgroup v2 hierarchy is mounted at this path.
+    pub fn verify(&self) -> Result<()> {
+        self.backend.verify(&self.path, &self.path)
+    }
 }
 
 const DEFAULT_CGROUP_ROOT: &str = "/sys/fs/cgroup";
@@ -265,6 +297,11 @@ impl<B: CgroupBackend> ChildCgroup<B> {
     /// Get I/O stats.
     pub fn io(&self) -> Result<IoSnapshot> {
         self.backend.io(&self.path)
+    }
+
+    /// Checks that the cgroup exists in a mounted cgroup v2 hierarchy.
+    pub fn verify(&self) -> Result<()> {
+        self.backend.verify(&self.path, &self.root)
     }
 
     /// Initializes the cgroup backend.
@@ -327,6 +364,78 @@ mod tests {
             root: path,
             backend,
         }
+    }
+
+    /// Builds a directory that looks like a cgroup v2 one.
+    fn cgroup_dir(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        fs::write(path.join("cgroup.controllers"), "cpu io memory").unwrap();
+    }
+
+    #[test]
+    fn verify_rejects_a_root_that_is_not_a_cgroup_hierarchy() {
+        let dir = tempfile::tempdir().unwrap();
+        let cgroup = dir.path().join("child");
+        cgroup_dir(&cgroup);
+
+        let err = SysFsBackend.verify(&cgroup, dir.path()).unwrap_err();
+
+        assert!(matches!(err, CgroupError::NotAvailable(path) if path == dir.path()));
+    }
+
+    #[test]
+    fn verify_rejects_a_missing_cgroup() {
+        let dir = tempfile::tempdir().unwrap();
+        cgroup_dir(dir.path());
+        let cgroup = dir.path().join("child");
+
+        let err = SysFsBackend.verify(&cgroup, dir.path()).unwrap_err();
+
+        assert!(matches!(err, CgroupError::NotFound(path) if path == cgroup));
+    }
+
+    #[test]
+    fn verify_rejects_a_plain_directory_inside_a_hierarchy() {
+        let dir = tempfile::tempdir().unwrap();
+        cgroup_dir(dir.path());
+        let cgroup = dir.path().join("child");
+        fs::create_dir(&cgroup).unwrap();
+
+        let err = SysFsBackend.verify(&cgroup, dir.path()).unwrap_err();
+
+        assert!(matches!(err, CgroupError::NotAvailable(path) if path == cgroup));
+    }
+
+    #[test]
+    fn verify_accepts_a_cgroup_of_the_hierarchy() {
+        let dir = tempfile::tempdir().unwrap();
+        let cgroup = dir.path().join("child");
+        cgroup_dir(dir.path());
+        cgroup_dir(&cgroup);
+
+        SysFsBackend.verify(&cgroup, dir.path()).unwrap();
+    }
+
+    /// Cleaning up a cgroup that the kernel already removed, or that was never
+    /// created because the run failed earlier, is not a failure.
+    #[test]
+    fn cleanup_of_a_missing_cgroup_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        cgroup_dir(dir.path());
+
+        SysFsBackend
+            .cleanup(&dir.path().join("gone"), dir.path())
+            .unwrap();
+    }
+
+    #[test]
+    fn attach_pid_reports_a_missing_cgroup() {
+        let dir = tempfile::tempdir().unwrap();
+        let cgroup = dir.path().join("gone");
+
+        let err = SysFsBackend.attach_pid(&cgroup, 1).unwrap_err();
+
+        assert!(matches!(err, CgroupError::NotFound(path) if path == cgroup));
     }
 
     #[test]
