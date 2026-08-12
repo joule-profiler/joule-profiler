@@ -1,7 +1,7 @@
 /*
  * CPU intensive program.
  * Compile with:
- *      gcc -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge  examples/programs/nbody.c -o examples/programs/nbody
+ *      gcc -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge  examples/programs/nbody.c -o nbody
  * 
  * Usage:
  *      joule-profiler profile -- ./nbody {n}
