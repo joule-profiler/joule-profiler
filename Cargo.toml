@@ -3,8 +3,7 @@ resolver = "2"
 members = [
     "core",
     "cli",
-    "sources/*",
-    "examples/library_usage"
+    "sources/*"
 ]
 default-members = [
     "core",
