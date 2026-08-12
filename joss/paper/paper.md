@@ -42,9 +42,9 @@ Researchers and developers need simple tools to measure the energy use of code s
 
 # State of the field
 
-Existing tools like PowerAPI [@powerapi], Alumet [@alumet], Scaphandre [@scaphandre], and EnergiBridge [@sallou_energibridge_2024] monitor energy using these counters, often focusing on distributed and system-level observability. JouleIt [@jouleit], which inspired this work, demonstrated a light wrapper approach but lacked phase decomposition, GPU support, and modularity.
+Existing tools such as PowerAPI [@powerapi], Alumet [@alumet], Scaphandre [@scaphandre], and EnergiBridge [@sallou_energibridge_2024] monitor energy using these counters, often focusing on distributed and system-level observability. JouleIt [@jouleit], which inspired this work, demonstrated a light wrapper approach but lacked phase decomposition, GPU support, and modularity.
 
-These solutions are suited for system-level monitoring, not fine-grained analysis of program phases. Joule Profiler, in contrast, is designed for lightweight, single-invocation use, enabling energy attribution to specific program phases.
+These solutions are better suited for system-level monitoring, not fine-grained analysis of program phases. Joule Profiler, in contrast, is designed for lightweight, single-invocation use, enabling energy attribution to specific program phases.
 
 # Software design
 
@@ -65,7 +65,7 @@ When a phase marker is detected, Joule Profiler records energy counter values at
 
 ## Software architecture
 
-Joule Profiler has been designed to be modular. These modules collect energy and performance metrics from multiple hardware sources while keeping overhead low. To simplify extension and maintenance, the measurement logic is isolated from the hardware-specific implementations. Joule Profiler accesses RAPL counters via the `perf_event` interface [@linux_perf_event], which exposes hardware performance monitoring facilities. If `perf_event` is unavailable, the tool falls back to the powercap interface in Linux `sysfs` [@linux_powercap]. For NVIDIA GPUs, it uses the *NVIDIA Management Library* (NVML)[@nvidia_nvml] to retrieve power consumption on compatible hardware. Joule Profiler can also collect hardware performance counters via `perf_event`, allowing energy measurements to be correlated with performance events or split proportionally when multiple components contribute.
+Joule Profiler has been designed to be modular. These modules collect energy and performance metrics from multiple hardware sources while keeping overhead low. To simplify extension and maintenance, the measurement logic is isolated from the hardware-specific implementations. Joule Profiler accesses RAPL counters via the `perf_event` interface [@linux_perf_event], which exposes hardware performance monitoring facilities. If `perf_event` is unavailable, the tool falls back to the powercap interface in Linux `sysfs` [@linux_powercap]. For NVIDIA GPUs, it uses the *NVIDIA Management Library* (NVML) [@nvidia_nvml] to retrieve power consumption on compatible hardware. Joule Profiler can also collect hardware performance counters via `perf_event`, allowing energy measurements to be correlated with performance events or split proportionally when multiple components contribute.
 
 ![](images/archi.png){ width=90% }
 
@@ -73,11 +73,11 @@ Internally, the tool is structured into layers. The core layer handles the main 
 
 # Software assessment
 
-To validate its measurements, the Joule Profiler was compared with the reference tools perf [@perfwiki] and Alumet [@alumet], both of which use RAPL counters but employ different strategies. This checks whether Joule Profiler introduces measurement bias.
+To validate its measurements, Joule Profiler was compared with the reference tools perf [@perfwiki] and Alumet [@alumet], both of which use RAPL counters but employ different strategies. This checks whether Joule Profiler introduces measurement bias.
 
-Three scenarios were tested: (1) parallel runs of Joule Profiler and perf (with CPU load) or Alumet (with GPU load) alongside a sleep command, ensuring identical hardware activity and measurement noise; (2) Sequential execution of Joule Profiler, perf, and Alumet with workload pinned to a single CPU core, to compare overhead and variability; and (3) A custom workload with periodic output tokens tested phase detection precision.
+Three scenarios were tested: (1) Parallel runs of Joule Profiler and perf (with CPU load) or Alumet (with GPU load) alongside a sleep command, ensuring identical hardware activity and measurement noise; (2) Sequential execution of Joule Profiler, perf, and Alumet with workload pinned to a single CPU core, to compare overhead and variability; and (3) A custom workload with periodic output tokens for testing phase detection precision.
 
-Experiments used Grid’5000 nodes: Chirop (Intel Xeon, RAPL, 512 GiB RAM) and Chifflot (Nvidia Tesla V100, NVML, 192 GiB RAM). Energy was measured from RAPL (PACKAGE, DRAM) and NVML (GPU). `perf_event` was used for access. Hyper-threading was disabled, and the CPU frequency governor was set to performance to reduce variability.
+Experiments used Grid’5000 nodes: Chirop (Intel Xeon, RAPL, 512 GiB RAM) and Chifflot (NVIDIA Tesla V100, NVML, 192 GiB RAM). Energy was measured from RAPL (PACKAGE, DRAM) and NVML (GPU). `perf_event` was used for access. Hyper-threading was disabled, and the CPU frequency governor was set to performance to reduce variability.
 
 ## Total energy comparison
 
@@ -99,7 +99,7 @@ We performed 4,000 measurements to achieve 80% power and applied a *Two One-Side
 	\label{fig:rapl_bland_altman}
 \end{figure}
 
-\autoref{fig:rapl_energy_distribution} and \autoref{fig:rapl_bland_altman} show close agreement between Joule Profiler and the reference tools. For `DRAM-0`, the bias is 0.013 J with 96.8% of measurements within the _Limits of Agreement_ (LoA). For `PACKAGE-0`, the bias is 0.046 J, with 95.8% within LoA, though variability increases at high energy values, consistent with known RAPL noise at the package level. For `GPU-0`, the bias is 1.39 J with 94.5% within LoA, reflecting the higher natural variability of GPU power sampling (coefficient of variation ~1.95% for both tools). The Pearson correlation between Joule Profiler and perf exceeded 99.9% for both RAPL domains and reached 99.5% against Alumet for GPU. The TOST null hypotheses of non-equivalence were rejected for all domains, confirming that Joule Profiler does not introduce a significant measurement bias.
+\autoref{fig:rapl_energy_distribution} and \autoref{fig:rapl_bland_altman} show close agreement between Joule Profiler and the reference tools. For `DRAM-0`, the bias is 0.013 J with 96.8% of measurements within the _Limits of Agreement_ (LoA). For `PACKAGE-0`, the bias is 0.046 J with 95.8% within LoA, though variability increases at high energy values, consistent with known RAPL noise at the package level. For `GPU-0`, the bias is 1.39 J with 94.5% within LoA, reflecting the higher natural variability of GPU power sampling (coefficient of variation ~1.95% for both tools). The Pearson correlation between Joule Profiler and perf exceeded 99.9% for both RAPL domains and reached 99.5% against Alumet for GPU. The TOST null hypotheses of non-equivalence were rejected for all domains, confirming that Joule Profiler does not introduce a significant measurement bias.
 
 ### Sequential execution
 
@@ -133,9 +133,9 @@ Joule Profiler was initially developed at [Inria](https://www.inria.fr/fr) and t
 
 All validation experiments used the Grid'5000/SLICES-FR testbed, a shared French research infrastructure. Joule Profiler is intentionally compatible with its hardware and workflows. Joule Profiler is intended to be executed in bare-metal environments that expose the required sources (RAPL, NVML) under Linux.
 
-Joule Profiler is open-source (MIT) at [https://github.com/joule-profiler/joule-profiler](https://github.com/joule-profiler/joule-profiler), with versioned releases and documentation.
+Joule Profiler is open source (MIT) at [https://github.com/joule-profiler/joule-profiler](https://github.com/joule-profiler/joule-profiler), with versioned releases and documentation.
 
-# AI Usage Disclosure
+# AI usage disclosure
 
 This submission used generative AI tools only during early project stages.
 
@@ -152,6 +152,6 @@ The authors take full responsibility for the accuracy, originality, and integrit
 
 # Acknowledgements
 
-This work received support from the France 2030 program under grant agreement `ANR-23-PECL-0003` ([CARECloud](https://carecloud.irisa.fr) project of the [PEPR CLOUD](https://pepr-cloud.fr/) research program), and from the Inria–Qarnot PULSE project ([https://defi-pulse.github.io/](https://defi-pulse.github.io/)). Experiments were carried out using the Grid'5000 testbed, supported by a scientific interest group hosted by Inria and including CNRS, RENATER, and several Universities (see [https://www.grid5000.fr](https://www.grid5000.fr)).
+This work received support from the France 2030 program under grant agreement `ANR-23-PECL-0003` ([CARECloud](https://carecloud.irisa.fr) project of the [PEPR CLOUD](https://pepr-cloud.fr/) research program), and from the Inria–Qarnot PULSE project ([https://defi-pulse.github.io/](https://defi-pulse.github.io/)). Experiments were carried out using the Grid'5000 testbed, supported by a scientific interest group hosted by Inria and including CNRS, RENATER, and several universities (see [https://www.grid5000.fr](https://www.grid5000.fr)).
 
 # References
