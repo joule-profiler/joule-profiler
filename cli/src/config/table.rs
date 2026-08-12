@@ -418,7 +418,6 @@ mod tests {
             token_pattern: Some("__CLI__".to_owned()),
             init_timeout: Some(Duration::from_secs(9)),
             use_root: true,
-            rapl_polling: None,
         }));
 
         table.apply_cli(&mut cli);

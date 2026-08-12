@@ -1,10 +1,8 @@
 use anyhow::Result;
 use joule_profiler_cli::config::load_global_config;
-use joule_profiler_cli::config::source::{register_source, register_source_override};
+use joule_profiler_cli::config::source::register_source;
 use joule_profiler_cli::config::table::ConfigTable;
-use joule_profiler_cli::{
-    CliArgs, ProfilerCommand, RaplBackend, config_table_to_displayer, init_logging,
-};
+use joule_profiler_cli::{CliArgs, RaplBackend, config_table_to_displayer, init_logging};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::Command;
 use joule_profiler_source_amdsmi::AmdSmi;
@@ -30,15 +28,8 @@ async fn main() -> Result<()> {
 
     match config_table.profiler_config.rapl_backend {
         RaplBackend::Perf => register_source::<perf::Rapl>(&mut profiler, &mut config_table),
-
         RaplBackend::Powercap => {
-            register_source_override::<powercap::Rapl>(&mut profiler, &mut config_table, |config| {
-                if let ProfilerCommand::Profile(profile_args) = &cli.command
-                    && let Some(rapl_polling) = profile_args.rapl_polling
-                {
-                    config.poll_interval = Some(rapl_polling);
-                }
-            })
+            register_source::<powercap::Rapl>(&mut profiler, &mut config_table)
         }
     }?;
 
