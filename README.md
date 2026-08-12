@@ -37,14 +37,22 @@ sudo cp target/release/joule-profiler /usr/local/bin/
 
 ```bash
 # Phase-based profiling
-sudo joule-profiler profile -- python workload.py
+joule-profiler profile -- <COMMAND>
 
 # JSON output
-sudo joule-profiler --output-format json profile -- ./benchmark
+joule-profiler --output-format json profile -- <COMMAND>
 
 # GPU profiling (NVIDIA)
-sudo joule-profiler --sources rapl,nvml profile -- ./gpu-workload
+joule-profiler --sources rapl,nvml profile -- <COMMAND>
 ```
+
+For the RAPL source with the perf_event backend, you might be asked to run Joule Profiler with the root privileges, you can configure the perf_event_paranoid level to allow using the source without them:
+```bash
+sudo sysctl kernel.perf_event_paranoid=0
+```
+
+See the [perf_event_paranoid](https://joule-profiler.github.io/sources/perf_event/perf_event_paranoid.html) documentation for further information.
+Some sources like Cgroup or RAPL with the powercap backend can also require root privileges.
 
 ## Documentation
 
@@ -71,7 +79,7 @@ print("__CLEANUP__")
 ```
 
 ```bash
-sudo joule-profiler profile -- python example.py
+joule-profiler profile -- python example.py
 ```
 
 ### Multiple Metric Sources
@@ -81,7 +89,7 @@ sudo joule-profiler profile -- python example.py
 | **RAPL** (powercap) | RAPL domains energy | Intel CPU, kernel 3.13+ |
 | **RAPL** (perf) | RAPL domains energy | Intel CPU, perf_event support |
 | **perf_event** | Performance counters | Linux perf support |
-| **cgroup** | CPU/memory/IO usage | cgroup v2, root if cgroup creation |
+| **cgroup** | CPU/memory/IO usage | cgroup v2, root if cgroup creation or attach pid |
 | **procfs** | Memory/IO usage | Linux, `/proc` access |
 | **NVML** | NVIDIA GPU energy | NVIDIA GPU |
 | **AMD SMI** | AMD GPU energy | AMD GPU, `amd-smi-lib` |
