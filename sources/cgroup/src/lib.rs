@@ -11,7 +11,7 @@ use joule_profiler_core::source::MetricReader;
 use joule_profiler_core::time::get_timestamp_micros;
 use joule_profiler_core::types::{Metric, MetricValue, Metrics};
 use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -158,6 +158,12 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
         self.root_cgroup.verify()?;
 
         if self.config.create_cgroup {
+            if self.proc_cgroup.verify().is_ok() {
+                warn!(
+                    "Cgroup {} already mounted, if a process has already been spawned inside the cgroup, then the peak metrics might be wrong.",
+                    self.config.cgroup_name
+                );
+            }
             self.proc_cgroup.create()?;
         }
 

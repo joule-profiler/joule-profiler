@@ -97,9 +97,7 @@ impl CgroupBackend for SysFsBackend {
             ErrorKind::PermissionDenied => CgroupError::PermissionDenied(
                 "attaching a process to this cgroup requires root privileges.",
             ),
-            // The kernel reports a missing `cgroup.procs` and a process that
-            // died before being attached the same way, so only the file tells
-            // them apart.
+
             ErrorKind::NotFound if !procs_path.exists() => {
                 CgroupError::NotFound(path.to_path_buf())
             }
