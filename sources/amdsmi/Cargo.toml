@@ -18,7 +18,7 @@ futures.workspace = true
 serde.workspace = true
 humantime-serde.workspace = true
 
-amdsmi = { git = "https://github.com/joule-profiler/amd-smi-wrapper", version = "0.1.0" }
+amdsmi = "0.1.0" 
 tokio-timerfd = "0.2.0"
 tokio-util = "0.7.18"
 bitflags = "2.11.1"
