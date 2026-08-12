@@ -1,10 +1,9 @@
-use anyhow::{Result, anyhow};
-use joule_profiler_cli::config::GlobalConfig;
+use anyhow::Result;
+use joule_profiler_cli::config::load_global_config;
 use joule_profiler_cli::config::source::{register_source, register_source_override};
 use joule_profiler_cli::config::table::ConfigTable;
 use joule_profiler_cli::{
     CliArgs, ProfilerCommand, RaplBackend, config_table_to_displayer, init_logging,
-    parse_sockets_spec,
 };
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::Command;
@@ -24,47 +23,23 @@ async fn main() -> Result<()> {
 
     let mut profiler = JouleProfiler::new();
 
-    let mut config_table = if let Some(config_file) = &cli.config_file {
-        let content = std::fs::read_to_string(config_file)
-            .map_err(|e| anyhow!("configuration file error. Cause: {e}"))?;
-        let value: GlobalConfig = toml::from_str(&content)
-            .map_err(|e| anyhow!("error parsing configuration file. Cause: {e}"))?;
-
-        ConfigTable::new(value, &cli.sources)
-    } else {
-        ConfigTable::new(GlobalConfig::default(), &cli.sources)
-    };
+    let global_config = load_global_config(cli.config_file.as_deref(), &cli.overrides)?;
+    let mut config_table = ConfigTable::new(global_config, &cli.sources);
 
     config_table.apply_cli(&mut cli);
 
     match config_table.profiler_config.rapl_backend {
-        RaplBackend::Perf => register_source_override::<perf::Rapl, CliArgs>(
-            &mut profiler,
-            &mut config_table,
-            |config| {
-                if let Some(sockets_spec) = &cli.sockets {
-                    config.sockets_spec = Some(parse_sockets_spec(sockets_spec));
-                }
-            },
-        ),
+        RaplBackend::Perf => register_source::<perf::Rapl>(&mut profiler, &mut config_table),
 
-        RaplBackend::Powercap => register_source_override::<powercap::Rapl, CliArgs>(
-            &mut profiler,
-            &mut config_table,
-            |config| {
-                if let Some(rapl_path) = cli.rapl_path.take() {
-                    config.rapl_path = Some(rapl_path);
-                }
-                if let Some(sockets_spec) = &cli.sockets {
-                    config.sockets_spec = Some(parse_sockets_spec(sockets_spec));
-                }
+        RaplBackend::Powercap => {
+            register_source_override::<powercap::Rapl>(&mut profiler, &mut config_table, |config| {
                 if let ProfilerCommand::Profile(profile_args) = &cli.command
                     && let Some(rapl_polling) = profile_args.rapl_polling
                 {
                     config.poll_interval = Some(rapl_polling);
                 }
-            },
-        ),
+            })
+        }
     }?;
 
     register_source::<PerfEvent>(&mut profiler, &mut config_table)?;
@@ -72,6 +47,8 @@ async fn main() -> Result<()> {
     register_source::<Procfs>(&mut profiler, &mut config_table)?;
     register_source::<Nvml>(&mut profiler, &mut config_table)?;
     register_source::<AmdSmi>(&mut profiler, &mut config_table)?;
+
+    config_table.ensure_sources_are_known()?;
 
     let mut displayer = config_table_to_displayer(&config_table)?;
     let config = config_table.to_config(cli)?;

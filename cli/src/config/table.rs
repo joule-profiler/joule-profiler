@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use clap::ValueEnum;
 use joule_profiler_core::{
     config::{Command, Config, ProfileConfigBuilder},
     source::MetricReader,
@@ -53,9 +54,9 @@ impl ConfigTable {
     /// in one pass, so [`ConfigTable::to_config`] can read `profiler_config`
     /// directly afterwards instead of re-merging `cli` itself.
     ///
-    /// Per-source overrides (e.g. RAPL's sockets/path/polling) are a separate
-    /// concern and stay as override closures at each source's registration
-    /// call site (see `register_source_override`).
+    /// Only the flags that have no configuration key of their own go through
+    /// here: the `-D` overrides are already merged into the configuration
+    /// before the table is built.
     pub fn apply_cli(&mut self, cli: &mut CliArgs) {
         if let Some(output_format) = cli.output_format.take() {
             self.profiler_config.output_format = output_format;
@@ -63,10 +64,6 @@ impl ConfigTable {
 
         if let Some(output_file) = cli.output_file.take() {
             self.profiler_config.output_file = Some(output_file);
-        }
-
-        if let Some(rapl_backend) = cli.rapl_backend.take() {
-            self.profiler_config.rapl_backend = rapl_backend;
         }
 
         if let ProfilerCommand::Profile(profile_args) = &mut cli.command {
@@ -86,7 +83,7 @@ impl ConfigTable {
         }
     }
 
-    /// Builds a metric source reader of type `R` using the provided configuration
+    /// Builds a metric source reader using the provided configuration
     /// into the config table, or default configuration if not configured.
     ///
     /// It returns an error if the source initialization fails and `ignore_on_failure` is not set.
@@ -121,7 +118,7 @@ impl ConfigTable {
         }
     }
 
-    /// Builds a metric source reader of type `R`, applying an external config
+    /// Builds a metric source reader, applying an external config
     /// override through a caller-supplied closure before construction.
     ///
     /// It returns an error if the source initialization fails and `ignore_on_failure` is not set.
@@ -163,6 +160,31 @@ impl ConfigTable {
 }
 
 impl ConfigTable {
+    /// Errors on the configured sources no registered source claimed.
+    ///
+    /// Must be called once every source has been registered: `build_source`
+    /// takes its own section out of the table, so what is left can only be
+    /// misspelled source names.
+    pub fn ensure_sources_are_known(&self) -> Result<()> {
+        if self.sources_config.is_empty() {
+            return Ok(());
+        }
+
+        let mut unknown: Vec<&str> = self.sources_config.keys().map(String::as_str).collect();
+        unknown.sort_unstable();
+
+        let known: Vec<String> = Source::value_variants()
+            .iter()
+            .map(Source::to_string)
+            .collect();
+
+        bail!(
+            "unknown metric source `{}`. Available sources: {}.",
+            unknown.join("`, `"),
+            known.join(", "),
+        )
+    }
+
     /// Consumes the [`ConfigTable`] and a final [`CliArgs`] to produce the
     /// core [`Config`].
     ///
@@ -266,12 +288,10 @@ mod tests {
     fn cli_args(command: ProfilerCommand) -> CliArgs {
         CliArgs {
             verbose: 0,
-            rapl_path: None,
-            sockets: None,
             output_format: None,
             output_file: None,
-            rapl_backend: None,
             sources: Vec::new(),
+            overrides: Vec::new(),
             config_file: None,
             command,
         }
@@ -387,21 +407,6 @@ mod tests {
             Some("cli_output.csv")
         );
         assert!(cli.output_file.is_none());
-    }
-
-    #[test]
-    fn apply_cli_overrides_rapl_backend_and_consumes_it() {
-        let mut table = config_table_with(ProfilerConfig::default());
-        let mut cli = cli_args(ProfilerCommand::ListSensors);
-        cli.rapl_backend = Some(RaplBackend::Powercap);
-
-        table.apply_cli(&mut cli);
-
-        assert!(matches!(
-            table.profiler_config.rapl_backend,
-            RaplBackend::Powercap
-        ));
-        assert!(cli.rapl_backend.is_none());
     }
 
     #[test]
@@ -535,5 +540,31 @@ mod tests {
             .unwrap();
 
         assert_eq!(source.value, 99);
+    }
+
+    #[test]
+    fn ensure_sources_are_known_accepts_a_fully_consumed_table() {
+        let mut table = config_table_with(ProfilerConfig::default());
+        table.enabled_sources.insert("mock".to_owned());
+        table
+            .sources_config
+            .insert("mock".to_owned(), toml::from_str("value = 1").unwrap());
+
+        table.build_source::<MockSource>().unwrap();
+
+        table.ensure_sources_are_known().unwrap();
+    }
+
+    #[test]
+    fn ensure_sources_are_known_rejects_an_unclaimed_source() {
+        let mut table = config_table_with(ProfilerConfig::default());
+        table
+            .sources_config
+            .insert("cgrp".to_owned(), toml::from_str("value = 1").unwrap());
+
+        let err = table.ensure_sources_are_known().unwrap_err();
+
+        assert!(err.to_string().contains("cgrp"));
+        assert!(err.to_string().contains("cgroup"));
     }
 }

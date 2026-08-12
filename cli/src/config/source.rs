@@ -45,13 +45,13 @@ where
 ///
 /// This is the override variant of [`register_source`], used when another
 /// subsystem needs to inject values into the source's config before it is
-/// constructed. The caller supplies an override object `O` and a closure the source's config.
+/// constructed. The caller supplies a closure applied to the source's config.
 ///
 /// If the source is disabled or its initialization fails with
 /// `ignore_on_failure` set, no source is added and `Ok(())` is returned.
 /// Returns an error if source initialization fails and `ignore_on_failure` is
 /// not set in the source's config.
-pub fn register_source_override<R, O>(
+pub fn register_source_override<R>(
     profiler: &mut JouleProfiler,
     config_table: &mut ConfigTable,
     config_override_fn: impl FnOnce(&mut R::Config),

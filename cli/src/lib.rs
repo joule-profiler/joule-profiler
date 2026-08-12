@@ -7,7 +7,7 @@ pub use commands::ProfilerCommand;
 use serde::Deserialize;
 
 use crate::{
-    config::table::ConfigTable,
+    config::{overrides::ConfigOverride, table::ConfigTable},
     output::{
         displayer::Displayer,
         formats::{OutputFormat, csv::CsvOutput, json::JsonOutput, terminal::TerminalOutput},
@@ -32,17 +32,6 @@ pub struct CliArgs {
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
     pub verbose: u8,
 
-    /// Override the base path used to read Intel RAPL counters (powercap backend only).
-    ///
-    /// Resolved by priority: this flag, then the config file's `rapl_path`,
-    /// then `$JOULE_PROFILER_RAPL_PATH`, then `/sys/devices/virtual/powercap/intel-rapl`.
-    #[arg(long = "rapl-path")]
-    pub rapl_path: Option<String>,
-
-    /// Sockets to measure. (e.g., 0 or 0,1)
-    #[arg(short = 's', long = "sockets")]
-    pub sockets: Option<String>,
-
     /// Output format to export the results in. (e.g., terminal, json, csv)
     #[arg(long = "output-format")]
     pub output_format: Option<OutputFormat>,
@@ -51,14 +40,31 @@ pub struct CliArgs {
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
-    /// Choose RAPL backend between powercap or perf. (default: perf)
-    #[arg(long = "rapl-backend", value_enum)]
-    pub rapl_backend: Option<RaplBackend>,
-
     /// Sources activation list. All sources must be separated with a comma (e.g., "perf,nvml").
     #[arg(long, value_delimiter = ',', default_value = "rapl")]
     pub sources: Vec<Source>,
 
+    #[allow(clippy::doc_markdown)]
+    /// Override a configuration key, repeatable. (e.g., -D profiler.rapl_backend=powercap)
+    ///
+    /// KEY is the dotted path of the key in the configuration file, so any
+    /// key a configuration file can set is settable here:
+    ///   -D profiler.output_format=json
+    ///   -D sources.rapl.sockets_spec=[0,1]
+    ///   -D sources.cgroup.create_cgroup=false
+    ///
+    /// VALUE is read as TOML, falling back to a plain string, so durations,
+    /// regexes and paths need no quoting. Overrides are applied on top of the
+    /// --config file, and configuring a source enables it.
+    #[arg(
+        short = 'D',
+        long = "define",
+        value_name = "KEY=VALUE",
+        verbatim_doc_comment
+    )]
+    pub overrides: Vec<ConfigOverride>,
+
+    /// TOML configuration file. Every key it sets can also be set with -D.
     #[arg(long = "config")]
     pub config_file: Option<PathBuf>,
 
@@ -111,7 +117,8 @@ impl std::fmt::Display for Source {
     }
 }
 
-#[derive(Debug, Default, Clone, ValueEnum, Deserialize)]
+/// RAPL backend, selected with `profiler.rapl_backend` in the configuration.
+#[derive(Debug, Default, Clone, Deserialize)]
 pub enum RaplBackend {
     #[default]
     #[serde(rename = "perf")]
@@ -140,13 +147,6 @@ pub fn init_logging(verbose: u8) {
     logging::init_logging(verbose);
 }
 
-pub fn parse_sockets_spec(sockets_spec: &str) -> HashSet<u32> {
-    sockets_spec
-        .split(',')
-        .filter_map(|x| x.trim().parse::<u32>().ok())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use clap::ValueEnum;
@@ -157,12 +157,10 @@ mod tests {
     fn cli_args_with_sources(sources: Vec<Source>) -> CliArgs {
         CliArgs {
             verbose: 0,
-            rapl_path: None,
-            sockets: None,
             output_format: None,
             output_file: None,
-            rapl_backend: None,
             sources,
+            overrides: Vec::new(),
             config_file: None,
             command: ProfilerCommand::ListSensors,
         }
@@ -205,29 +203,6 @@ mod tests {
         assert_eq!(Source::from_str("perf", false).unwrap(), Source::Perf);
         assert_eq!(Source::from_str("procfs", false).unwrap(), Source::Procfs);
         assert_eq!(Source::from_str("cgroup", false).unwrap(), Source::Cgroup);
-    }
-
-    #[test]
-    fn parse_sockets_spec_parses_comma_separated_values() {
-        let sockets = parse_sockets_spec("0,1,2");
-        assert_eq!(sockets, HashSet::from([0, 1, 2]));
-    }
-
-    #[test]
-    fn parse_sockets_spec_trims_whitespace() {
-        let sockets = parse_sockets_spec(" 0 , 1 ");
-        assert_eq!(sockets, HashSet::from([0, 1]));
-    }
-
-    #[test]
-    fn parse_sockets_spec_ignores_invalid_entries() {
-        let sockets = parse_sockets_spec("0,not_a_number,2");
-        assert_eq!(sockets, HashSet::from([0, 2]));
-    }
-
-    #[test]
-    fn parse_sockets_spec_empty_string_returns_empty_set() {
-        assert!(parse_sockets_spec("").is_empty());
     }
 
     #[test]
