@@ -18,7 +18,7 @@ pub struct ProfileArgs {
     pub token_pattern: Option<String>,
 
     /// Redirect profiled program stdout to this file.
-    #[arg(short = 'o', long = "stdout-file")]
+    #[arg(long = "stdout-file")]
     pub stdout_file: Option<String>,
 
     /// Command to execute (everything after `--`).

@@ -1,7 +1,7 @@
 //! Core aggregation module for `JouleProfiler`.
 //!
 //! Provides structures to aggregate metrics from various sources into a unified
-//! format, organized by iterations, phases, and sensor-level results.
+//! format, organized by phases, and sensor-level results.
 //!
 //! Metrics are only instantiated *after* measurements finish to avoid runtime
 //! overhead during collection.
