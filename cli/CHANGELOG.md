@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v3.0.0...joule-profiler-cli-v3.0.1) - 2026-08-13
+
+### Fixed
+
+- remove stdout file CLI flag and former unused iteration parameter in CSV displayer
+
 ## [3.0.0](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-cli-v2.1.1...joule-profiler-cli-v3.0.0) - 2026-08-13
 
 ### Fixed
