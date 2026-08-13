@@ -40,12 +40,8 @@ impl CsvOutput {
     }
 
     /// Write CSV header row.
-    fn write_header(&mut self, with_iteration_id: bool) -> Result<()> {
+    fn write_header(&mut self) -> Result<()> {
         let mut record: Vec<&str> = Vec::new();
-
-        if with_iteration_id {
-            record.push("iteration_id");
-        }
 
         record.extend_from_slice(&[
             "phase_id",
@@ -141,7 +137,7 @@ impl Displayer for CsvOutput {
         }
         let command = cmd.join(" ");
 
-        self.write_header(false)?;
+        self.write_header()?;
         for phase in &results.phases {
             self.write_phase(phase, results, command.as_str(), token_pattern)?;
         }
@@ -252,18 +248,6 @@ mod tests {
         csv.display_results(&["echo".into()], ".*", &results(0, vec![]))
             .unwrap();
         assert!(read(&tmp).is_empty());
-    }
-
-    #[test]
-    fn phases_single_writes_header_without_iteration_id() {
-        let (mut csv, tmp) = csv_to_tempfile();
-        let iter = results(0, vec![simple_phase(vec![metric("PKG", 10)])]);
-        csv.display_results(&["echo".into()], ".*", &iter).unwrap();
-        let content = read(&tmp);
-        assert!(content.contains("phase_id"));
-        assert!(content.contains("phase_name"));
-        assert!(content.contains("metric_name"));
-        assert!(!content.contains("iteration_id"));
     }
 
     #[test]
