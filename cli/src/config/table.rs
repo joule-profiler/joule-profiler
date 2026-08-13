@@ -305,7 +305,7 @@ mod tests {
             output_file: Some("configured_output.json".to_owned()),
             output_format: OutputFormat::Json,
             init_timeout: Duration::from_secs(5),
-            #[cfg(feature = "rapl")]
+            #[cfg(feature = "_rapl")]
             rapl_backend: crate::RaplBackend::default(),
         }
     }

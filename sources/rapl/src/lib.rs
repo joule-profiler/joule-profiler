@@ -14,6 +14,9 @@ use joule_profiler_core::unit::{MetricUnit, Unit, UnitPrefix};
 mod domain_type;
 mod error;
 
+#[cfg(not(any(feature = "backend-perf", feature = "backend-powercap")))]
+compile_error!("Enable at least one backend: `backend-perf` or `backend-powercap`.");
+
 #[cfg(feature = "backend-perf")]
 pub mod perf;
 

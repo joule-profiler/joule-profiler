@@ -6,7 +6,7 @@ use joule_profiler_cli::{CliArgs, config_table_to_displayer, init_logging};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::Command;
 
-#[cfg(feature = "rapl")]
+#[cfg(feature = "_rapl")]
 use joule_profiler_cli::RaplBackend;
 #[cfg(feature = "amdsmi")]
 use joule_profiler_source_amdsmi::AmdSmi;
@@ -18,9 +18,9 @@ use joule_profiler_source_nvml::Nvml;
 use joule_profiler_source_perf_event::PerfEvent;
 #[cfg(feature = "procfs")]
 use joule_profiler_source_procfs::Procfs;
-#[cfg(feature = "rapl-backend-perf")]
+#[cfg(feature = "rapl-perf")]
 use joule_profiler_source_rapl::perf;
-#[cfg(feature = "rapl-backend-powercap")]
+#[cfg(feature = "rapl-powercap")]
 use joule_profiler_source_rapl::powercap;
 
 #[tokio::main]
@@ -37,11 +37,11 @@ async fn main() -> Result<()> {
 
     config_table.apply_cli(&mut cli);
 
-    #[cfg(feature = "rapl")]
+    #[cfg(feature = "_rapl")]
     match config_table.profiler_config.rapl_backend {
-        #[cfg(feature = "rapl-backend-perf")]
+        #[cfg(feature = "rapl-perf")]
         RaplBackend::Perf => register_source::<perf::Rapl>(&mut profiler, &mut config_table),
-        #[cfg(feature = "rapl-backend-powercap")]
+        #[cfg(feature = "rapl-powercap")]
         RaplBackend::Powercap => {
             register_source::<powercap::Rapl>(&mut profiler, &mut config_table)
         }
