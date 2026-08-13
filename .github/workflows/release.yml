@@ -6,54 +6,24 @@ on:
       - main
 
 jobs:
-  release-plz-pr:
-    name: Release-plz PR
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    concurrency:
-      group: release-plz-${{ github.ref }}
-      cancel-in-progress: false
-    outputs:
-      prs_created: ${{ steps.release-pr.outputs.prs_created }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - name: Run release-plz
-        id: release-pr
-        uses: release-plz/action@v0.5
-        with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
   release-plz-release:
     name: Release-plz release
-    needs: release-plz-pr
-    if: needs.release-plz-pr.outputs.prs_created == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: read
-    outputs:
-      cli_released: ${{ steps.parse.outputs.cli_released }}
-      tag_name: ${{ steps.parse.outputs.tag_name }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Run release-plz
+
+      - name: Run release-plz release
         id: release
         uses: release-plz/action@v0.5
         with:
@@ -61,11 +31,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
       - name: Parse tag name
         id: parse
         if: steps.release.outputs.releases_created == 'true'
+        env:
+          RELEASES: ${{ steps.release.outputs.releases }}
         run: |
-          TAG=$(echo '${{ steps.release.outputs.releases }}' | jq -r '.[] | select(.package_name == "joule-profiler-cli") | .tag')
+          TAG=$(echo "$RELEASES" | jq -r '.[] | select(.package_name == "joule-profiler-cli") | .tag')
+
           if [ -n "$TAG" ]; then
             echo "cli_released=true" >> "$GITHUB_OUTPUT"
             echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
@@ -73,10 +47,44 @@ jobs:
             echo "cli_released=false" >> "$GITHUB_OUTPUT"
           fi
 
+    outputs:
+      cli_released: ${{ steps.parse.outputs.cli_released }}
+      tag_name: ${{ steps.parse.outputs.tag_name }}
+
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz release-pr
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
   build-release:
     needs: release-plz-release
     if: needs.release-plz-release.outputs.cli_released == 'true'
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
