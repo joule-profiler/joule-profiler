@@ -154,28 +154,20 @@ impl std::fmt::Display for Source {
     }
 }
 
-#[cfg(all(
-    feature = "rapl",
-    not(any(feature = "rapl-backend-perf", feature = "rapl-backend-powercap"))
-))]
-compile_error!("Enable at least one backend: `rapl-backend-perf` or `rapl-backend-powercap`.");
-
 /// RAPL backend, selected with `profiler.rapl_backend` in the configuration.
 ///
 /// The RAPL source always comes with a backend, so this enum always has at
 /// least one variant.
-#[cfg(feature = "rapl")]
+#[cfg(feature = "_rapl")]
 #[derive(Debug, Default, Clone, Deserialize)]
 pub enum RaplBackend {
-    #[cfg(feature = "rapl-backend-perf")]
+    #[cfg(feature = "rapl-perf")]
     #[default]
     #[serde(rename = "perf")]
     Perf,
 
-    // Only the default when it is the sole backend built in: two `#[default]`
-    // variants do not compile.
-    #[cfg(feature = "rapl-backend-powercap")]
-    #[cfg_attr(not(feature = "rapl-backend-perf"), default)]
+    #[cfg(feature = "rapl-powercap")]
+    #[cfg_attr(not(feature = "rapl-perf"), default)]
     #[serde(rename = "powercap")]
     Powercap,
 }
@@ -221,12 +213,12 @@ mod tests {
 
     #[test]
     fn source_display_matches_every_metric_reader_get_id() {
-        #[cfg(feature = "rapl-backend-perf")]
+        #[cfg(feature = "rapl-perf")]
         assert_eq!(
             Source::Rapl.to_string(),
             joule_profiler_source_rapl::perf::Rapl::get_id()
         );
-        #[cfg(feature = "rapl-backend-powercap")]
+        #[cfg(feature = "rapl-powercap")]
         assert_eq!(
             Source::Rapl.to_string(),
             joule_profiler_source_rapl::powercap::Rapl::get_id()

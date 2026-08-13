@@ -40,17 +40,20 @@ csv = "1.4.0"
 tempfile.workspace = true
 
 [features]
-default = ["rapl", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
+default = ["rapl-perf", "rapl-powercap", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
 
-rapl = ["dep:joule-profiler-source-rapl", "rapl-backend-perf", "rapl-backend-powercap"]
+rapl = ["dep:joule-profiler-source-rapl"]
+_rapl = ["rapl"]
+rapl-perf = ["_rapl", "joule-profiler-source-rapl/backend-perf"]
+rapl-powercap = ["_rapl", "joule-profiler-source-rapl/backend-powercap"]
+
 perf_event = ["dep:joule-profiler-source-perf_event"]
+perf = ["perf_event"]
+
 nvml = ["dep:joule-profiler-source-nvml"]
 amdsmi = ["dep:joule-profiler-source-amdsmi"]
 procfs = ["dep:joule-profiler-source-procfs"]
 cgroup = ["dep:joule-profiler-source-cgroup"]
-
-rapl-backend-perf = ["rapl", "joule-profiler-source-rapl/backend-perf"]
-rapl-backend-powercap = ["rapl", "joule-profiler-source-rapl/backend-powercap"]
 
 [lints]
 workspace = true
