@@ -37,14 +37,36 @@ sudo cp target/release/joule-profiler /usr/local/bin/
 
 ```bash
 # Phase-based profiling
-sudo joule-profiler profile -- python workload.py
+joule-profiler profile -- <COMMAND>
 
 # JSON output
-sudo joule-profiler --json profile -- ./benchmark
+joule-profiler --output-format json profile -- <COMMAND>
 
 # GPU profiling (NVIDIA)
-sudo joule-profiler --gpu profile-- ./gpu-workload
+joule-profiler --sources rapl,nvml profile -- <COMMAND>
 ```
+
+A configuration file can be used to configure the tool using the CLI flag `--config`, see [configuration file](examples/example_config.toml). The CLI arguments will ALWAYS override the configuration arguments.
+
+Any key of the configuration file can be set from the command line with `-D KEY=VALUE`, where `KEY` is the toml key. This works with or without a `--config` file, and can be repeated:
+
+```bash
+# Switch the RAPL backend and restrict it to the first socket
+joule-profiler -D profiler.rapl_backend=powercap -D "sources.rapl.sockets_spec=[0]" profile -- <COMMAND>
+```
+
+> [!IMPORTANT]
+> If a config option is not in string format, then you must add brackets.
+
+For the RAPL source with the perf_event backend, you might be asked to run Joule Profiler with the root privileges, you can configure the perf_event_paranoid level to allow using the source without them:
+```bash
+sudo sysctl kernel.perf_event_paranoid=0
+```
+
+See the [perf_event_paranoid](https://joule-profiler.github.io/sources/perf_event/perf_event_paranoid.html) documentation for further information.
+Some sources like Cgroup or RAPL with the powercap backend can also require root privileges.
+
+Some examples programs and outputs are provided in the [examples](examples) directory. Also a library usage example is provided.
 
 ## Documentation
 
@@ -71,23 +93,26 @@ print("__CLEANUP__")
 ```
 
 ```bash
-sudo joule-profiler profile -- python example.py
+joule-profiler profile -- python example.py
 ```
 
 ### Multiple Metric Sources
 
-| Source              | Metrics              | Requirements                  |
-|---------------------|----------------------|-------------------------------|
-| **RAPL** (powercap) | RAPL domains energy  | Intel CPU, kernel 3.13+       |
-| **RAPL** (perf)     | RAPL domains energy  | Intel CPU, perf_event support |
-| **perf_event**      | Performance counters | Linux perf support            |
-| **NVML**            | GPU energy           | NVIDIA GPU                    |
+| Source | Metrics | Requirements |
+|-|-|-|
+| **RAPL** (powercap) | RAPL domains energy | Intel CPU, kernel 3.13+ |
+| **RAPL** (perf) | RAPL domains energy | Intel CPU, perf_event support |
+| **perf_event** | Performance counters | Linux perf support |
+| **cgroup** | CPU/memory/IO usage | cgroup v2, root if cgroup creation or attach pid |
+| **procfs** | Memory/IO usage | Linux, `/proc` access |
+| **NVML** | NVIDIA GPU energy | NVIDIA GPU |
+| **AMD SMI** | AMD GPU energy | AMD GPU, `amd-smi-lib` |
 
 ## Platform Support
 
 - **OS**: Linux (kernel 3.13+)
 - **CPU**: Intel (RAPL)
-- **GPU**: NVIDIA (NVML support)
+- **GPU**: NVIDIA (NVML) and AMD (AMD SMI)
 - **Permissions**: Root or appropriate capabilities required
 
 ## Common Use Cases

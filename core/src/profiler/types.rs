@@ -1,12 +1,11 @@
 use crate::JouleProfilerError;
 use crate::aggregate::Metrics;
+use crate::orchestrator::Orchestrator;
 use crate::phase::{PhaseInfo, PhaseToken};
 use serde::Serialize;
 
 /// Result type for profiler operations.
 pub type Result<T> = std::result::Result<T, JouleProfilerError>;
-
-pub type MeasurePhasesReturnType = (u128, u128, i32, Vec<PhaseInfo>);
 
 /// Represents a profiling phase with metrics and timing.
 #[derive(Debug, Serialize)]
@@ -61,3 +60,14 @@ pub struct ProfilerResults {
     /// Phases detected in the program's standard output.
     pub phases: Phases,
 }
+
+/// Phases and begin/end timestamps collected by the reader thread.
+pub(crate) struct MeasureData {
+    pub phases: Vec<PhaseInfo>,
+    pub begin_timestamp: u128,
+    pub end_timestamp: u128,
+}
+
+/// What the reader thread sends back once done: the orchestrator (to reuse
+/// its sources) alongside the measurement outcome.
+pub(crate) type ReaderResult = (Orchestrator, Result<MeasureData>);

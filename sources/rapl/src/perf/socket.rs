@@ -6,7 +6,7 @@ use std::{
 use log::{debug, trace};
 use perf_event::Group;
 
-use crate::{Result, perf::domain::PerfRaplDomain};
+use crate::{Result, domain_type::RaplDomainType, perf::domain::PerfRaplDomain};
 
 /// Path to CPU sysfs directory.
 const CPU_SYSFS_PATH: &str = "/sys/devices/system/cpu";
@@ -17,16 +17,22 @@ const CPU_TOPOLOGY_SOCKET_ID: &str = "/topology/physical_package_id";
 /// Path to the online CPUs file in sysfs.
 const ONLINE_CPU_SYSFS_PATH: &str = "/sys/devices/system/cpu/online";
 
-/// Represents a CPU socket and the list of CPUs it contains.
-#[derive(Debug)]
+/// Represents a discovered CPU socket that has not been opened yet: its id
+/// and the CPUs it contains (see [`crate::perf::event::open_counters`] to
+/// open it).
 pub struct SocketInfo {
-    /// The ID of the socket.
-    pub socket_id: u32,
+    /// The id of the socket.
+    pub id: u32,
 
     /// List of CPU IDs associated with this socket.
-    pub cpus_id: Vec<u32>,
+    pub cpus: Vec<u32>,
+
+    /// RAPL domain types the hardware exposes for this socket.
+    pub domain_types: Vec<RaplDomainType>,
 }
 
+/// Represents an opened CPU socket: its id, its `perf_event` group, and the
+/// RAPL domains discovered on it.
 pub struct Socket {
     /// The id of the socket.
     pub id: u32,
@@ -34,14 +40,11 @@ pub struct Socket {
     /// The group of counters to be able to manage them all at once.
     pub group: Group,
 
-    /// The RAPL domain supported by the hardware.
+    /// The RAPL domains supported by the hardware.
     pub domains: Vec<PerfRaplDomain>,
 }
 
 /// Discover the CPU socket topology of the system with an optional filter to discover only specific socket IDs.
-///
-/// It returns a list containing each discovered socket and its CPUs.
-/// An error occurs if reading sysfs files fails or parsing fails.
 pub fn discover_socket_topology(
     sockets_to_discover: Option<&HashSet<u32>>,
 ) -> Result<Vec<SocketInfo>> {
@@ -89,14 +92,18 @@ pub(crate) fn discover_socket_topology_from_path(
 
     let mut socket_topology: Vec<SocketInfo> = sockets
         .into_iter()
-        .map(|(socket_id, mut cpus_id)| {
-            trace!("Found {cpus_id:?} cpus for socket {socket_id}");
-            cpus_id.sort_unstable();
-            SocketInfo { socket_id, cpus_id }
+        .map(|(id, mut cpus)| {
+            trace!("Found {cpus:?} cpus for socket {id}");
+            cpus.sort_unstable();
+            SocketInfo {
+                id,
+                cpus,
+                domain_types: Vec::new(),
+            }
         })
         .collect();
 
-    socket_topology.sort_unstable_by_key(|s| s.socket_id);
+    socket_topology.sort_unstable_by_key(|s| s.id);
 
     debug!("Discovered {} socket(s)", socket_topology.len());
     Ok(socket_topology)
@@ -182,12 +189,12 @@ mod tests {
                 .map(|(id, _)| id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            fs::write(base.join("online"), format!("{}\n", online)).unwrap();
+            fs::write(base.join("online"), format!("{online}\n")).unwrap();
 
             for (cpu_id, socket_id) in cpus {
-                let topo = base.join(format!("cpu{}/topology", cpu_id));
+                let topo = base.join(format!("cpu{cpu_id}/topology"));
                 fs::create_dir_all(&topo).unwrap();
-                fs::write(topo.join("physical_package_id"), format!("{}\n", socket_id)).unwrap();
+                fs::write(topo.join("physical_package_id"), format!("{socket_id}\n")).unwrap();
             }
 
             fs::create_dir_all(base.join("cpufreq")).unwrap();
@@ -212,8 +219,8 @@ mod tests {
                 .unwrap();
 
         assert_eq!(topology.len(), 1);
-        assert_eq!(topology[0].socket_id, 0);
-        assert_eq!(topology[0].cpus_id, vec![0, 1, 2, 3]);
+        assert_eq!(topology[0].id, 0);
+        assert_eq!(topology[0].cpus, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -225,10 +232,10 @@ mod tests {
                 .unwrap();
 
         assert_eq!(topology.len(), 2);
-        assert_eq!(topology[0].socket_id, 0);
-        assert_eq!(topology[0].cpus_id, vec![0, 1]);
-        assert_eq!(topology[1].socket_id, 1);
-        assert_eq!(topology[1].cpus_id, vec![2, 3]);
+        assert_eq!(topology[0].id, 0);
+        assert_eq!(topology[0].cpus, vec![0, 1]);
+        assert_eq!(topology[1].id, 1);
+        assert_eq!(topology[1].cpus, vec![2, 3]);
     }
 
     #[test]
@@ -238,7 +245,7 @@ mod tests {
             discover_socket_topology_from_path(sysfs.cpu_path(), &sysfs.online_path(), None)
                 .unwrap();
 
-        assert_eq!(topology[0].cpus_id, vec![0, 1, 2, 3]);
+        assert_eq!(topology[0].cpus, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -253,8 +260,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(topology.len(), 1);
-        assert_eq!(topology[0].socket_id, 1);
-        assert_eq!(topology[0].cpus_id, vec![2, 3]);
+        assert_eq!(topology[0].id, 1);
+        assert_eq!(topology[0].cpus, vec![2, 3]);
     }
 
     #[test]
@@ -279,16 +286,16 @@ mod tests {
         // only cpu0 is online and cpu1 exists but must be ignored
         fs::write(base.join("online"), "0\n").unwrap();
         for (cpu_id, socket_id) in [(0u32, 0u32), (1, 0)] {
-            let topo = base.join(format!("cpu{}/topology", cpu_id));
+            let topo = base.join(format!("cpu{cpu_id}/topology"));
             fs::create_dir_all(&topo).unwrap();
-            fs::write(topo.join("physical_package_id"), format!("{}\n", socket_id)).unwrap();
+            fs::write(topo.join("physical_package_id"), format!("{socket_id}\n")).unwrap();
         }
 
         let online_path = base.join("online").to_str().unwrap().to_owned();
         let topology =
             discover_socket_topology_from_path(base.to_str().unwrap(), &online_path, None).unwrap();
 
-        assert_eq!(topology[0].cpus_id, vec![0]);
+        assert_eq!(topology[0].cpus, vec![0]);
     }
 
     #[test]
@@ -299,7 +306,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(topology.len(), 1);
-        assert_eq!(topology[0].cpus_id, vec![0]);
+        assert_eq!(topology[0].cpus, vec![0]);
     }
 
     #[test]

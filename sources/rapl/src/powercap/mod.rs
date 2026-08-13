@@ -1,4 +1,4 @@
-//! Module `rapl` — Intel RAPL metric source.
+//! Module `rapl` - Intel RAPL metric source.
 //!
 //! This module provides an implementation of a [`MetricReader`] for
 //! collecting energy metrics from Intel RAPL (Running Average Power Limit) domains.
@@ -35,21 +35,14 @@
 //!     let counters = rapl.retrieve().await.unwrap();
 //! }
 //! ```
-//!
-//! # Errors
-//!
-//! All RAPL operations return a [`RaplError`]. Possible errors include:
-//! - [`RaplError::RaplNotAvailable`] - no RAPL domains found at the specified path.
-//! - [`RaplError::InsufficientPermissions`] - requires elevated privileges to read powercap files.
-//! - [`RaplError::UnsupportedOS`] - only Linux is supported.
-//! - [`RaplError::RaplReadError`] or [`RaplError::InvalidRaplPath`] - problems reading counters or invalid paths.
 
-use crate::MICRO_JOULE_UNIT;
 use crate::error::RaplError;
 use crate::powercap::compute::compute_measurement_from_snapshots;
+use crate::powercap::config::RaplConfig;
 use crate::powercap::domain::{RaplDomain, get_domains, read_energy};
 use crate::snapshot::Snapshot;
 use crate::util::check_os;
+use crate::{MICRO_JOULE_UNIT, RAPL_SOURCE_ID};
 use futures::StreamExt;
 use joule_profiler_core::sensor::{Sensor, Sensors};
 use joule_profiler_core::source::MetricReader;
@@ -59,13 +52,13 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, env, time::Duration};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 
 mod compute;
+pub mod config;
 mod domain;
 mod socket;
 
@@ -99,7 +92,7 @@ impl Rapl {
     ///
     /// `rapl_path` - base path to RAPL domains (e.g., `/sys/devices/virtual/powercap/intel-rapl`)
     /// `sockets` - optional set of CPU sockets to monitor
-    /// `polling_rate_s` - optional interval in seconds for periodic measurement
+    /// `poll_interval` - optional interval for periodic measurement
     ///
     /// # Errors
     ///
@@ -110,7 +103,7 @@ impl Rapl {
     pub fn new(
         rapl_path: Option<&str>,
         sockets_spec: Option<&HashSet<u32>>,
-        polling_rate_s: Option<f64>,
+        poll_interval: Option<Duration>,
     ) -> Result<Self> {
         let rapl_path = rapl_base_path(rapl_path);
 
@@ -128,8 +121,6 @@ impl Rapl {
         }
 
         info!("Discovered {} RAPL domain(s)", domains.len());
-
-        let poll_interval = polling_rate_s.map(Duration::from_secs_f64);
 
         trace!(
             "Creating Rapl instance (domains={}, ticker={})",
@@ -182,6 +173,15 @@ impl Rapl {
 impl MetricReader for Rapl {
     type Type = Snapshot;
     type Error = RaplError;
+    type Config = RaplConfig;
+
+    fn from_config(config: Self::Config) -> Result<Self> {
+        Self::new(
+            config.rapl_path.as_deref(),
+            config.sockets_spec.as_ref(),
+            config.poll_interval,
+        )
+    }
 
     async fn init(&mut self, _: i32) -> Result<()> {
         check_rapl_access(&self.rapl_path)?;
@@ -220,7 +220,9 @@ impl MetricReader for Rapl {
                     let metrics =
                         compute_measurement_from_snapshots(&domains, prev, &new_snapshot)?;
 
-                    let mut counters = current_counters.lock().await;
+                    let mut counters = current_counters
+                        .lock()
+                        .map_err(|_| RaplError::MutexPoisoned)?;
                     *counters += metrics;
                 }
 
@@ -248,12 +250,18 @@ impl MetricReader for Rapl {
     async fn measure(&mut self) -> Result<()> {
         let new_snapshot = self.read_snapshot()?;
 
-        let mut last = self.last_snapshot.lock().await;
+        let mut last = self
+            .last_snapshot
+            .lock()
+            .map_err(|_| RaplError::MutexPoisoned)?;
 
         if let Some(prev) = last.as_ref() {
             let metrics = compute_measurement_from_snapshots(&self.domains, prev, &new_snapshot)?;
 
-            let mut counters = self.current_counters.lock().await;
+            let mut counters = self
+                .current_counters
+                .lock()
+                .map_err(|_| RaplError::MutexPoisoned)?;
             *counters += metrics;
         }
 
@@ -262,7 +270,10 @@ impl MetricReader for Rapl {
     }
 
     async fn retrieve(&mut self) -> Result<Snapshot> {
-        let mut lock = self.current_counters.lock().await;
+        let mut lock = self
+            .current_counters
+            .lock()
+            .map_err(|_| RaplError::MutexPoisoned)?;
         Ok(std::mem::take(&mut *lock))
     }
 
@@ -298,6 +309,10 @@ impl MetricReader for Rapl {
 
     fn get_name() -> &'static str {
         POWERCAP_SOURCE_NAME
+    }
+
+    fn get_id() -> &'static str {
+        RAPL_SOURCE_ID
     }
 }
 

@@ -117,7 +117,7 @@ mod tests {
     }
 
     fn as_sockets(v: &[ManuallyDrop<Socket>]) -> &[Socket] {
-        unsafe { std::slice::from_raw_parts(v.as_ptr() as *const Socket, v.len()) }
+        unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<Socket>(), v.len()) }
     }
 
     #[test]

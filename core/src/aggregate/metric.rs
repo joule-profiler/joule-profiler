@@ -55,7 +55,7 @@ pub type Metrics = Vec<Metric>;
 pub enum MetricValue {
     UnsignedInteger(u64),
     SignedInteger(i64),
-    Float(f64),
+    Float(f64, Option<u8>),
 }
 
 impl From<u64> for MetricValue {
@@ -70,7 +70,7 @@ impl From<i64> for MetricValue {
 }
 impl From<f64> for MetricValue {
     fn from(v: f64) -> Self {
-        Self::Float(v)
+        Self::Float(v, None)
     }
 }
 
@@ -79,7 +79,10 @@ impl Display for MetricValue {
         match self {
             Self::UnsignedInteger(v) => v.fmt(f),
             Self::SignedInteger(v) => v.fmt(f),
-            Self::Float(v) => v.fmt(f),
+            Self::Float(v, None) => v.fmt(f),
+            Self::Float(v, Some(precision)) => {
+                write!(f, "{:.prec$}", v, prec = *precision as usize)
+            }
         }
     }
 }
@@ -92,7 +95,7 @@ impl Serialize for MetricValue {
         match self {
             MetricValue::UnsignedInteger(v) => serializer.serialize_u64(*v),
             MetricValue::SignedInteger(v) => serializer.serialize_i64(*v),
-            MetricValue::Float(v) => serializer.serialize_f64(*v),
+            MetricValue::Float(v, _) => serializer.serialize_f64(*v),
         }
     }
 }

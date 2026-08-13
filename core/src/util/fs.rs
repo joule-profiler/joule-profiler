@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::util::time::get_timestamp_micros;
+use crate::{sys::is_root, util::time::get_timestamp_micros};
 
 /// Get the absolute path of a file.
 pub fn get_absolute_path(filename: &str) -> Result<String, std::io::Error> {
@@ -30,7 +30,6 @@ const URW_GRW_OR_PERMS: u32 = 0o664;
 ///
 /// When running as root, the file ownership is set to match the parent directory
 /// (via `chown`) so the file isn't accidentally left owned by root.
-/// The `getuid()` call is safe, it has no preconditions and always succeeds.
 pub fn create_file_with_user_permissions(path: &str) -> std::io::Result<File> {
     let file = OpenOptions::new()
         .write(true)
@@ -39,8 +38,11 @@ pub fn create_file_with_user_permissions(path: &str) -> std::io::Result<File> {
         .open(path)?;
     file.set_permissions(Permissions::from_mode(URW_GRW_OR_PERMS))?;
 
-    if unsafe { libc::getuid() } == 0 {
-        let parent = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+    if is_root() {
+        let parent = match Path::new(path).parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent,
+            _ => Path::new("."),
+        };
         let meta = fs::metadata(parent)?;
         chown(path, Some(meta.uid()), Some(meta.gid()))?;
     }

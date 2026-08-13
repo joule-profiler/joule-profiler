@@ -2,17 +2,24 @@
 //!
 //! This module defines the core logic for metric sources orchestration through [`SourceOrchestrator`] structure.
 
+use std::time::Duration;
+
 use crate::aggregate::sensor_result::SensorResult;
 use crate::orchestrator::error::OrchestratorError;
 use crate::source::types::SourceEvent;
 use crate::source::{MetricSource, MetricSourceError};
+use crate::util::time::get_timestamp_micros;
 use futures::future::try_join_all;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use log::{debug, trace};
+use tokio::time::timeout;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 pub mod error;
+
+/// The size of the control channel to send event.
+/// It should not have a huge size because if the buffer is full,
+/// it means that the sources are slower to measure than the phases durations.
+pub const CONTROL_CHANNEL_SIZE: usize = 16;
 
 /// The handle describing the return type of a source worker.
 type TaskHandle = JoinHandle<Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError>>;
@@ -21,74 +28,125 @@ struct SourceHandle {
     /// The event channel sender used to manage the metric sources.
     control_sender: mpsc::Sender<SourceEvent>,
 
-    /// The oneshot sender used to initialized sources.
-    init_sender: Option<oneshot::Sender<i32>>,
-
     /// The handle of the worker task, used for joining sources gracefully.
     handle: TaskHandle,
 }
 
 /// Orchestrates the metric sources and send them the profiler's messages through asynchronous channels.
 /// It is a proxy between the profiler and the sources and is responsible of their lifecycle.
-#[derive(Default)]
-pub struct SourceOrchestrator {
+pub struct Orchestrator {
+    sources: Vec<Box<dyn MetricSource>>,
+
     handles: Vec<SourceHandle>,
 }
 
-impl SourceOrchestrator {
-    /// Starts all the metric sources.
+impl Orchestrator {
+    pub fn new(sources: Vec<Box<dyn MetricSource>>) -> Self {
+        Self {
+            sources,
+            handles: Vec::new(),
+        }
+    }
+
+    /// Pre-initializes each metric source before the profiled process is spawned.
     ///
-    /// The function shares the atomic integer representing the profiled program's pid, used by some sources for per-process profiling (e.g. `perf_event`).
+    /// Lets sources that don't depend on the process pid (e.g. cgroup-scoped
+    /// `perf_event` counters) start monitoring before the process exists.
+    pub async fn pre_init(&mut self) -> Result<(), OrchestratorError> {
+        trace!("Pre-initializing {} source(s)", self.sources.len());
+        try_join_all(self.sources.iter_mut().map(|source| source.pre_init())).await?;
+        Ok(())
+    }
+
+    /// Initializes each metric source with the profiled program's pid, bounded by `init_timeout`.
+    ///
+    /// Used by some sources for per-process profiling (e.g. `perf_event`).
+    /// Stores the initialized sources, ready to be started with [`SourceOrchestrator::run`].
+    pub async fn init(
+        &mut self,
+        pid: i32,
+        init_timeout: Duration,
+    ) -> Result<(), OrchestratorError> {
+        trace!(
+            "Initializing {} source(s) with pid {pid}",
+            self.sources.len()
+        );
+        let sources = std::mem::take(&mut self.sources);
+        let tasks = sources.into_iter().map(|mut source| {
+            tokio::spawn(async move {
+                let result = source.init(pid).await;
+                (source, result)
+            })
+        });
+
+        let begin_init_timestamp = get_timestamp_micros();
+        let initialized = timeout(init_timeout, try_join_all(tasks))
+            .await
+            .map_err(|_| OrchestratorError::InitializationError("init timeout reached"))??;
+        let end_init_timestamp = get_timestamp_micros();
+        debug!(
+            "Sources initialized in {}μs.",
+            end_init_timestamp - begin_init_timestamp
+        );
+
+        self.sources = initialized
+            .into_iter()
+            .map(|(source, result)| result.map(|()| source))
+            .collect::<Result<Vec<_>, MetricSourceError>>()?;
+
+        Ok(())
+    }
+
+    /// Starts all the metric sources, already initialized through [`SourceOrchestrator::init`].
+    ///
     /// Stores the sources handles and the channels senders to be able to gracefully join the sources and send events.
     #[inline]
-    pub fn run(&mut self, sources: Vec<Box<dyn MetricSource>>) -> Result<(), OrchestratorError> {
-        if sources.is_empty() {
-            return Err(OrchestratorError::NoSourceConfigured);
+    pub fn run(&mut self) {
+        trace!(
+            "Starting orchestrator with {} source(s)",
+            self.sources.len()
+        );
+        let sources = std::mem::take(&mut self.sources);
+
+        self.handles = sources
+            .into_iter()
+            .map(|source| {
+                let (control_sender, control_receiver) = mpsc::channel(CONTROL_CHANNEL_SIZE);
+                let handle = source.run(control_receiver);
+                SourceHandle {
+                    control_sender,
+                    handle,
+                }
+            })
+            .collect();
+    }
+
+    /// Sends a measure event to each metric source, blocking.
+    ///
+    /// This function ensures event submission, not measurement completion.
+    /// Must be called from outside the async runtime (e.g. the reader thread).
+    #[inline]
+    pub fn measure_blocking(&mut self) -> Result<(), OrchestratorError> {
+        self.send_event_blocking(SourceEvent::Measure)
+    }
+
+    /// Initializes a new phase for each metric source, blocking.
+    ///
+    /// Must be called from outside the async runtime (e.g. the reader thread).
+    #[inline]
+    pub fn new_phase_blocking(&mut self) -> Result<(), OrchestratorError> {
+        self.send_event_blocking(SourceEvent::NewPhase)
+    }
+
+    /// Sends the provided event to all the metric sources, blocking.
+    ///
+    /// A send only fails when a source worker died: the source error is
+    /// surfaced later, when joining the workers.
+    fn send_event_blocking(&mut self, event: SourceEvent) -> Result<(), OrchestratorError> {
+        for handle in &self.handles {
+            handle.control_sender.blocking_send(event)?;
         }
-
-        let nb_sources = sources.len();
-        let mut handles = Vec::with_capacity(nb_sources);
-
-        for source in sources {
-            let (handle, control_sender, init_sender) = source.run();
-            handles.push(SourceHandle {
-                handle,
-                control_sender,
-                init_sender: Some(init_sender),
-            });
-        }
-
-        self.handles = handles;
-
         Ok(())
-    }
-
-    /// Measures the metrics of each metric source.
-    #[inline]
-    pub async fn measure(&mut self) -> Result<(), OrchestratorError> {
-        self.send_event(SourceEvent::Measure).await
-    }
-
-    /// Initializes each metric source.
-    /// Called when the program execution is stopped to inizialize sources requiring pid filtering (e.g. `perf_event`).
-    #[inline]
-    pub fn init(&mut self, pid: i32) -> Result<(), OrchestratorError> {
-        for source_handle in &mut self.handles {
-            if let Some(init_sender) = source_handle.init_sender.take()
-                && init_sender.send(pid).is_err()
-            {
-                return Err(OrchestratorError::InitializationError(
-                    "Failed to initialize sources.".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Initializes a new phase for each metric source.
-    #[inline]
-    pub async fn new_phase(&mut self) -> Result<(), OrchestratorError> {
-        self.send_event(SourceEvent::NewPhase).await
     }
 
     /// Retrieves and merge results from all sources.
@@ -103,7 +161,7 @@ impl SourceOrchestrator {
         &mut self,
     ) -> Result<(SensorResult, Vec<Box<dyn MetricSource>>), OrchestratorError> {
         let (results, sources) = self.join_all().await?;
-        let merged = SensorResult::merge(results).ok_or(OrchestratorError::NotEnoughSnapshots)?;
+        let merged = SensorResult::merge(results)?;
         Ok((merged, sources))
     }
 
@@ -117,20 +175,16 @@ impl SourceOrchestrator {
     ///
     /// If an error is encountered in a source, then the worker is aborted and the error is returned.
     async fn send_event(&mut self, event: SourceEvent) -> Result<(), OrchestratorError> {
-        let futures: Vec<_> = self
-            .handles
-            .iter_mut()
-            .enumerate()
-            .map(|(i, source_handle)| async move {
-                source_handle
-                    .control_sender
-                    .send(event)
-                    .await
-                    .map_err(|send_err| (i, send_err))
-            })
-            .collect();
-
-        if let Err((failed_index, send_err)) = try_join_all(futures).await {
+        if let Err((failed_index, send_err)) = try_join_all(
+            self.handles
+                .iter_mut()
+                .enumerate()
+                .map(
+                    |(i, h)| async move { h.control_sender.send(event).await.map_err(|e| (i, e)) },
+                ),
+        )
+        .await
+        {
             Err(self.handle_event_error(failed_index, send_err.into()).await)
         } else {
             Ok(())
@@ -165,14 +219,14 @@ impl SourceOrchestrator {
 
         let handles = std::mem::take(&mut self.handles);
 
-        let mut results = Vec::with_capacity(handles.len());
-        let mut sources = Vec::with_capacity(handles.len());
+        let results = try_join_all(handles.into_iter().map(|h| h.handle)).await?;
 
-        for source_handle in handles {
-            let (result, source) = source_handle.handle.await??;
-            results.push(result);
-            sources.push(source);
-        }
+        let (results, sources) = results
+            .into_iter()
+            .map(|r| r.map_err(OrchestratorError::from))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
 
         Ok((results, sources))
     }
@@ -204,7 +258,8 @@ mod tests {
         impl MetricReader for MetricReader {
             type Type = ();
             type Error = MockError;
-
+            type Config = ();
+            fn from_config(config: ()) -> Result<Self, MockError>;
             async fn init(&mut self, pid: i32) -> Result<(), MockError>;
             async fn join(&mut self) -> Result<(), MockError>;
             async fn measure(&mut self) -> Result<(), MockError>;
@@ -212,6 +267,7 @@ mod tests {
             fn get_sensors(&self) -> Result<Sensors, MockError>;
             fn to_metrics(&self, v: ()) -> Result<Metrics, MockError>;
             fn get_name() -> &'static str;
+            fn get_id() -> &'static str;
         }
     }
 
@@ -249,7 +305,7 @@ mod tests {
 
         mock.expect_get_sensors().returning(|| Ok(vec![]));
         mock.expect_to_metrics()
-            .returning(|_| Ok(Metrics::default()));
+            .returning(|()| Ok(Metrics::default()));
 
         (mock, state_arc)
     }
@@ -261,35 +317,31 @@ mod tests {
 
     #[tokio::test]
     async fn finalize_without_measurements_returns_not_enough_snapshots() {
-        let mut orchestrator = SourceOrchestrator::default();
         let (source, _) = mock_source();
-        orchestrator.run(vec![source]).unwrap();
-        orchestrator.init(0).unwrap();
+        let mut orchestrator = Orchestrator::new(vec![source]);
+        orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
+        orchestrator.run();
 
         assert!(matches!(
             orchestrator.finalize().await,
-            Err(OrchestratorError::NotEnoughSnapshots)
-        ));
-    }
-
-    #[tokio::test]
-    async fn run_orchestrator_with_no_source_returns_error() {
-        let mut orchestrator = SourceOrchestrator::default();
-
-        assert!(matches!(
-            orchestrator.run(vec![]),
-            Err(OrchestratorError::NoSourceConfigured)
+            Err(OrchestratorError::AllSourcesEmpty)
         ));
     }
 
     #[tokio::test]
     async fn event_reaches_worker() {
         let (source, state) = mock_source();
-        let mut orchestrator = SourceOrchestrator::default();
-        orchestrator.run(vec![source]).unwrap();
+        let mut orchestrator = Orchestrator::new(vec![source]);
+        orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
+        orchestrator.run();
 
-        let _ = orchestrator.measure().await;
-        let _ = orchestrator.init(0);
+        // blocking_send must run off the async runtime.
+        let mut orchestrator = tokio::task::spawn_blocking(move || {
+            let _ = orchestrator.measure_blocking();
+            orchestrator
+        })
+        .await
+        .unwrap();
         let _ = orchestrator.join().await;
 
         tokio::task::yield_now().await;
@@ -304,16 +356,34 @@ mod tests {
     #[tokio::test]
     async fn init_initializes_source_with_right_pid() {
         let (source, state) = mock_source();
+        let mut orchestrator = Orchestrator::new(vec![source]);
 
-        let mut orchestrator = SourceOrchestrator::default();
-        orchestrator.run(vec![source]).unwrap();
-
-        orchestrator.init(42).unwrap();
-
-        // wait for initialization
-        tokio::task::yield_now().await;
+        orchestrator.init(42, Duration::from_secs(1)).await.unwrap();
 
         assert_eq!(state.lock().unwrap().pid, 42);
+    }
+
+    // Requires a multi-threaded runtime: a blocking `init` occupies its own worker thread,
+    // relying on another worker thread being free to enforce `init_timeout`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn init_times_out_on_blocking_source() {
+        let mut reader = MockMetricReader::new();
+        reader.expect_init().returning(|_| {
+            // Simulates a `MetricReader::init` implementation performing blocking
+            // work without ever yielding (e.g. a blocking syscall or file read),
+            // which must not prevent `init_timeout` from being enforced.
+            std::thread::sleep(Duration::from_millis(200));
+            Ok(())
+        });
+        let source: Box<dyn MetricSource> = reader.into();
+        let mut orchestrator = Orchestrator::new(vec![source]);
+
+        let result = orchestrator.init(0, Duration::from_millis(20)).await;
+
+        assert!(matches!(
+            result,
+            Err(OrchestratorError::InitializationError(_))
+        ));
     }
 
     #[tokio::test]
@@ -322,11 +392,17 @@ mod tests {
         reader.expect_init().returning(|_| Ok(()));
         reader.expect_measure().returning(|| Err(MockError));
         let source: Box<dyn MetricSource> = reader.into();
-        let mut orchestrator = SourceOrchestrator::default();
+        let mut orchestrator = Orchestrator::new(vec![source]);
 
-        orchestrator.run(vec![source]).unwrap();
-        orchestrator.init(0).unwrap();
-        orchestrator.measure().await.unwrap();
+        orchestrator.init(0, Duration::from_secs(1)).await.unwrap();
+        orchestrator.run();
+        // blocking_send must run off the async runtime.
+        let mut orchestrator = tokio::task::spawn_blocking(move || {
+            orchestrator.measure_blocking().unwrap();
+            orchestrator
+        })
+        .await
+        .unwrap();
         let result = orchestrator.finalize().await;
 
         assert!(result.is_err());

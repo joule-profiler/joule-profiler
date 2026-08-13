@@ -1,3 +1,5 @@
+use serde::de::DeserializeOwned;
+
 use crate::aggregate::Metrics;
 use crate::sensor::Sensors;
 use crate::source::{MetricReaderErrorBound, MetricReaderTypeBound};
@@ -16,23 +18,36 @@ use crate::source::{MetricReaderErrorBound, MetricReaderTypeBound};
 ///
 /// # Required Methods
 ///
-/// - [`MetricReader::measure`] — Perform a measurement and update internal state.
-/// - [`MetricReader::retrieve`] — Retrieve the current metrics collected by the reader.
-/// - [`MetricReader::get_sensors`] — Return the list of sensors provided by this reader.
-/// - [`MetricReader::to_metrics`] — Convert a snapshot to metrics. Implementing From<Self::Type> for Metrics isn't enough,
+/// - [`MetricReader::measure`] - Perform a measurement and update internal state.
+/// - [`MetricReader::retrieve`] - Retrieve the current metrics collected by the reader.
+/// - [`MetricReader::get_sensors`] - Return the list of sensors provided by this reader.
+/// - [`MetricReader::to_metrics`] - Convert a snapshot to metrics. Implementing From<Self::Type> for Metrics isn't enough,
 ///   sometimes you need to use some information of the source to efficiently convert snapshots into metrics.
-/// - [`MetricReader::get_name`] — Return the static name of the source.
+/// - [`MetricReader::get_name`] - Return the static name of the source.
 ///
 /// # Optional Methods
 ///
-/// - [`MetricReader::init`] — Source initialization logic if there is one, called before the measurements.
-/// - [`MetricReader::join`] — Source destruction logic if there is one, called before the measurements (no Drop implementation because the source is reusable).
+/// - [`MetricReader::pre_init`] - Source pre-initialization logic if there is one, called before spawning the profile process.
+/// - [`MetricReader::init`] - Source initialization logic if there is one, called before the measurements.
+/// - [`MetricReader::join`] - Source destruction logic if there is one, called before the measurements (no Drop implementation because the source is reusable).
 pub trait MetricReader: Send + 'static {
     /// Type of metrics returned by the reader.
     type Type: MetricReaderTypeBound;
 
     /// Error type produced by the reader.
     type Error: MetricReaderErrorBound;
+
+    /// Config type for configuring the source.
+    type Config: Default + DeserializeOwned;
+
+    fn from_config(config: Self::Config) -> Result<Self, Self::Error>
+    where
+        Self: Sized;
+
+    /// Pre-initialize the source, called before the process is spawned.
+    fn pre_init(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async { Ok(()) }
+    }
 
     /// Init the source if it implements custom logic underneath.
     fn init(&mut self, _pid: i32) -> impl Future<Output = Result<(), Self::Error>> + Send {
@@ -58,4 +73,7 @@ pub trait MetricReader: Send + 'static {
 
     /// Get the name of the metric source.
     fn get_name() -> &'static str;
+
+    /// Get the id of the metric source.
+    fn get_id() -> &'static str;
 }

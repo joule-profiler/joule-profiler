@@ -1,10 +1,10 @@
 /*
  * CPU intensive program.
  * Compile with:
- *      gcc -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge  examples/programs/nbody.c -o examples/programs/nbody
+ *      gcc -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge  examples/programs/nbody.c -o nbody
  * 
  * Usage:
- *      sudo joule-profiler phases -- ./nbody {n}
+ *      joule-profiler profile -- ./nbody {n}
  *   with n = 10000000 < 1s
  *        n = 100000000 < 3s
  *        n = 1000000000 < 30s 
@@ -14,6 +14,7 @@
  * https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
  *
  * contributed by Miles
+ * source: https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-gcc-9.html
  */
 
 #include <stdio.h>

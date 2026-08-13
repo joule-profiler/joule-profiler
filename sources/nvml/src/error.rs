@@ -1,4 +1,5 @@
 use thiserror::Error;
+use tokio::task::JoinError;
 
 /// Errors that can occur when using the NVML source.
 #[derive(Debug, Error)]
@@ -17,6 +18,10 @@ pub enum NvmlError {
     #[error("Insufficient permissions to access NVML. Try running with sudo")]
     NoPermission,
 
+    /// The NVML library detected no device.
+    #[error("No GPU device detected.")]
+    NoDeviceDetected,
+
     /// Error propagated from the underlying `nvml_wrapper` library.
     #[error("NVML error: {0}")]
     NvmlError(
@@ -25,7 +30,26 @@ pub enum NvmlError {
         nvml_wrapper::error::NvmlError,
     ),
 
-    /// Not enough snapshots have been taken to compute an energy delta.
-    #[error("Not enough measures to compute GPU energy counters differences")]
-    NotEnoughSamples,
+    /// Generic I/O error.
+    #[error("I/O error")]
+    Io(
+        #[from]
+        #[source]
+        std::io::Error,
+    ),
+
+    /// No device with that index found in the devices list.
+    #[error("Device with index {0} not found.")]
+    NoSuchDeviceFromIndex(usize),
+
+    /// Tokio task join error (async execution failure).
+    #[error("Failed to join tokio task: {0}")]
+    JoinError(
+        #[from]
+        #[source]
+        JoinError,
+    ),
+
+    #[error("NVML source mutex poisoned.")]
+    MutexPoisoned,
 }

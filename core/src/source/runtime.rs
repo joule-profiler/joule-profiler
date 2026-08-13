@@ -1,17 +1,16 @@
-use std::time::Duration;
+use std::pin::Pin;
 
 use log::debug;
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::timeout,
-};
+use tokio::sync::mpsc;
 
 use crate::{
     aggregate::{phase::SensorPhase, sensor_result::SensorResult},
     sensor::Sensors,
     source::{
-        MetricReader, MetricSource, MetricSourceError, accumulator::MetricAccumulator,
-        error::IntoMetricSourceError, types::SourceEvent,
+        MetricReader, MetricSource, MetricSourceError,
+        accumulator::MetricAccumulator,
+        error::IntoMetricSourceError,
+        types::{SourceEvent, SourceWorkerHandle},
     },
 };
 
@@ -35,25 +34,16 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
     /// Runs the worker responsible for source and accumulator management.
     ///
     /// It listens for events through a channel and execute them.
-    pub async fn run_worker(
+    /// The source must already be initialized (see [`MetricSource::init`]).
+    pub(crate) async fn run_worker(
         mut self,
         mut receiver: mpsc::Receiver<SourceEvent>,
-        init_receiver: oneshot::Receiver<i32>,
     ) -> Result<(SensorResult, Box<dyn MetricSource>), MetricSourceError> {
-        let pid = timeout(Duration::from_secs(1), init_receiver)
-            .await
-            .map_err(IntoMetricSourceError::into_metric_source_error)?
-            .map_err(|_| MetricSourceError::InitTimeout)?;
-
-        self.init_source(pid).await?;
-
-        loop {
-            if let Some(event) = receiver.recv().await {
-                match event {
-                    SourceEvent::Measure => self.measure_source().await?,
-                    SourceEvent::NewPhase => self.init_new_phase().await?,
-                    SourceEvent::JoinWorker => break,
-                }
+        while let Some(event) = receiver.recv().await {
+            match event {
+                SourceEvent::Measure => self.measure_source().await?,
+                SourceEvent::NewPhase => self.init_new_phase().await?,
+                SourceEvent::JoinWorker => break,
             }
         }
 
@@ -71,15 +61,6 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
     async fn measure_source(&mut self) -> Result<(), MetricSourceError> {
         self.source
             .measure()
-            .await
-            .map_err(IntoMetricSourceError::into_metric_source_error)
-    }
-
-    /// Init the source with the profiled program pid.
-    #[inline]
-    async fn init_source(&mut self, pid: i32) -> Result<(), MetricSourceError> {
-        self.source
-            .init(pid)
             .await
             .map_err(IntoMetricSourceError::into_metric_source_error)
     }
@@ -114,13 +95,60 @@ impl<R: MetricReader> MetricSourceRuntime<R> {
             .collect::<Result<Vec<_>, MetricSourceError>>()?;
         Ok(SensorResult { phases: result })
     }
+}
 
-    /// Retrieve source sensors.
-    #[inline]
-    pub fn get_source_sensors(&self) -> Result<Sensors, MetricSourceError> {
+impl<R> MetricSource for MetricSourceRuntime<R>
+where
+    R: MetricReader,
+{
+    fn pre_init(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>> {
+        Box::pin(async move {
+            self.source
+                .pre_init()
+                .await
+                .map_err(IntoMetricSourceError::into_metric_source_error)
+        })
+    }
+
+    /// Initializes the source with the profiled program's pid.
+    fn init(
+        &mut self,
+        pid: i32,
+    ) -> Pin<Box<dyn Future<Output = Result<(), MetricSourceError>> + Send + '_>> {
+        Box::pin(async move {
+            self.source
+                .init(pid)
+                .await
+                .map_err(IntoMetricSourceError::into_metric_source_error)
+        })
+    }
+
+    /// Spawns the worker task and returns its handle, used to send events to manage the metric source.
+    ///
+    /// The metric source is consumed and transformed into a [`MetricSourceRuntime`] with the metric source as a reader.
+    /// This transformation allows to monomorphize the metric source and discover its type after its launch.
+    fn run(self: Box<Self>, control_receiver: mpsc::Receiver<SourceEvent>) -> SourceWorkerHandle {
+        tokio::spawn(async move { self.run_worker(control_receiver).await })
+    }
+
+    /// List the sensors of the metric source.
+    fn list_sensors(&self) -> Result<Sensors, MetricSourceError> {
         self.source
             .get_sensors()
             .map_err(IntoMetricSourceError::into_metric_source_error)
+    }
+}
+
+/// Converts a [`MetricReader`] into a boxed [`MetricSource`].
+impl<R> From<R> for Box<dyn MetricSource>
+where
+    R: MetricReader,
+{
+    fn from(reader: R) -> Self {
+        let source = MetricSourceRuntime::new(reader);
+        Box::new(source)
     }
 }
 
@@ -149,6 +177,8 @@ mod tests {
         impl MetricReader for MetricReader {
             type Type  = ();
             type Error = MockError;
+            type Config = ();
+            fn from_config(config: ()) -> Result<Self, MockError>;
             async fn init(&mut self, pid: i32) -> Result<(), MockError>;
             async fn join(&mut self) -> Result<(), MockError>;
             async fn measure(&mut self) -> Result<(), MockError>;
@@ -156,13 +186,8 @@ mod tests {
             fn get_sensors(&self) -> Result<Sensors, MockError>;
             fn to_metrics(&self, v: ()) -> Result<Metrics, MockError>;
             fn get_name() -> &'static str;
+            fn get_id() -> &'static str;
         }
-    }
-
-    fn pid(p: i32) -> oneshot::Receiver<i32> {
-        let (tx, rx) = oneshot::channel();
-        tx.send(p).unwrap();
-        rx
     }
 
     #[derive(Debug, Default)]
@@ -202,7 +227,7 @@ mod tests {
         });
 
         m.expect_get_sensors().returning(|| Ok(vec![]));
-        m.expect_to_metrics().returning(|_| Ok(Metrics::default()));
+        m.expect_to_metrics().returning(|()| Ok(Metrics::default()));
 
         (m, counts)
     }
@@ -210,26 +235,25 @@ mod tests {
     #[tokio::test]
     async fn run_worker_measure_event_calls_measure() {
         let (reader, counts) = mock_reader_counted();
-        let rt = MetricSourceRuntime::new(reader);
+        let mut rt = MetricSourceRuntime::new(reader);
+        rt.init(0).await.unwrap();
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        rt.run_worker(rx, pid(0)).await.unwrap();
+        rt.run_worker(rx).await.unwrap();
 
         assert_eq!(counts.lock().unwrap().measure, 2);
     }
 
     #[tokio::test]
-    async fn run_worker_init_event_passes_pid() {
+    async fn init_source_passes_pid() {
         let (reader, counts) = mock_reader_counted();
-        let rt = MetricSourceRuntime::new(reader);
-        let (tx, rx) = mpsc::channel(16);
+        let mut rt = MetricSourceRuntime::new(reader);
 
-        tx.send(SourceEvent::JoinWorker).await.unwrap();
-        rt.run_worker(rx, pid(42)).await.unwrap();
+        rt.init(42).await.unwrap();
 
         assert_eq!(counts.lock().unwrap().init, 1);
     }
@@ -241,25 +265,27 @@ mod tests {
         reader
             .expect_measure()
             .returning(|| Err(MockError("injected".into())));
-        let rt = MetricSourceRuntime::new(reader);
+        let mut rt = MetricSourceRuntime::new(reader);
+        rt.init(0).await.unwrap();
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::Measure).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        assert!(rt.run_worker(rx, pid(0)).await.is_err());
+        assert!(rt.run_worker(rx).await.is_err());
     }
 
     #[tokio::test]
     async fn run_worker_new_phase_calls_retrieve() {
         let (reader, counts) = mock_reader_counted();
-        let rt = MetricSourceRuntime::new(reader);
+        let mut rt = MetricSourceRuntime::new(reader);
+        rt.init(0).await.unwrap();
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::NewPhase).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        rt.run_worker(rx, pid(0)).await.unwrap();
+        rt.run_worker(rx).await.unwrap();
 
         assert_eq!(counts.lock().unwrap().retrieve, 1);
     }
@@ -267,11 +293,12 @@ mod tests {
     #[tokio::test]
     async fn run_worker_join_calls_join_on_source() {
         let (reader, counts) = mock_reader_counted();
-        let rt = MetricSourceRuntime::new(reader);
+        let mut rt = MetricSourceRuntime::new(reader);
+        rt.init(0).await.unwrap();
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::JoinWorker).await.unwrap();
-        rt.run_worker(rx, pid(0)).await.unwrap();
+        rt.run_worker(rx).await.unwrap();
 
         assert_eq!(counts.lock().unwrap().join, 1);
     }
@@ -279,7 +306,8 @@ mod tests {
     #[tokio::test]
     async fn run_worker_full_lifecycle() {
         let (reader, counts) = mock_reader_counted();
-        let rt = MetricSourceRuntime::new(reader);
+        let mut rt = MetricSourceRuntime::new(reader);
+        rt.init(0).await.unwrap();
         let (tx, rx) = mpsc::channel(16);
 
         tx.send(SourceEvent::Measure).await.unwrap();
@@ -287,7 +315,7 @@ mod tests {
         tx.send(SourceEvent::NewPhase).await.unwrap();
         tx.send(SourceEvent::JoinWorker).await.unwrap();
 
-        assert!(rt.run_worker(rx, pid(0)).await.is_ok());
+        assert!(rt.run_worker(rx).await.is_ok());
 
         let c = counts.lock().unwrap();
         assert_eq!(c.measure, 2);

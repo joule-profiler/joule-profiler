@@ -30,10 +30,10 @@ impl RaplDomain {
     /// Create a new RAPL domain from the given path, name, socket, and max energy
     ///
     /// Converts the string name into a `RaplDomainType`
-    pub fn try_new(path: PathBuf, name: String, socket: u32, max_energy_uj: u64) -> Result<Self> {
+    pub fn try_new(path: PathBuf, name: &str, socket: u32, max_energy_uj: u64) -> Result<Self> {
         let domain = Self {
             path,
-            domain_type: name.try_into()?,
+            domain_type: RaplDomainType::try_from(name)?,
             socket,
             max_energy_uj,
         };
@@ -112,7 +112,7 @@ fn discover_domains(base: &str) -> Result<Vec<RaplDomain>> {
     Ok(domains)
 }
 
-/// Adds a RAPL domain to the output vector if it contains an `energy_uj` file.
+/// Adds a RAPL domain to the output vector if it contains an `energy_uj` and a `max_energy_uj` files.
 fn add_domain_if_energy(dir: &Path, out: &mut Vec<RaplDomain>) -> Result<()> {
     let path = dir.join("energy_uj");
     if !path.exists() {
@@ -120,10 +120,20 @@ fn add_domain_if_energy(dir: &Path, out: &mut Vec<RaplDomain>) -> Result<()> {
         return Ok(());
     }
 
-    let name = fs::read_to_string(dir.join("name"))
-        .unwrap_or_else(|_| "unknown".to_string())
-        .trim()
-        .to_string();
+    let name = match fs::read_to_string(dir.join("name")) {
+        Ok(n) => n,
+        Err(e) => match e.kind() {
+            ErrorKind::NotFound => {
+                warn!(
+                    "Directory {} missing energy_uj file, ignored.",
+                    dir.display()
+                );
+                return Ok(());
+            }
+            _ => return Err(e)?,
+        },
+    };
+    let name_trimmed = name.trim();
 
     let socket = extract_socket_number(dir);
 
@@ -138,12 +148,14 @@ fn add_domain_if_energy(dir: &Path, out: &mut Vec<RaplDomain>) -> Result<()> {
         .flatten();
 
     if let Some(max_energy_uj) = max_energy_uj_option {
-        debug!("Found domain: name={name}, socket={socket}, max_energy_uj={max_energy_uj}");
-
-        let domain = RaplDomain::try_new(path, name, socket, max_energy_uj)?;
+        debug!("Found domain: name={name_trimmed}, socket={socket}, max_energy_uj={max_energy_uj}");
+        let domain = RaplDomain::try_new(path, name_trimmed, socket, max_energy_uj)?;
         out.push(domain);
     } else {
-        warn!("Domain {} missing max_energy_range_uj", dir.display());
+        warn!(
+            "Domain {} missing max_energy_range_uj, ignored.",
+            dir.display()
+        );
     }
 
     Ok(())
@@ -191,7 +203,7 @@ mod tests {
         energy: u64,
         max_energy: u64,
     ) -> PathBuf {
-        let dir = base.join(format!("intel-rapl:{}", socket));
+        let dir = base.join(format!("intel-rapl:{socket}"));
         create_dir_all(&dir).unwrap();
 
         write(dir.join("name"), name).unwrap();

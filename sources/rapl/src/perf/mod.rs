@@ -13,21 +13,25 @@ use log::{info, trace};
 use perf_event::GroupData;
 
 use crate::{
-    MICRO_JOULE_UNIT, Result,
+    MICRO_JOULE_UNIT, RAPL_SOURCE_ID, Result,
     error::{PerfParanoidError, RaplError},
     perf::{
         compute::{compute_measurement_from_snapshots, joules_to_micro_joules},
-        domain::discover_domains_and_open_counters,
-        socket::Socket,
+        domain::discover_domains,
+        event::open_counters,
+        socket::{Socket, SocketInfo},
     },
-    snapshot::{Phase, Snapshot},
+    snapshot::Snapshot,
     util::check_os,
 };
 
 mod compute;
+mod config;
 mod domain;
 mod event;
 mod socket;
+
+pub use config::RaplConfig;
 
 /// Default sysfs path for perf RAPL counters.
 const PERF_RAPL_PATH: &str = "/sys/bus/event_source/devices/power";
@@ -42,7 +46,10 @@ const PERF_PARANOID_PATH: &str = "/proc/sys/kernel/perf_event_paranoid";
 ///
 /// Provides energy readings per RAPL domain (e.g., package, core, dram).
 pub struct Rapl {
-    /// Discovered RAPL domains and associated counters.
+    /// Discovered socket topology, not yet opened. Consumed by [`MetricReader::pre_init`].
+    socket_topology: Vec<SocketInfo>,
+
+    /// Opened sockets with their associated counters. Empty until [`MetricReader::pre_init`] runs.
     sockets: Vec<Socket>,
 
     /// Begin snapshot of the current phase.
@@ -53,37 +60,19 @@ pub struct Rapl {
 }
 
 impl Rapl {
-    /// Initializes a new RAPL reader with the specified sockets specification.
-    ///
-    /// # Errors
-    ///
-    /// It returns an error if:
-    /// - OS is unsupported
-    /// - RAPL counters cannot be read
-    /// - Perf PMU type cannot be retrieved
+    /// Discovers a new RAPL reader with the specified sockets specification.
     pub fn new(sockets_spec: Option<&HashSet<u32>>) -> Result<Self> {
         check_os()?;
 
-        let paranoid_level = read_paranoid_level()?;
-        trace!(
-            "Perf paranoid level set to {paranoid_level}
-        Attempting to initialize RAPL reader: sockets={sockets_spec:?}"
-        );
+        trace!("Attempting to initialize RAPL reader: sockets={sockets_spec:?}");
 
-        let sockets = discover_domains_and_open_counters(sockets_spec).map_err(|err| {
-            if let RaplError::PerfParanoid(_) = err
-                && paranoid_level > 0
-            {
-                PerfParanoidError::ParanoidLevelTooHigh(paranoid_level).into()
-            } else {
-                err
-            }
-        })?;
+        let socket_topology = discover_domains(sockets_spec)?;
 
-        info!("Discovered {} socket(s)", sockets.len());
+        info!("Discovered {} socket(s)", socket_topology.len());
 
         Ok(Self {
-            sockets,
+            socket_topology,
+            sockets: Vec::new(),
             begin_snapshot: None,
             end_snapshot: None,
         })
@@ -96,8 +85,6 @@ impl Rapl {
     }
 
     /// Read the current counter values for all domains.
-    ///
-    /// Returns a `Snapshot` containing domain metrics.
     fn read_domains_counter(&mut self) -> Result<Snapshot> {
         let mut metrics = HashMap::new();
 
@@ -122,12 +109,25 @@ impl Rapl {
 impl MetricReader for Rapl {
     type Type = Phase;
     type Error = RaplError;
+    type Config = RaplConfig;
 
-    /// Enable the `perf_event` counters.
-    async fn init(&mut self, _: i32) -> Result<()> {
-        self.sockets
-            .iter_mut()
-            .try_for_each(|socket| socket.group.enable().map_err(RaplError::from))?;
+    fn from_config(config: Self::Config) -> Result<Self> {
+        Self::new(config.sockets_spec.as_ref())
+    }
+
+    async fn pre_init(&mut self) -> Result<()> {
+        let paranoid_level = read_paranoid_level()?;
+
+        self.sockets = open_counters(&self.socket_topology).map_err(|err| {
+            if let RaplError::PerfParanoid(_) = err
+                && paranoid_level > 0
+            {
+                PerfParanoidError::ParanoidLevelTooHigh(paranoid_level).into()
+            } else {
+                err
+            }
+        })?;
+
         Ok(())
     }
 
@@ -159,15 +159,35 @@ impl MetricReader for Rapl {
     }
 
     /// Return the list of available sensors for this source.
+    ///
+    /// If perf counters have already been opened (see [`MetricReader::pre_init`]),
+    /// the actually opened domains are listed. Otherwise (e.g. `list-sensors`,
+    /// which never calls `pre_init`), this falls back to the domain types
+    /// discovered at construction time (see [`discover_domains`]), so no
+    /// sysfs rescan or perf counter is needed here.
     fn get_sensors(&self) -> Result<Sensors> {
         trace!("Building RAPL sensor list");
 
+        if !self.sockets.is_empty() {
+            return Ok(self
+                .sockets
+                .iter()
+                .flat_map(|socket| {
+                    socket.domains.iter().map(|domain| {
+                        let domain_name = domain.get_name(socket.id);
+                        trace!("Registering sensor: {domain_name}");
+                        Sensor::new(domain_name, MICRO_JOULE_UNIT, Self::get_name())
+                    })
+                })
+                .collect());
+        }
+
         let sensors = self
-            .sockets
+            .socket_topology
             .iter()
             .flat_map(|socket| {
-                socket.domains.iter().map(|domain| {
-                    let domain_name = domain.get_name(socket.id);
+                socket.domain_types.iter().map(|domain_type| {
+                    let domain_name = domain_type.to_string_socket(socket.id);
                     trace!("Registering sensor: {domain_name}");
                     Sensor::new(domain_name, MICRO_JOULE_UNIT, Self::get_name())
                 })
@@ -207,6 +227,20 @@ impl MetricReader for Rapl {
     fn get_name() -> &'static str {
         PERF_SOURCE_NAME
     }
+
+    fn get_id() -> &'static str {
+        RAPL_SOURCE_ID
+    }
+}
+
+/// A pair of snapshots delimiting a phase.
+#[derive(Debug, Clone, Default)]
+pub struct Phase {
+    /// The snapshot made at the start of a phase.
+    pub begin: Snapshot,
+
+    /// End snapshot of the phase.
+    pub end: Snapshot,
 }
 
 /// Read the PMU type from sysfs.
@@ -219,7 +253,7 @@ fn read_pmu_type() -> Result<u32> {
 /// Read the `perf_event_paranoid` level from `/proc`.
 ///
 /// Returns a `PerfParanoidError` if the file cannot be read or parsed.
-fn read_paranoid_level() -> Result<u8> {
+fn read_paranoid_level() -> Result<i8> {
     read_paranoid_level_from_path(PERF_PARANOID_PATH)
 }
 
@@ -231,14 +265,14 @@ fn read_pmu_type_from_path(path: &str) -> Result<u32> {
         .map_err(Into::into)
 }
 
-fn read_paranoid_level_from_path(path: &str) -> Result<u8> {
+fn read_paranoid_level_from_path(path: &str) -> Result<i8> {
     fs::read_to_string(path)
         .map_err(|err| match err.kind() {
             ErrorKind::NotFound => PerfParanoidError::NotFound,
             ErrorKind::PermissionDenied => PerfParanoidError::PermissionDenied(err.to_string()),
             _ => PerfParanoidError::IoError(err),
         })
-        .map(|s| s.trim().parse::<u8>())?
+        .map(|s| s.trim().parse::<i8>())?
         .map_err(|err| PerfParanoidError::ParseParanoidLevelError(err).into())
 }
 
@@ -262,11 +296,10 @@ mod tests {
     }
 
     #[test]
-    fn read_paranoid_level_negative_stored_as_high_byte() {
-        // -1 in the kernel is written as 255 when parsed as u8
+    fn read_paranoid_level_negative() {
         let dir = TempDir::new().unwrap();
-        let path = write_file(&dir, "paranoid", "255\n");
-        assert_eq!(read_paranoid_level_from_path(&path).unwrap(), 255);
+        let path = write_file(&dir, "paranoid", "-1\n");
+        assert_eq!(read_paranoid_level_from_path(&path).unwrap(), -1);
     }
 
     #[test]

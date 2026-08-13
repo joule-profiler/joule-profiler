@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
 # joule-profiler installer
-# https://github.com/jwoirhaye/joule-profiler
+# https://github.com/joule-profiler/joule-profiler
 #
 set -e
 
 # Configuration
 readonly REPO="joule-profiler/joule-profiler"
+readonly DOCUMENTATION_QUICKSTART_URL="https://joule-profiler.github.io/quickstart.html"
 readonly BINARY_NAME="joule-profiler"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 TARGET_VERSION="${TARGET_VERSION:-latest}"
@@ -246,7 +247,7 @@ select_target() {
 
     # No ELF tools, using musl
     if ! command_exists objdump && ! command_exists readelf; then
-        log_info "No ELF inspection tools found (objdump/readelf) — using musl build"
+        log_info "No ELF inspection tools found (objdump/readelf) - using musl build"
         echo "${arch}-unknown-linux-musl"
         return
     fi
@@ -260,13 +261,13 @@ select_target() {
     log_debug "URL: $download_url"
 
     if ! curl -fsSL -o "$tmp_dir/$tarball" "$download_url" 2>/dev/null; then
-        log_warning "Could not fetch GNU binary for inspection — using musl build"
+        log_warning "Could not fetch GNU binary for inspection - using musl build"
         echo "${arch}-unknown-linux-musl"
         return
     fi
 
     if ! tar xzf "$tmp_dir/$tarball" -C "$tmp_dir" 2>/dev/null; then
-        log_warning "Could not extract GNU binary for inspection — using musl build"
+        log_warning "Could not extract GNU binary for inspection - using musl build"
         echo "${arch}-unknown-linux-musl"
         return
     fi
@@ -277,7 +278,7 @@ select_target() {
     log_debug "Binary requires GLIBC: ${required_GLIBC:-unknown}"
 
     if [ -z "$required_glibc" ]; then
-        log_warning "Could not read GLIBC requirements from binary — using musl build"
+        log_warning "Could not read GLIBC requirements from binary - using musl build"
         rm -f "$tmp_dir/$BINARY_NAME"
         echo "${arch}-unknown-linux-musl"
         return
@@ -289,14 +290,14 @@ select_target() {
     log_debug "System GLIBC: ${system_glibc:-not found}"
 
     if [ -n "$system_glibc" ] && version_gte "$system_glibc" "$required_glibc"; then
-        log_success "Compatible GLIBC ($system_glibc >= $required_glibc) — using GNU build"
+        log_success "Compatible GLIBC ($system_glibc >= $required_glibc) - using GNU build"
         _GNU_PREDOWNLOADED=true # binary already in tmp_dir, skip re-download
         echo "$gnu_target"
     else
         if [ -z "$system_glibc" ]; then
-            log_info "No GLIBC detected — using musl build"
+            log_info "No GLIBC detected - using musl build"
         else
-            log_info "GLIBC too old ($system_glibc < $required_glibc) — using musl build"
+            log_info "GLIBC too old ($system_glibc < $required_glibc) - using musl build"
         fi
 
         # discard unusable gnu binary
@@ -530,7 +531,8 @@ check_existing_installation() {
 
         if [ "$SKIP_CONFIRM" = false ]; then
             echo -n "Do you want to overwrite it? [y/N] " >&2
-            read -r reply
+            read -r reply </dev/tty
+            
             if [[ ! $reply =~ ^[Yy]$ ]]; then
                 log_info "Installation cancelled"
                 exit 0
@@ -566,25 +568,23 @@ print_usage() {
     echo "" >&2
     echo -e "${COLOR_GREEN}Installation complete!${COLOR_RESET}" >&2
     echo "" >&2
-    echo "To get started with joule-profiler:" >&2
+    echo "To get started with Joule Profiler:" >&2
     echo "" >&2
-    echo "  # List available RAPL domains" >&2
-    echo -e "  ${COLOR_BLUE}sudo joule-profiler list-domains${COLOR_RESET}" >&2
+    echo "  # List available sensors" >&2
+    echo -e "  ${COLOR_BLUE}joule-profiler list-sensors${COLOR_RESET}" >&2
     echo "" >&2
-    echo "  # Measure energy consumption (simple mode)" >&2
-    echo -e "  ${COLOR_BLUE}sudo joule-profiler simple -- <your-command>${COLOR_RESET}" >&2
-    echo "" >&2
-    echo "  # Measure with phase detection" >&2
-    echo -e "  ${COLOR_BLUE}sudo joule-profiler phases -- <your-command>${COLOR_RESET}" >&2
-    echo "" >&2
-    echo "  # Export to JSON" >&2
-    echo -e "  ${COLOR_BLUE}sudo joule-profiler simple --json -- <your-command>${COLOR_RESET}" >&2
+    echo "  # Phase-based profiling" >&2
+    echo -e "  ${COLOR_BLUE}sudo joule-profiler profile -- <your-command>${COLOR_RESET}" >&2
     echo "" >&2
     echo "  # Show help" >&2
     echo -e "  ${COLOR_BLUE}joule-profiler --help${COLOR_RESET}" >&2
     echo "" >&2
-    echo "For more information, visit:" >&2
-    echo "  https://github.com/$REPO" >&2
+    echo "  Note: Joule Profiler requires root privileges. To run without sudo, configure the perf_event_paranoid level:" >&2
+    echo -e "  ${COLOR_BLUE}sudo sysctl kernel.perf_event_paranoid=0${COLOR_RESET}" >&2
+    echo "" >&2
+    echo "For more information:" >&2
+    echo "  QuickStart:  $DOCUMENTATION_QUICKSTART_URL" >&2
+    echo "  Source code: https://github.com/$REPO" >&2
     echo "" >&2
 }
 
@@ -593,10 +593,10 @@ main() {
     parse_args "$@"
 
     echo "" >&2
-    echo "╔══════════════════════════════════════════╗" >&2
-    echo "║   joule-profiler installer v0.1.0        ║" >&2
-    echo "║   github.com/jwoirhaye/joule-profiler    ║" >&2
-    echo "╚══════════════════════════════════════════╝" >&2
+    echo "╔════════════════════════════════════════════╗" >&2
+    echo "║          Joule Profiler installer          ║" >&2
+    echo "║  github.com/joule-profiler/joule-profiler  ║" >&2
+    echo "╚════════════════════════════════════════════╝" >&2
     echo "" >&2
 
     log_debug "Installation directory: $INSTALL_DIR"

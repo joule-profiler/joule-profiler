@@ -88,6 +88,9 @@ pub enum RaplError {
     /// Not enough snapshots have been taken to compute an energy delta.
     #[error("Not enough measures to compute RAPL counters differences")]
     NotEnoughSamples,
+
+    #[error("RAPL source mutex poisoned.")]
+    MutexPoisoned,
 }
 
 impl From<std::io::Error> for RaplError {
@@ -115,7 +118,7 @@ pub enum PerfParanoidError {
     #[error(
         "perf_event_paranoid level is {0}, try setting it to 0 or launch profiler with root rights"
     )]
-    ParanoidLevelTooHigh(u8),
+    ParanoidLevelTooHigh(i8),
 
     /// Generic I/O error while reading the paranoid file.
     #[error(transparent)]

@@ -1,8 +1,8 @@
-# joule-profiler-source-rapl
+# RAPL metric source
 
 RAPL energy source for [joule-profiler](https://github.com/joule-profiler/joule-profiler).
 
-This crate implements `MetricSource` from `joule-profiler-core` and measures Intel RAPL energy counters via two interchangeable backends: **powercap** (sysfs) and **perf_event** (syscall). The CLI selects the backend automatically or on demand via `--rapl-backend`.
+This crate implements `MetricSource` from `joule-profiler-core` and measures Intel RAPL energy counters via two interchangeable backends: **powercap** (sysfs) and **perf_event** (syscall). The backend is selected with the `profiler.rapl_backend` configuration key, from a configuration file or with `-D profiler.rapl_backend=powercap` on the command line.
 
 ## What is RAPL?
 
@@ -20,7 +20,6 @@ RAPL (Running Average Power Limit) is an Intel processor feature available since
 
 > Available domains depend on the processor model. Both backends auto-discover domains at startup.
 
----
 ## Requirements
 
 | | powercap | perf_event |
@@ -29,6 +28,3 @@ RAPL (Running Average Power Limit) is an Intel processor feature available since
 | CPU | Intel Sandy Bridge+ | Intel Sandy Bridge+ |
 | Permissions | Root (kernel ≥ 5.10) | Root or `paranoid ≤ 0` |
 ---
-## See also
-
-> Main project: [joule-profiler](https://github.com/joule-profiler/joule-p

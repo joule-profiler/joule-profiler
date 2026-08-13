@@ -16,13 +16,16 @@ pub enum JouleProfilerError {
     #[error("Command not found: {0}")]
     CommandNotFound(String),
 
+    #[error("The provided command is empty.")]
+    EmptyCommand,
+
     /// The output file could not be created at the given path.
     #[error("Failed to create output file: {0}")]
     OutputFileCreationFailed(String),
 
     /// The provided token pattern is not a valid regular expression.
     #[error("Invalid regex pattern: {0}")]
-    InvalidPattern(String),
+    InvalidPattern(#[from] regex::Error),
 
     /// Failed to capture the profiled command's stdout.
     #[error("Stdout capture failed")]
@@ -54,15 +57,27 @@ pub enum JouleProfilerError {
         std::io::Error,
     ),
 
+    /// Returned when there's no metric sources configured to profile the program with.
+    #[error("No metric sources configured.")]
+    NoSourceConfigured,
+
     /// A process control operation (e.g. kill, wait) failed.
     #[error("Process control failed: {0}")]
     ProcessControlFailed(String),
 
+    /// Failed to spawn the stdout reader thread.
+    #[error("Failed to spawn stdout reader thread: {0}")]
+    ReaderThreadSpawnFailed(String),
+
+    /// The stdout reader thread panicked before completing.
+    #[error("Stdout reader thread panicked")]
+    ReaderThreadPanicked,
+
     /// Error propagated from a metric source.
-    #[error(transparent)]
+    #[error("Metric source error.")]
     MetricSourceError(#[from] MetricSourceError),
 
     /// Error propagated from the source orchestrator.
-    #[error(transparent)]
+    #[error("Orchestrator error.")]
     OrchestratorError(#[from] OrchestratorError),
 }

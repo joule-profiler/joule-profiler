@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+
 use log::{debug, info, warn};
 use perf_event::{Builder, Counter, Group, events::Dynamic};
 
@@ -25,7 +27,7 @@ impl RaplEvent {
     /// or `FailToOpenDomainCounter` if no CPU in the socket could open the counter.
     pub fn new(
         domain_type: RaplDomainType,
-        socket_info: &SocketInfo,
+        socket: &SocketInfo,
         group: &mut Group,
     ) -> Result<Self> {
         let mut builder = Dynamic::builder("power")?;
@@ -38,7 +40,7 @@ impl RaplEvent {
 
         let scale = builder.scale()?.ok_or(RaplError::RetrieveScaleError)?;
 
-        for cpu in &socket_info.cpus_id {
+        for cpu in &socket.cpus {
             debug!("Trying to build RAPL event {domain_type:?} on CPU {cpu}");
 
             let counter_result = Builder::new(
@@ -65,44 +67,45 @@ impl RaplEvent {
 
         Err(RaplError::FailToOpenDomainCounter(format!(
             "unable to find a CPU associated with the {} socket's PMU for domain {:?}",
-            socket_info.socket_id, domain_type
+            socket.id, domain_type
         )))
     }
 }
 
-/// Opens perf counters for all discovered RAPL domains across sockets.
+/// Opens perf counters for all discovered RAPL domains across sockets, and
+/// enables them so they are active as soon as they're returned.
 /// Sockets with no CPUs are skipped with a warning.
 ///
 /// Returns an error if any counter fails to open for a non-empty socket.
-pub fn open_counters(socket_topology: Vec<SocketInfo>) -> Result<Vec<Socket>> {
+pub fn open_counters(socket_topology: &[SocketInfo]) -> Result<Vec<Socket>> {
     let mut sockets = Vec::new();
 
     for socket_info in socket_topology {
         debug!(
             "Processing socket {} (cpus={:?})",
-            socket_info.socket_id, socket_info.cpus_id
+            socket_info.id, socket_info.cpus
         );
 
-        if socket_info.cpus_id.is_empty() {
-            warn!("Socket {} has no CPUs, skipping it", socket_info.socket_id);
+        if socket_info.cpus.is_empty() {
+            warn!("Socket {} has no CPUs, skipping it", socket_info.id);
             continue;
         }
 
-        let mut group = build_group_for_socket(&socket_info)?;
-        let domains = open_counters_for_socket(&socket_info, &mut group)?;
+        let mut group = build_group_for_socket(socket_info)?;
+        let domains = open_counters_for_socket(socket_info, &mut group)?;
+        group.enable().map_err(RaplError::from)?;
 
         info!(
             "Opened {} RAPL domains for socket {}",
             domains.len(),
-            socket_info.socket_id
+            socket_info.id
         );
 
-        let socket = Socket {
-            domains,
+        sockets.push(Socket {
+            id: socket_info.id,
             group,
-            id: socket_info.socket_id,
-        };
-        sockets.push(socket);
+            domains,
+        });
     }
 
     Ok(sockets)
@@ -115,6 +118,35 @@ static PER_SOCKET_DOMAIN_TYPES: &[RaplDomainType] = &[
     RaplDomainType::Dram,
 ];
 
+/// Checks whether `domain_type`'s perf event is exposed by the `power` PMU on
+/// this machine.
+fn is_domain_supported(domain_type: RaplDomainType) -> Result<bool> {
+    let mut builder = Dynamic::builder("power")?;
+    match builder.event(domain_type.to_perf_event()) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Discovers which RAPL domain types the hardware exposes for `socket_id`,
+/// without opening any perf counter.
+pub(crate) fn discover_supported_domain_types(socket_id: u32) -> Result<Vec<RaplDomainType>> {
+    let mut domain_types = Vec::new();
+
+    for domain_type in PER_SOCKET_DOMAIN_TYPES {
+        if is_domain_supported(*domain_type)? {
+            domain_types.push(*domain_type);
+        }
+    }
+
+    if socket_id == 0 && is_domain_supported(RaplDomainType::Psys)? {
+        domain_types.push(RaplDomainType::Psys);
+    }
+
+    Ok(domain_types)
+}
+
 /// Opens available RAPL counters for a socket: PACKAGE, CORE, UNCORE and DRAM
 /// for every socket, plus PSYS exclusively on socket 0. Unsupported domains
 /// are silently skipped.
@@ -122,17 +154,17 @@ static PER_SOCKET_DOMAIN_TYPES: &[RaplDomainType] = &[
 /// Returns an error if a supported domain fails to open for a reason other
 /// than hardware unavailability.
 pub fn open_counters_for_socket(
-    socket_info: &SocketInfo,
+    socket: &SocketInfo,
     group: &mut Group,
 ) -> Result<Vec<PerfRaplDomain>> {
     let mut domains = Vec::new();
 
     for domain_type in PER_SOCKET_DOMAIN_TYPES {
-        add_counter_to_domain_if_supported(*domain_type, socket_info, group, &mut domains)?;
+        add_counter_to_domain_if_supported(*domain_type, socket, group, &mut domains)?;
     }
 
-    if socket_info.socket_id == 0
-        && let Some(psys_domain) = open_psys_counter(socket_info, group)?
+    if socket.id == 0
+        && let Some(psys_domain) = open_psys_counter(socket, group)?
     {
         domains.push(psys_domain);
     }
@@ -145,11 +177,8 @@ pub fn open_counters_for_socket(
 ///
 /// Returns None if Psys is not supported on the system, or an error if the
 /// counter exists but could not be opened.
-pub fn open_psys_counter(
-    socket_info: &SocketInfo,
-    group: &mut Group,
-) -> Result<Option<PerfRaplDomain>> {
-    match RaplEvent::new(RaplDomainType::Psys, socket_info, group) {
+pub fn open_psys_counter(socket: &SocketInfo, group: &mut Group) -> Result<Option<PerfRaplDomain>> {
+    match RaplEvent::new(RaplDomainType::Psys, socket, group) {
         Ok(counter) => {
             let domain = PerfRaplDomain::new(RaplDomainType::Psys, counter);
             Ok(Some(domain))
@@ -168,11 +197,11 @@ pub fn open_psys_counter(
 /// Returns an error if the domain is supported but the counter fails to open.
 pub fn add_counter_to_domain_if_supported(
     domain_type: RaplDomainType,
-    socket_info: &SocketInfo,
+    socket: &SocketInfo,
     group: &mut Group,
     domains: &mut Vec<PerfRaplDomain>,
 ) -> Result<()> {
-    let counter = match RaplEvent::new(domain_type, socket_info, group) {
+    let counter = match RaplEvent::new(domain_type, socket, group) {
         Ok(counter) => counter,
         Err(err) => match err {
             RaplError::DomainNotSupported(_) => return Ok(()),
@@ -189,24 +218,24 @@ pub fn add_counter_to_domain_if_supported(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::perf::socket::SocketInfo;
 
     fn socket(id: u32, cpus: Vec<u32>) -> SocketInfo {
         SocketInfo {
-            socket_id: id,
-            cpus_id: cpus,
+            id,
+            cpus,
+            domain_types: Vec::new(),
         }
     }
 
     #[test]
     fn open_counters_empty_topology_returns_empty() {
-        let result = open_counters(vec![]).unwrap();
+        let result = open_counters(&[]).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn open_counters_skips_socket_with_no_cpus() {
-        let result = open_counters(vec![socket(0, vec![])]).unwrap();
+        let result = open_counters(&[socket(0, vec![])]).unwrap();
         assert!(result.is_empty());
     }
 }

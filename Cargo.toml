@@ -5,6 +5,11 @@ members = [
     "cli",
     "sources/*"
 ]
+default-members = [
+    "core",
+    "cli",
+    "sources/*",
+]
 
 [workspace.package]
 edition = "2024"
@@ -14,13 +19,14 @@ repository = "https://github.com/joule-profiler/joule-profiler"
 readme = "README.md"
 
 [workspace.dependencies]
-joule-profiler-core = { path = "core", version = "1.0.2" }
+joule-profiler-core = { path = "core", version = "2.0.0" }
 
 log = "0.4.28"
-tokio = { version = "1.25", features = ["time", "rt-multi-thread", "macros", "sync", "rt"] }
+tokio = { version = "1.52.3", features = ["time", "rt-multi-thread", "macros", "sync", "rt"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 futures = "0.3.31"
+humantime-serde = "1.1.1"
 
 # dev-dependencies
 tempfile = "3"
