@@ -1,6 +1,6 @@
 [package]
 name = "joule-profiler-source-rapl"
-version = "1.0.5"
+version = "1.0.6"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true

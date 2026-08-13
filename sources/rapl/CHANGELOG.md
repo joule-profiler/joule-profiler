@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-rapl-v1.0.5...joule-profiler-source-rapl-v1.0.6) - 2026-08-13
+
+### Fixed
+
+- use hidden _rapl feature to activate rapl using rapl-perf and rapl-powercap feature flags
+
+### Other
+
+- release
+- release
+- release
+
 ## [1.0.5](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-rapl-v1.0.4...joule-profiler-source-rapl-v1.0.5) - 2026-08-13
 
 ### Other

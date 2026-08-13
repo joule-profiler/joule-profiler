@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.2](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v2.0.1...joule-profiler-core-v2.0.2) - 2026-08-13
+
+### Fixed
+
+- remove stdout file CLI flag and former unused iteration parameter in CSV displayer
+
+### Other
+
+- release
+
 ## [2.0.1](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-core-v2.0.0...joule-profiler-core-v2.0.1) - 2026-08-13
 
 ### Fixed

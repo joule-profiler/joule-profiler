@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-perf_event-v1.0.3...joule-profiler-source-perf_event-v1.0.4) - 2026-08-13
+
+### Other
+
+- release
+
 ## [1.0.3](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-perf_event-v1.0.2...joule-profiler-source-perf_event-v1.0.3) - 2026-08-13
 
 ### Other
