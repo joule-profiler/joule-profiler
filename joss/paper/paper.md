@@ -68,9 +68,14 @@ When a phase marker is detected, Joule Profiler records energy counter values at
 
 ## Software architecture
 
-Joule Profiler has been designed to be modular. These modules collect energy and performance metrics from multiple hardware sources while keeping overhead low. To simplify extension and maintenance, the measurement logic is isolated from the hardware-specific implementations. Joule Profiler accesses RAPL counters via the `perf_event` interface [@linux_perf_event], which exposes hardware performance monitoring facilities. If `perf_event` is unavailable, the tool falls back to the powercap interface in Linux `sysfs` [@linux_powercap]. For NVIDIA GPUs, it uses the *NVIDIA Management Library* (NVML) [@nvidia_nvml] to retrieve power consumption on compatible hardware. Joule Profiler can also collect hardware performance counters via `perf_event`, allowing energy measurements to be correlated with performance events or split proportionally when multiple components contribute.
+Joule Profiler has been designed to be modular. These modules collect energy and performance metrics from multiple hardware sources while keeping overhead low. To simplify extension and maintenance, the measurement logic is isolated from the hardware-specific implementations. Joule Profiler accesses RAPL counters via the `perf_event` interface [@linux_perf_event], which exposes hardware performance monitoring facilities. If `perf_event` is unavailable, the tool falls back to the powercap interface in Linux `sysfs` [@linux_powercap]. For NVIDIA GPUs, it uses the *NVIDIA Management Library* (NVML) [@nvidia_nvml] to retrieve power consumption on compatible hardware. Joule Profiler can also collect hardware performance counters via `perf_event`, allowing energy measurements to be correlated with performance events or split proportionally when multiple components contribute, as shown in Figure~\ref{fig:archi}.
 
-![](images/archi.png){ width=90% }
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\linewidth]{images/archi.png}
+    \caption{Software architecture of Joule Profiler, showing the orchestrator coordinating measurement sources (RAPL, Nvidia-NVML, perf events) and exporting results to Terminal, JSON, and CSV formats.}
+    \label{fig:archi}
+\end{figure}
 
 Internally, the tool is structured into layers. The core layer handles the main logic: detecting phases, aggregating metrics, and coordinating the measurement sources. Each source runs as an asynchronous task, enabling parallel data collection and maintaining temporal precision. The *Command-Line Interface* (CLI) layer manages user interaction, parses configuration options, and displays results. A source abstraction layer encapsulates each hardware backend, such as RAPL, NVML, or performance counters, in a separate module. This separation eases future integration of new sources without affecting the rest of the system. This design allows Joule Profiler to run on a large diversity of bare-metal machines based on Intel and AMD processors. While Joule Profiler can also be used in virtual environments, users are encouraged to check the availability of measurement sources.
 
@@ -98,7 +103,7 @@ We performed 4,000 measurements to achieve 80% power and applied a *Two One-Side
 \begin{figure}
 	\centering
 	\includegraphics[width=\linewidth]{images/full_comparison_parallel2.pdf}
-	\caption{Bland–Altman analysis of energy measurements (J) across RAPL domains (DRAM, PACKAGE) comparing `perf` and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
+	\caption{Bland–Altman analysis of energy measurements (J) across RAPL domains (DRAM, PACKAGE) comparing perf and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
 	\label{fig:rapl_bland_altman}
 \end{figure}
 
@@ -115,7 +120,7 @@ A sequential execution (2,000 runs) was used to compare the tool's overhead and 
 	\label{fig:sequential_comparison}
 \end{figure}
 
-\autoref{fig:sequential_comparison} presents the energy distributions of `perf`, Joule Profiler, and Alumet across sequential runs for RAPL domains and the GPU. In the parallel scenario, all tools report nearly identical values, with differences of less than 0.1% for RAPL domains and 0.5% for the GPU. The sequential execution results show that Joule Profiler does not introduce a significant overhead compared to Alumet and perf.
+\autoref{fig:sequential_comparison} presents the energy distributions of perf, Joule Profiler, and Alumet across sequential runs for RAPL domains and the GPU. In the parallel scenario, all tools report nearly identical values, with differences of less than 0.1% for RAPL domains and 0.5% for the GPU. The sequential execution results show that Joule Profiler does not introduce a significant overhead compared to Alumet and perf.
 
 ## Phase attribution precision
 
