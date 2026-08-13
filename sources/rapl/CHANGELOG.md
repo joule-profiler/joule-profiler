@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-rapl-v1.0.4...joule-profiler-source-rapl-v1.0.5) - 2026-08-13
+
+### Other
+
+- updated the following local packages: joule-profiler-core
+
 ## [1.0.4](https://github.com/joule-profiler/joule-profiler/compare/joule-profiler-source-rapl-v1.0.3...joule-profiler-source-rapl-v1.0.4) - 2026-08-13
 
 ### Fixed
