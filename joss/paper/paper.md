@@ -102,7 +102,7 @@ We performed 4,000 measurements to achieve 80% power and applied a *Two One-Side
 
 \begin{figure}
 	\centering
-	\includegraphics[width=\linewidth]{images/full_comparison_parallel2.pdf}
+	\includegraphics[width=\linewidth]{images/full_comparison_parallel2.png}
 	\caption{Bland–Altman analysis of energy measurements (J) across RAPL domains (DRAM, PACKAGE) comparing perf and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
 	\label{fig:rapl_bland_altman}
 \end{figure}
