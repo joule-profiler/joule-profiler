@@ -13,15 +13,15 @@ tags:
   - phase-based profiling
 authors:
   - name: Jérémy Woirhaye
-	orcid: 0009-0005-0777-9090
+    orcid: 0009-0005-0777-9090
     equal-contrib: true
     affiliation: "1,2"
   - name: François Gibier
-	orcid: 0009-0005-5164-8063
+    orcid: 0009-0005-5164-8063
     equal-contrib: true 
     affiliation: "1,2"
   - name: Romain Rouvoy
-	orcid: 0000-0003-1771-8791
+    orcid: 0000-0003-1771-8791
     affiliation: "1,2"
 affiliations:
  - name: Inria, France
