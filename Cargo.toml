@@ -36,5 +36,6 @@ pedantic = { level = "deny", priority = -1 }
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 module_name_repetitions = "allow"
+return_self_not_must_use = "allow"
 must_use_candidate = "allow"
 struct_field_names = "allow"

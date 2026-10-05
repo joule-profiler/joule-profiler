@@ -1,16 +1,3 @@
-//! Lets a program measure itself: it spawns a profiler and sends it its phases.
-//!
-//! ```text
-//!  program (Session)                       profiler (IpcInjector + ResultsWriter)
-//!    spawn                       ────────▶  detaches
-//!    {"Configure": "…"}          ────────▶  builds its sources and attaches them
-//!                                ◀── 'S' ─  resume(): measuring
-//!    {"Phase": "load"}           ────────▶  next_phase(): a boundary
-//!                                ◀── 'D' ─  the sensors are woken
-//!    {"End": 0}                  ────────▶  next_phase(): no more phases
-//!    results, from the pipe      ◀────────  schema, phases, summary (or an error)
-//! ```
-
 mod profiler;
 mod program;
 

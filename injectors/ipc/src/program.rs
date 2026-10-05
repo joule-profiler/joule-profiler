@@ -45,8 +45,8 @@ impl Session {
         let mut results = Results::new(BufReader::new(results));
         let started = session
             .send(&Request::Configure(config.to_owned()))
-            .and_then(|()| reap(&mut spawned))
-            .and_then(|()| session.answer(STARTED));
+            .and_then(|_| reap(&mut spawned))
+            .and_then(|_| session.answer(STARTED));
 
         match started {
             Ok(()) => Ok((session, results)),
