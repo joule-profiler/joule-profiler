@@ -22,22 +22,17 @@ joule-profiler-source-procfs = { path = "../sources/procfs", version = "0.1.0", 
 joule-profiler-source-cgroup = { path = "../sources/cgroup", version = "0.1.0", optional = true }
 
 joule-profiler-core.workspace = true
+joule-profiler-injector-stdout = { path = "../injectors/stdout", version = "0.1.0" }
+joule-profiler-exporter-terminal = { path = "../exporters/terminal", version = "0.1.0" }
+joule-profiler-exporter-json = { path = "../exporters/json", version = "0.1.0" }
+joule-profiler-exporter-csv = { path = "../exporters/csv", version = "0.1.0" }
 log.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
 serde.workspace = true
-humantime-serde.workspace = true
 
 anyhow = "1.0.100"
 env_logger = "0.11.8"
 clap = { version = "4.5.53", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["preserve_order"] }
 toml = "1.1.2"
-humantime = "2.3.0"
-csv = "1.4.0"
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [features]
 default = ["rapl-perf", "rapl-powercap", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]

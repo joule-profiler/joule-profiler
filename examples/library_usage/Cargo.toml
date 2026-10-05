@@ -11,7 +11,6 @@ readme.workspace = true
 anyhow = "1.0.102"
 joule-profiler-core = { version = "1.0.2", path = "../../core" }
 joule-profiler-source-rapl = { version = "1.0.2", path = "../../sources/rapl" }
-tokio.workspace = true
 
 [lints]
 workspace = true

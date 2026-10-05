@@ -12,19 +12,11 @@ readme = "README.md"
 [dependencies]
 joule-profiler-core.workspace = true
 log.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-futures.workspace = true
 serde.workspace = true
 humantime-serde.workspace = true
+thiserror.workspace = true
 
 procfs = "0.18.0"
-tokio-timerfd = "0.2.0"
-tokio-util = "0.7.18"
-
-[dev-dependencies]
-mockall.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

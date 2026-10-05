@@ -1,42 +1,49 @@
+use std::io;
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::event::Event;
 
-/// Errors that can occur when using the `perf_event` source.
+pub type Result<T> = std::result::Result<T, PerfEventError>;
+
 #[derive(Debug, Error)]
 pub enum PerfEventError {
-    /// I/O error from the underlying `perf_event` syscall.
-    #[error("{0}")]
-    IoError(
-        #[from]
-        #[source]
-        std::io::Error,
-    ),
+    #[error(
+        "permission denied on the perf counters: run as root, or `sudo sysctl kernel.perf_event_paranoid=0`"
+    )]
+    PermissionDenied(#[source] io::Error),
 
-    /// Failed to read the value of a specific hardware counter.
-    #[error("Error reading counter {0}")]
-    ErrorReadingCounter(Event),
+    #[error("opening the cgroup {0}")]
+    OpenCgroup(PathBuf, #[source] io::Error),
 
-    /// Not enough snapshots have been taken to compute the delta between two measures.
-    #[error("Not enough measures to compute perf counters differences")]
-    NotEnoughSamples,
+    #[error("opening the perf group of cpu {0}")]
+    OpenGroup(u32, #[source] io::Error),
 
-    /// Failed to parse the online CPU list from sysfs.
-    #[error("Failed to parse online CPU list: {0}")]
-    ParseCpuList(
-        #[from]
-        #[source]
-        std::num::ParseIntError,
-    ),
+    #[error("opening the perf group")]
+    OpenLeader(#[source] io::Error),
 
-    /// A blocking task (opening or reading counters) panicked or was cancelled.
-    #[error("Failed to join a blocking perf_event task: {0}")]
-    JoinError(
-        #[from]
-        #[source]
-        tokio::task::JoinError,
-    ),
+    #[error("opening the {0} counter")]
+    OpenCounter(Event, #[source] io::Error),
 
-    #[error("CPU specification invalid, the provided CPU core {0} is not an online CPU.")]
-    InvalidCpuCore(u32),
+    #[error("reading the {0} counter")]
+    ReadCounter(Event, #[source] io::Error),
+
+    #[error("reading the perf counters of cpu {0}")]
+    ReadGroup(u32, #[source] io::Error),
+
+    #[error("reading the perf counters")]
+    ReadCounters(#[source] io::Error),
+
+    #[error("switching the perf counters")]
+    Switch(#[source] io::Error),
+
+    #[error("reading {0}")]
+    Read(PathBuf, #[source] io::Error),
+
+    #[error("cpu {0} is not online")]
+    OfflineCpu(u32),
+
+    #[error("reading counters that were never opened")]
+    NotOpened,
 }

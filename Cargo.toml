@@ -3,12 +3,9 @@ resolver = "2"
 members = [
     "core",
     "cli",
-    "sources/*"
-]
-default-members = [
-    "core",
-    "cli",
     "sources/*",
+    "injectors/*",
+    "exporters/*"
 ]
 
 [workspace.package]
@@ -22,17 +19,15 @@ readme = "README.md"
 joule-profiler-core = { path = "core", version = "2.0.0" }
 
 log = "0.4.28"
-tokio = { version = "1.52.3", features = ["time", "rt-multi-thread", "macros", "sync", "rt"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
 thiserror = "2.0.17"
-futures = "0.3.31"
 humantime-serde = "1.1.1"
+libc = "0.2.183"
 
 # dev-dependencies
 tempfile = "3"
 mockall = "0.13"
-async-trait = "0.1"
-tokio-test = "0.4"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

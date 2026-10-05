@@ -12,17 +12,13 @@ readme = "README.md"
 [dependencies]
 joule-profiler-core.workspace = true
 log.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-futures.workspace = true
 serde.workspace = true
-humantime-serde.workspace = true
+thiserror.workspace = true
 
-tokio-timerfd = "0.2.0"
 perf-event2 = { version = "0.7.4", optional = true }
 
 [dev-dependencies]
-tempfile.workspace = true
+serde_json.workspace = true
 
 [features]
 default = ["backend-perf", "backend-powercap"]

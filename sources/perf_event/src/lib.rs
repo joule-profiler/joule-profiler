@@ -1,349 +1,260 @@
-//! `perf_event` source for hardware performance counters.
-//!
-//! Measures CPU cycles, instructions, cache misses, and branch misses
-//! using Linux `perf_event` subsystem.
-//!
-//! Note: Counters are created individually (not grouped) because
-//! `inherit(true)` is incompatible with `perf_event` groups on Linux.
+use std::collections::HashSet;
+use std::path::PathBuf;
 
-use std::{
-    collections::HashSet,
-    fs::File,
-    path::{Path, PathBuf},
-};
+use joule_profiler_core::info::Info;
+use joule_profiler_core::source::Source;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 
-use joule_profiler_core::{
-    sensor::{Sensor, Sensors},
-    source::MetricReader,
-    types::{Metric, Metrics},
-    unit::{MetricUnit, Unit, UnitPrefix},
-};
-use log::{debug, info, trace};
+pub mod cgroup;
+pub mod error;
+pub mod event;
+pub mod pid;
+pub mod scope;
 
-use crate::{
-    config::PerfConfig,
-    error::PerfEventError,
-    event::{EVENTS, Event},
-    hardware::{PerfEventCounters, PerfEventHardware, Target},
-    snapshot::{Phase, Snapshot},
-};
+pub use cgroup::CgroupScope;
+pub use error::PerfEventError;
+pub use event::Event;
+pub use pid::PidScope;
+pub use scope::{PerfProcessor, PerfScope, PerfSensor};
 
-pub mod config;
-mod error;
-mod event;
-mod hardware;
-mod snapshot;
+use crate::cgroup::CGROUP_ROOT;
 
-type Result<T> = std::result::Result<T, PerfEventError>;
+/// Hardware counters on the profiled program (`scope = "pid"`, the default) or on a cgroup.
+#[derive(Debug, Clone)]
+pub enum PerfEvent {
+    Pid(Pid),
+    Cgroup(Cgroup),
+}
 
-const PERF_EVENT_METRIC_UNIT: MetricUnit = MetricUnit {
-    prefix: UnitPrefix::None,
-    unit: Unit::Count,
-};
+impl Default for PerfEvent {
+    fn default() -> Self {
+        Self::Pid(Pid::default())
+    }
+}
 
-/// Root of the cgroup v2 hierarchy that `PerfConfig::cgroup_name` is
-/// resolved against.
-const CGROUP_ROOT: &str = "/sys/fs/cgroup";
+impl PerfEvent {
+    pub fn build(self) -> Source {
+        match self {
+            Self::Pid(pid) => pid.build(),
+            Self::Cgroup(cgroup) => cgroup.build(),
+        }
+    }
+}
 
-struct CgroupConfig {
+impl<'de> Deserialize<'de> for PerfEvent {
+    /// `scope` picks the variant and defaults to `pid`.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "scope", rename_all = "lowercase")]
+        enum Scoped {
+            Pid(Pid),
+            Cgroup(Cgroup),
+        }
+
+        let mut table = serde_json::Map::deserialize(deserializer)?;
+        table.entry("scope").or_insert_with(|| "pid".into());
+
+        match Scoped::deserialize(serde_json::Value::Object(table)).map_err(D::Error::custom)? {
+            Scoped::Pid(pid) => Ok(Self::Pid(pid)),
+            Scoped::Cgroup(cgroup) => Ok(Self::Cgroup(cgroup)),
+        }
+    }
+}
+
+/// Counters on the profiled program and the processes it starts.
+#[must_use]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Pid {
+    /// Default: [`Event::DEFAULT`].
+    events: Option<HashSet<Event>>,
+}
+
+impl Pid {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
+        self.events = Some(events.into_iter().collect());
+        self
+    }
+
+    pub fn build(self) -> Source {
+        let events = ordered(self.events);
+        log::debug!("perf_event: counting {} events on a pid", events.len());
+
+        Source::new(
+            PerfSensor::new(PidScope::new(events.clone())),
+            PerfProcessor::new(events, Info::new().with("scope", "pid")),
+        )
+    }
+}
+
+/// Counters on an existing cgroup.
+#[must_use]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cgroup {
+    /// Default: [`Event::DEFAULT`].
+    #[serde(default)]
+    events: Option<HashSet<Event>>,
+
+    /// Relative to `root`.
     name: PathBuf,
-    root: PathBuf,
-    cpu_spec: Option<HashSet<u32>>,
+
+    /// Default: `/sys/fs/cgroup`.
+    #[serde(default)]
+    root: Option<PathBuf>,
+
+    /// Default: every online CPU.
+    #[serde(default)]
+    cpus: Option<HashSet<u32>>,
 }
 
-/// Hardware performance counter source using `perf_event`.
-///
-/// Tracks CPU performance metrics (cycles, instructions, cache/branch misses)
-/// for a specific process, or for every process inside a cgroup if
-/// `PerfConfig::cgroup_name` is set.
-///
-/// The hardware generic type is used for testing purposes, it allows to change the implementation
-/// used to interact with `perf_event`. The default adapter use the `perf_event2` library.
-pub struct PerfEvent<H: PerfEventHardware = PerfEventCounters> {
-    hardware: H,
-    events: Vec<Event>,
-    cgroup_config: Option<CgroupConfig>,
-    begin_snapshot: Option<Snapshot>,
-    last_snapshot: Option<Snapshot>,
-}
-
-impl<H: PerfEventHardware + 'static> MetricReader for PerfEvent<H> {
-    type Type = Phase;
-    type Error = PerfEventError;
-    type Config = PerfConfig;
-
-    fn from_config(mut config: PerfConfig) -> Result<Self> {
-        let cgroup_config = if let Some(cgroup_name) = config.cgroup_name {
-            Some(CgroupConfig {
-                name: cgroup_name,
-                root: config.cgroup_root.take().unwrap_or(CGROUP_ROOT.into()),
-                cpu_spec: config.cpu_spec,
-            })
-        } else {
-            None
-        };
-
-        Ok(Self {
-            events: config
-                .events
-                .map_or(EVENTS.to_vec(), |e| e.into_iter().collect()),
-            cgroup_config,
-            hardware: H::default(),
-            begin_snapshot: None,
-            last_snapshot: None,
-        })
-    }
-
-    async fn pre_init(&mut self) -> Result<()> {
-        if let Some(cgroup_config) = &mut self.cgroup_config {
-            let path = Path::new(&cgroup_config.root).join(&cgroup_config.name);
-            info!(
-                "Initializing perf_event source for cgroup {}",
-                path.display()
-            );
-            let target = Target::Cgroup(File::open(path)?, cgroup_config.cpu_spec.take());
-            self.hardware.init_counters(&self.events, target).await?;
-        }
-        Ok(())
-    }
-
-    /// Initialize counters and start monitoring: either the given process's
-    /// pid, or the configured cgroup if `PerfConfig::cgroup_name` was set.
-    async fn init(&mut self, pid: i32) -> Result<()> {
-        if self.cgroup_config.is_none() {
-            info!("Initializing perf_event source for PID {pid}");
-            self.hardware
-                .init_counters(&self.events, Target::Pid(pid))
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// Read current counter values and compute delta since last measurement.
-    async fn measure(&mut self) -> Result<()> {
-        trace!("Reading perf_event counters");
-        let new_snapshot = self.hardware.read_snapshot().await?;
-        if self.begin_snapshot.is_none() {
-            self.begin_snapshot = Some(new_snapshot);
-        } else {
-            self.last_snapshot = Some(new_snapshot);
-        }
-        Ok(())
-    }
-
-    /// Retrieve and consume the last measurement snapshot.
-    async fn retrieve(&mut self) -> Result<Self::Type> {
-        if let Some(begin) = self.begin_snapshot.take()
-            && let Some(end) = self.last_snapshot.take()
-        {
-            self.begin_snapshot = Some(end.clone());
-            Ok(Phase { begin, end })
-        } else {
-            Err(PerfEventError::NotEnoughSamples)
+impl Cgroup {
+    pub fn new(name: impl Into<PathBuf>) -> Self {
+        Self {
+            events: None,
+            name: name.into(),
+            root: None,
+            cpus: None,
         }
     }
 
-    /// Returns available hardware performance counter sensors.
-    fn get_sensors(&self) -> Result<Sensors> {
-        trace!("Building perf_event sensor list");
-        let sensors: Sensors = self
-            .events
-            .iter()
-            .map(|event| {
-                trace!("Registering sensor: {event}");
-                Sensor::new(*event, PERF_EVENT_METRIC_UNIT, Self::get_name())
-            })
-            .collect();
-
-        debug!("Registered {} perf_event sensors", sensors.len());
-        Ok(sensors)
+    pub fn events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
+        self.events = Some(events.into_iter().collect());
+        self
     }
 
-    /// Convert raw counter values to metrics with metadata.
-    ///
-    /// Per-CPU deltas are summed into a single total per event here, once,
-    /// rather than in `read_snapshot` on every measurement.
-    fn to_metrics(&self, result: Self::Type) -> Result<Metrics> {
-        trace!(
-            "Converting {} counters to metrics",
-            result.begin.metrics.len()
+    pub fn root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.root = Some(root.into());
+        self
+    }
+
+    pub fn cpus(mut self, cpus: impl IntoIterator<Item = u32>) -> Self {
+        self.cpus = Some(cpus.into_iter().collect());
+        self
+    }
+
+    pub fn build(self) -> Source {
+        let events = ordered(self.events);
+        let path = self
+            .root
+            .unwrap_or_else(|| PathBuf::from(CGROUP_ROOT))
+            .join(self.name);
+        log::debug!(
+            "perf_event: counting {} events on cgroup {}",
+            events.len(),
+            path.display()
         );
-        let diff = result.diff();
-        Ok(diff
-            .metrics
-            .into_iter()
-            .map(|(event, per_cpu)| {
-                let value: u64 = per_cpu.values().sum();
-                Metric::new(event, value, PERF_EVENT_METRIC_UNIT, Self::get_name())
-            })
-            .collect())
-    }
 
-    fn get_name() -> &'static str {
-        "perf_event"
-    }
+        let scope = CgroupScope::new(events.clone(), path, self.cpus);
+        let info = scope.info();
 
-    fn get_id() -> &'static str {
-        "perf"
+        Source::new(PerfSensor::new(scope), PerfProcessor::new(events, info))
     }
+}
+
+/// The events, sorted so that the metrics keep the same order.
+fn ordered(events: Option<HashSet<Event>>) -> Vec<Event> {
+    let Some(events) = events else {
+        return Event::DEFAULT.to_vec();
+    };
+
+    let mut events: Vec<Event> = events.into_iter().collect();
+    events.sort_unstable();
+    events
 }
 
 #[cfg(test)]
 mod tests {
-    use joule_profiler_core::types::MetricValue;
+    use std::path::Path;
+
+    use serde_json::json;
 
     use super::*;
-    use crate::{event::Event, hardware::MockPerfEventHardware, snapshot::Snapshot};
 
-    /// A single-CPU snapshot, as PID-scoped counters always are.
-    fn snapshot(entries: Vec<(Event, u64)>) -> Snapshot {
-        Snapshot {
-            metrics: entries
-                .into_iter()
-                .map(|(event, value)| (event, std::collections::HashMap::from([(0, value)])))
-                .collect(),
-        }
+    fn read(table: serde_json::Value) -> serde_json::Result<PerfEvent> {
+        serde_json::from_value(table)
     }
 
-    fn total(snapshot: &Snapshot, event: Event) -> u64 {
-        snapshot.metrics[&event].values().sum()
+    fn names(perf: PerfEvent) -> Vec<String> {
+        perf.build()
+            .metrics()
+            .into_iter()
+            .map(|metric| metric.name)
+            .collect()
     }
 
-    fn with_hardware(hardware: MockPerfEventHardware) -> PerfEvent<MockPerfEventHardware> {
-        PerfEvent {
-            hardware,
-            events: EVENTS.to_vec(),
-            cgroup_config: None,
-            begin_snapshot: None,
-            last_snapshot: None,
-        }
+    #[test]
+    fn an_empty_table_counts_the_default_events_on_the_program() {
+        let perf = read(json!({})).unwrap();
+
+        assert!(matches!(perf, PerfEvent::Pid(_)));
+        assert_eq!(names(perf).len(), Event::DEFAULT.len());
     }
 
-    #[tokio::test]
-    async fn measure_stores_begin_snapshot() {
-        let mut hardware = MockPerfEventHardware::new();
-        hardware
-            .expect_read_snapshot()
-            .returning(|| Box::pin(async { Ok(snapshot(vec![(Event::CpuCycles, 100)])) }));
+    #[test]
+    fn the_events_of_the_program_are_set_without_naming_its_scope() {
+        let perf = read(json!({ "events": ["instructions"] })).unwrap();
 
-        let mut source = with_hardware(hardware);
-        source.measure().await.unwrap();
-
-        assert!(source.begin_snapshot.is_some());
-        assert!(source.last_snapshot.is_none());
+        assert!(matches!(perf, PerfEvent::Pid(_)));
+        assert_eq!(names(perf), ["INSTRUCTIONS"]);
     }
 
-    #[tokio::test]
-    async fn measure_twice_stores_last_snapshot() {
-        let mut hardware = MockPerfEventHardware::new();
-        let mut read_snapshot_call_count = 0u64;
-        hardware.expect_read_snapshot().returning(move || {
-            read_snapshot_call_count += 1;
-            Box::pin(async move {
-                Ok(snapshot(vec![(
-                    Event::CpuCycles,
-                    read_snapshot_call_count * 100,
-                )]))
-            })
-        });
+    #[test]
+    fn the_scope_of_the_program_can_still_be_named() {
+        let perf = read(json!({ "scope": "pid", "events": ["instructions"] })).unwrap();
 
-        let mut source = with_hardware(hardware);
-        source.measure().await.unwrap();
-        source.measure().await.unwrap();
-
-        assert!(source.begin_snapshot.is_some());
-        assert!(source.last_snapshot.is_some());
+        assert!(matches!(perf, PerfEvent::Pid(_)));
     }
 
-    #[tokio::test]
-    async fn retrieve_without_enough_snapshots_returns_error() {
-        let mut hardware = MockPerfEventHardware::new();
-        hardware
-            .expect_read_snapshot()
-            .returning(|| Box::pin(async { Ok(snapshot(vec![(Event::CpuCycles, 100)])) }));
+    #[test]
+    fn a_cgroup_scope_reads_its_own_keys() {
+        let perf = read(json!({
+            "scope": "cgroup",
+            "name": "my-run",
+            "root": "/elsewhere",
+            "cpus": [0, 1],
+        }))
+        .unwrap();
 
-        let mut source = with_hardware(hardware);
-        source.measure().await.unwrap();
-
-        assert!(matches!(
-            source.retrieve().await,
-            Err(PerfEventError::NotEnoughSamples)
-        ));
+        let PerfEvent::Cgroup(cgroup) = perf else {
+            panic!("a cgroup scope");
+        };
+        assert_eq!(cgroup.name, Path::new("my-run"));
+        assert_eq!(cgroup.cpus, Some(HashSet::from([0, 1])));
     }
 
-    #[tokio::test]
-    async fn retrieve_returns_correct_phase() {
-        let mut hardware = MockPerfEventHardware::new();
-        let mut read_snapshot_call_count = 0u64;
-        hardware.expect_read_snapshot().returning(move || {
-            read_snapshot_call_count += 1;
-            Box::pin(async move {
-                Ok(snapshot(vec![(
-                    Event::CpuCycles,
-                    read_snapshot_call_count * 100,
-                )]))
-            })
-        });
+    #[test]
+    fn the_program_has_no_cpus_to_count_on() {
+        let error = read(json!({ "cpus": [0] })).unwrap_err();
 
-        let mut source = with_hardware(hardware);
-        source.measure().await.unwrap();
-        source.measure().await.unwrap();
-        let phase = source.retrieve().await.unwrap();
-
-        assert_eq!(total(&phase.begin, Event::CpuCycles), 100);
-        assert_eq!(total(&phase.end, Event::CpuCycles), 200);
-    }
-
-    #[tokio::test]
-    async fn retrieve_rolls_begin_snapshot_to_end() {
-        let mut hardware = MockPerfEventHardware::new();
-        let mut read_snapshot_call_count = 0u64;
-        hardware.expect_read_snapshot().returning(move || {
-            read_snapshot_call_count += 1;
-            Box::pin(async move {
-                Ok(snapshot(vec![(
-                    Event::CpuCycles,
-                    read_snapshot_call_count * 100,
-                )]))
-            })
-        });
-
-        let mut source = with_hardware(hardware);
-        source.measure().await.unwrap();
-        source.measure().await.unwrap();
-        source.retrieve().await.unwrap();
-        assert_eq!(
-            total(source.begin_snapshot.as_ref().unwrap(), Event::CpuCycles),
-            200
+        assert!(
+            error.to_string().contains("unknown field `cpus`"),
+            "{error}"
         );
-        assert!(source.last_snapshot.is_none());
     }
 
-    #[tokio::test]
-    async fn to_metrics_returns_correct_values() {
-        let mut hardware = MockPerfEventHardware::new();
-        let mut read_snapshot_call_count = 0;
-        hardware.expect_read_snapshot().returning(move || {
-            read_snapshot_call_count += 1;
-            Box::pin(async move {
-                Ok(match read_snapshot_call_count {
-                    1 => snapshot(vec![(Event::CpuCycles, 0)]),
-                    _ => snapshot(vec![(Event::CpuCycles, 500)]),
-                })
-            })
-        });
+    #[test]
+    fn a_cgroup_scope_names_its_cgroup() {
+        let error = read(json!({ "scope": "cgroup" })).unwrap_err();
 
-        let mut source = with_hardware(hardware);
-        source.measure().await.unwrap();
-        source.measure().await.unwrap();
-        let phase = source.retrieve().await.unwrap();
-        let metrics = source.to_metrics(phase).unwrap();
-        let cycles = metrics
-            .iter()
-            .find(|m| m.name == Event::CpuCycles.to_string())
-            .unwrap();
+        assert!(
+            error.to_string().contains("missing field `name`"),
+            "{error}"
+        );
+    }
 
-        assert_eq!(cycles.value, MetricValue::UnsignedInteger(500));
-        assert_eq!(cycles.unit, PERF_EVENT_METRIC_UNIT);
+    #[test]
+    fn the_events_come_out_in_the_same_order_whatever_order_they_were_given_in() {
+        let given = read(json!({ "events": ["branch_misses", "instructions", "cpu_cycles"] }));
+
+        assert_eq!(
+            names(given.unwrap()),
+            ["CPU_CYCLES", "INSTRUCTIONS", "BRANCH_MISSES"]
+        );
     }
 }

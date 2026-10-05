@@ -1,84 +1,53 @@
 use anyhow::Result;
-use joule_profiler_cli::config::load_global_config;
-use joule_profiler_cli::config::source::register_source;
-use joule_profiler_cli::config::table::ConfigTable;
-use joule_profiler_cli::{CliArgs, config_table_to_displayer, init_logging};
-use joule_profiler_core::JouleProfiler;
-use joule_profiler_core::config::Command;
+use joule_profiler_cli::cli::{Cli, Command};
+use joule_profiler_cli::config::Settings;
+use joule_profiler_cli::{exporter, init_logging, sources};
+use joule_profiler_core::profiler::JouleProfiler;
+use joule_profiler_core::util::cgroup::CgroupConfig;
+use joule_profiler_exporter_terminal::{print_info, print_schema};
+use joule_profiler_injector_stdout::StdoutInjector;
 
-#[cfg(feature = "_rapl")]
-use joule_profiler_cli::RaplBackend;
-#[cfg(feature = "amdsmi")]
-use joule_profiler_source_amdsmi::AmdSmi;
-#[cfg(feature = "cgroup")]
-use joule_profiler_source_cgroup::Cgroup;
-#[cfg(feature = "nvml")]
-use joule_profiler_source_nvml::Nvml;
-#[cfg(feature = "perf_event")]
-use joule_profiler_source_perf_event::PerfEvent;
-#[cfg(feature = "procfs")]
-use joule_profiler_source_procfs::Procfs;
-#[cfg(feature = "rapl-perf")]
-use joule_profiler_source_rapl::perf;
-#[cfg(feature = "rapl-powercap")]
-use joule_profiler_source_rapl::powercap;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut cli = CliArgs::from_args();
-    cli.validate()?;
-
+fn main() -> Result<()> {
+    let cli = Cli::parsed()?;
     init_logging(cli.verbose);
 
-    let mut profiler = JouleProfiler::new();
+    let settings = Settings::resolve(&cli)?;
+    let profiling = matches!(cli.command, Command::Profile(_));
 
-    let global_config = load_global_config(cli.config_file.as_deref(), &cli.overrides)?;
-    let mut config_table = ConfigTable::new(global_config, &cli.sources);
+    // Only a run creates its cgroup, which needs root. It is created before the sources so that
+    // the cgroup source can read it.
+    let cgroup = settings
+        .cgroup
+        .clone()
+        .filter(|_| profiling)
+        .map(CgroupConfig::create)
+        .transpose()?;
+    let cgroup_path = settings.cgroup.as_ref().map(CgroupConfig::path);
 
-    config_table.apply_cli(&mut cli);
+    let mut joule_profiler = JouleProfiler::new();
+    sources::add(&mut joule_profiler, &settings, cgroup_path.as_deref())?;
+    if let Some(cgroup) = cgroup {
+        joule_profiler.set_cgroup(cgroup);
+    }
 
-    #[cfg(feature = "_rapl")]
-    match config_table.profiler_config.rapl_backend {
-        #[cfg(feature = "rapl-perf")]
-        RaplBackend::Perf => register_source::<perf::Rapl>(&mut profiler, &mut config_table),
-        #[cfg(feature = "rapl-powercap")]
-        RaplBackend::Powercap => {
-            register_source::<powercap::Rapl>(&mut profiler, &mut config_table)
-        }
-    }?;
-
-    #[cfg(feature = "perf_event")]
-    register_source::<PerfEvent>(&mut profiler, &mut config_table)?;
-
-    #[cfg(feature = "cgroup")]
-    register_source::<Cgroup>(&mut profiler, &mut config_table)?;
-
-    #[cfg(feature = "procfs")]
-    register_source::<Procfs>(&mut profiler, &mut config_table)?;
-
-    #[cfg(feature = "nvml")]
-    register_source::<Nvml>(&mut profiler, &mut config_table)?;
-
-    #[cfg(feature = "amdsmi")]
-    register_source::<AmdSmi>(&mut profiler, &mut config_table)?;
-
-    config_table.ensure_sources_are_known()?;
-
-    let mut displayer = config_table_to_displayer(&config_table)?;
-    let config = config_table.to_config(cli)?;
-
-    match config.command {
-        Command::Profile(profile_config) => {
-            let results = profiler.profile(&profile_config).await?;
-            displayer.display_results(
-                &profile_config.cmd,
-                &profile_config.token_pattern,
-                &results,
-            )?;
-        }
+    match cli.command {
         Command::ListSensors => {
-            let sensors = profiler.list_sensors()?;
-            displayer.list_sensors(&sensors)?;
+            print_schema("Available sensors", &joule_profiler.schema())?;
+        }
+        Command::Info => {
+            print_info("Information", &joule_profiler.info())?;
+        }
+        Command::Profile(profile_args) => {
+            let injector = StdoutInjector::new(profile_args.cmd, &settings.token_pattern)?
+                .use_root(settings.use_root)
+                .output_file(settings.stdout_file.clone());
+
+            exporter::set(&mut joule_profiler, &settings)?;
+            joule_profiler.set_injector(injector);
+            joule_profiler.set_defer(settings.defer);
+
+            print_info("Information", &joule_profiler.info())?;
+            joule_profiler.profile()?;
         }
     }
 

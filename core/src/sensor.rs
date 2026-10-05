@@ -1,61 +1,27 @@
-//! Representation of measurable sensors.
-//!
-//! This module defines the structures used to describe sensors collected
-//! by `JouleProfiler`. Sensors are associated with metric sources and are
-//! used to represent individual measurements.
+use crate::injector::Target;
 
-use serde::Serialize;
+/// Takes the measurements of a source, on its own thread. Turning them into metrics is left to
+/// its [`crate::processor::Processor`].
+pub trait Sensor: Send + 'static {
+    type Snapshot: Send + 'static;
+    type Error: std::error::Error + Send + Sync + 'static;
 
-use crate::unit::MetricUnit;
+    fn name(&self) -> &str;
 
-/// Represents a measurable sensor.
-///
-/// A sensor corresponds to a metric collected from a source.
-///
-/// # Examples
-///
-/// ```no_run
-/// use joule_profiler_core::{
-///     sensor::Sensor,
-///     unit::{MetricUnit, UnitPrefix, Unit},
-/// };
-///
-/// let micro_joule_unit: MetricUnit = MetricUnit {
-///     prefix: UnitPrefix::Micro,
-///     unit: Unit::Joule,
-/// };
-///
-/// let sensor = Sensor::new("CORE-0", micro_joule_unit, "powercap");
-///
-/// assert_eq!(sensor.name, "CORE-0");
-/// assert_eq!(sensor.unit.to_string(), "µJ");
-/// assert_eq!(sensor.source, "powercap");
-/// ```
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
-pub struct Sensor {
-    /// The name of the sensor.
-    pub name: String,
+    /// Called before the target is started.
+    fn init(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    /// The standard international unit associated to this sensor.
-    pub unit: MetricUnit,
+    /// Called once the target is started, before it is resumed.
+    fn attach(&mut self, _target: Target) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    /// The metric source associated to the sensor.
-    pub source: String,
-}
+    fn measure(&mut self) -> Result<Self::Snapshot, Self::Error>;
 
-impl Sensor {
-    pub fn new<N, S>(name: N, unit: MetricUnit, source: S) -> Self
-    where
-        N: Into<String>,
-        S: Into<String>,
-    {
-        Self {
-            name: name.into(),
-            unit,
-            source: source.into(),
-        }
+    /// Called once the run is over, even if `init` failed or was never called.
+    fn close(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
-
-/// A collection of sensors.
-pub type Sensors = Vec<Sensor>;

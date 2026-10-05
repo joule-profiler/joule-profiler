@@ -1,62 +1,78 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use perf_event::events::Hardware;
 use serde::Deserialize;
 
-/// Hardware performance counter event types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+/// A hardware event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Event {
-    #[serde(alias = "CPU_CYCLES", alias = "cpu-cycles")]
+    #[serde(alias = "CPU_CYCLES", alias = "cpu-cycles", alias = "cycles")]
     CpuCycles,
 
-    #[serde(alias = "INSTRUCTIONS", alias = "instructions")]
+    #[serde(alias = "INSTRUCTIONS")]
     Instructions,
+
+    #[serde(alias = "CACHE_REFERENCES", alias = "cache-references")]
+    CacheReferences,
 
     #[serde(alias = "CACHE_MISSES", alias = "cache-misses")]
     CacheMisses,
 
+    #[serde(
+        alias = "BRANCH_INSTRUCTIONS",
+        alias = "branch-instructions",
+        alias = "branches"
+    )]
+    BranchInstructions,
+
     #[serde(alias = "BRANCH_MISSES", alias = "branch-misses")]
     BranchMisses,
+
+    #[serde(alias = "BUS_CYCLES", alias = "bus-cycles")]
+    BusCycles,
+
+    #[serde(alias = "REF_CPU_CYCLES", alias = "ref-cycles")]
+    RefCpuCycles,
 }
 
-/// Default hardware events to be used in `perf_event`.
-pub static EVENTS: &[Event] = &[
-    Event::CpuCycles,
-    Event::Instructions,
-    Event::CacheMisses,
-    Event::BranchMisses,
-];
+impl Event {
+    /// The events counted when none are configured.
+    pub const DEFAULT: [Self; 4] = [
+        Self::CpuCycles,
+        Self::Instructions,
+        Self::CacheMisses,
+        Self::BranchMisses,
+    ];
+}
 
 impl From<Event> for Hardware {
     fn from(event: Event) -> Self {
         match event {
-            Event::CpuCycles => Hardware::CPU_CYCLES,
-            Event::Instructions => Hardware::INSTRUCTIONS,
-            Event::CacheMisses => Hardware::CACHE_MISSES,
-            Event::BranchMisses => Hardware::BRANCH_MISSES,
+            Event::CpuCycles => Self::CPU_CYCLES,
+            Event::Instructions => Self::INSTRUCTIONS,
+            Event::CacheReferences => Self::CACHE_REFERENCES,
+            Event::CacheMisses => Self::CACHE_MISSES,
+            Event::BranchInstructions => Self::BRANCH_INSTRUCTIONS,
+            Event::BranchMisses => Self::BRANCH_MISSES,
+            Event::BusCycles => Self::BUS_CYCLES,
+            Event::RefCpuCycles => Self::REF_CPU_CYCLES,
         }
     }
 }
 
 impl Display for Event {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Event::CpuCycles => "CPU_CYCLES",
-            Event::Instructions => "INSTRUCTIONS",
-            Event::CacheMisses => "CACHE_MISSES",
-            Event::BranchMisses => "BRANCH_MISSES",
+            Self::CpuCycles => "CPU_CYCLES",
+            Self::Instructions => "INSTRUCTIONS",
+            Self::CacheReferences => "CACHE_REFERENCES",
+            Self::CacheMisses => "CACHE_MISSES",
+            Self::BranchInstructions => "BRANCH_INSTRUCTIONS",
+            Self::BranchMisses => "BRANCH_MISSES",
+            Self::BusCycles => "BUS_CYCLES",
+            Self::RefCpuCycles => "REF_CPU_CYCLES",
         })
-    }
-}
-
-impl From<Event> for String {
-    fn from(event: Event) -> Self {
-        match event {
-            Event::CpuCycles => "CPU_CYCLES".into(),
-            Event::Instructions => "INSTRUCTIONS".into(),
-            Event::CacheMisses => "CACHE_MISSES".into(),
-            Event::BranchMisses => "BRANCH_MISSES".into(),
-        }
     }
 }
 
@@ -65,10 +81,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn events_slice_contains_all_variants() {
-        assert!(EVENTS.contains(&Event::CpuCycles));
-        assert!(EVENTS.contains(&Event::Instructions));
-        assert!(EVENTS.contains(&Event::CacheMisses));
-        assert!(EVENTS.contains(&Event::BranchMisses));
+    fn events_slice_contains_all_default_variants() {
+        assert!(Event::DEFAULT.contains(&Event::CpuCycles));
+        assert!(Event::DEFAULT.contains(&Event::Instructions));
+        assert!(Event::DEFAULT.contains(&Event::CacheMisses));
+        assert!(Event::DEFAULT.contains(&Event::BranchMisses));
+    }
+
+    #[test]
+    fn an_event_is_reported_in_capitals() {
+        assert_eq!(Event::BranchMisses.to_string(), "BRANCH_MISSES");
     }
 }

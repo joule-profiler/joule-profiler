@@ -1,63 +1,54 @@
 use std::collections::{HashMap, HashSet};
 
-use amdsmi::types::{EnergyCount, GpuUsageInfo};
-use joule_profiler_core::time::get_timestamp_micros;
 use log::{debug, trace};
 
-use crate::{
-    Processor, ProcessorSupport, Result, UUID, counters::PowerMeasurement, error::AmdSmiError,
-};
+use crate::error::{AmdSmiError, Result};
+use crate::sensor::{Device, DeviceSupport};
 
-/// Trait for abstracting the backend of AMD SMI library. Used for testing.
+/// The AMD SMI calls the sensor makes, behind a trait so that tests can mock them.
 #[cfg_attr(test, mockall::automock)]
 #[allow(clippy::ref_option_ref)]
 pub trait AmdSmiHardware: Send + Sync + 'static {
-    /// Creates an hardware instance.
     fn new() -> Result<Self>
     where
         Self: Sized;
 
-    /// Init all GPU devices specicied by the provided specification.
+    /// The GPUs to measure and what each supports.
     // Automock needs lifetime and clippy wants it erased.
     #[allow(clippy::needless_lifetimes)]
-    fn init_processors<'a>(&mut self, spec: Option<&'a HashSet<UUID>>) -> Result<Vec<Processor>>;
+    fn init_devices<'a>(&mut self, spec: Option<&'a HashSet<String>>) -> Result<Vec<Device>>;
 
-    /// Retrieve the energy count of a device.
-    fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount>;
+    fn get_name(&self, device: &Device) -> Result<String>;
 
-    /// Retrieve the instantaneous power of a device.
-    fn get_power(&self, processor: &Processor) -> Result<PowerMeasurement>;
+    /// The energy counter, in microjoules.
+    fn get_energy(&self, device: &Device) -> Result<u64>;
 
-    /// Retrieve the current vram usage of a device.
-    fn get_vram_usage(&self, processor: &Processor) -> Result<u64>;
+    /// The power, in milliwatts.
+    fn get_power(&self, device: &Device) -> Result<u32>;
 
-    /// Retrieve the current GPU utilization info.
-    fn get_gpu_activity(&self, processor: &Processor) -> Result<GpuUsageInfo>;
+    /// The VRAM used, in bytes.
+    fn get_vram_usage(&self, device: &Device) -> Result<u64>;
+
+    /// The utilization, in percent.
+    fn get_utilization(&self, device: &Device) -> Result<u32>;
 }
 
-/// Backend for interacting with AMD SMI library.
 pub struct AmdSmiWrapperHardware {
-    /// Handle to the AMD SMI wrapper library.
     amdsmi: amdsmi::AmdSmi,
 
-    /// The handles to the GPU devices.
-    processor_handles: HashMap<UUID, amdsmi::Processor>,
+    /// By UUID.
+    handles: HashMap<String, amdsmi::Processor>,
 }
 
 impl AmdSmiWrapperHardware {
-    fn get_device_handle(&self, processor: &Processor) -> Result<&amdsmi::Processor> {
-        self.processor_handles
-            .get(&processor.uuid)
-            .ok_or(AmdSmiError::NoSuchDevice(processor.clone()))
+    fn handle(&self, device: &Device) -> Result<&amdsmi::Processor> {
+        self.handles
+            .get(&device.uuid)
+            .ok_or_else(|| AmdSmiError::NoSuchDevice(device.uuid.clone()))
     }
 }
 
 impl AmdSmiHardware for AmdSmiWrapperHardware {
-    /// Creates a new AMD SMI hardware instance.
-    ///
-    /// This function will return an error if:
-    /// - The AMD SMI library cannot be initialized (driver not installed, incompatible version, etc.)
-    /// - The permissions are insufficient to be able to query the AMD SMI driver.
     fn new() -> Result<Self> {
         debug!("Attempting to initialize AMD SMI reader");
         let amdsmi = amdsmi::AmdSmi::init().map_err(|err| match err {
@@ -71,92 +62,84 @@ impl AmdSmiHardware for AmdSmiWrapperHardware {
 
         Ok(Self {
             amdsmi,
-            processor_handles: HashMap::new(),
+            handles: HashMap::new(),
         })
     }
 
-    /// Initializes devices with the specified devices specification.
-    /// Check the compatibility of each device and determine which metrics can be queried.
-    fn init_processors(&mut self, spec: Option<&HashSet<UUID>>) -> Result<Vec<Processor>> {
-        trace!("Discovering AMD GPU devices.");
-        let sockets = self.amdsmi.get_socket_handles()?;
+    fn init_devices(&mut self, spec: Option<&HashSet<String>>) -> Result<Vec<Device>> {
+        trace!("discovering AMD GPU devices");
+        let mut devices = Vec::new();
 
-        let processors: Vec<_> = sockets
-            .into_iter()
-            .flat_map(|s| {
-                trace!("Socket {} detected.", s.get_socket_info()?);
-                s.get_processor_handles()
-            })
-            .flatten()
-            .flat_map(|p| {
-                let uuid = p.get_uuid()?;
-                trace!("Discovered GPU device {uuid}.");
+        for socket in self.amdsmi.get_socket_handles()? {
+            for processor in socket.get_processor_handles()? {
+                let uuid = processor.get_uuid()?;
+                trace!("discovered GPU device {uuid}");
 
-                if let Some(spec) = &spec
-                    && !spec.contains(&uuid)
-                {
-                    trace!("Ignoring device {uuid}.");
-                    return Ok::<Option<Processor>, AmdSmiError>(None);
+                if spec.is_some_and(|spec| !spec.contains(&uuid)) {
+                    trace!("ignoring device {uuid}");
+                    continue;
                 }
 
-                let mut support = ProcessorSupport::empty();
+                let mut support = DeviceSupport::empty();
 
-                if p.get_energy_count().is_ok() {
-                    support |= ProcessorSupport::Energy;
-                } else if p.get_power().is_ok() {
-                    support |= ProcessorSupport::Power;
+                if processor.get_energy_count().is_ok() {
+                    support |= DeviceSupport::Energy;
+                } else if processor.get_power().is_ok() {
+                    support |= DeviceSupport::Power;
                 }
-                if p.get_vram_usage().is_ok() {
-                    support |= ProcessorSupport::Vram;
+                if processor.get_vram_usage().is_ok() {
+                    support |= DeviceSupport::Vram;
                 }
-                if p.get_gpu_activity().is_ok() {
-                    support |= ProcessorSupport::Utilization;
+                if processor.get_gpu_activity().is_ok() {
+                    support |= DeviceSupport::Utilization;
                 }
-
-                debug!("Device {uuid} compatibility: {support:?}");
 
                 if support.is_empty() {
-                    trace!("No support detected for device {uuid}, ignored.");
-                    Ok(None)
-                } else {
-                    self.processor_handles.insert(uuid.clone(), p);
-                    Ok(Some(Processor {
-                        uuid: uuid.clone(),
-                        support,
-                    }))
+                    trace!("no support detected for device {uuid}, ignored");
+                    continue;
                 }
-            })
-            .flatten()
-            .collect();
 
-        debug!("Discovered {} gpus.", processors.len());
+                trace!("GPU device {uuid} compatibility is {support:?}");
+                self.handles.insert(uuid.clone(), processor);
+                devices.push(Device { uuid, support });
+            }
+        }
 
-        Ok(processors)
+        debug!("kept {} AMD GPU devices", devices.len());
+        Ok(devices)
     }
 
-    fn get_energy_count(&self, processor: &Processor) -> Result<EnergyCount> {
-        trace!("Retrieving energy for GPU device {}.", processor.uuid);
-        Ok(self.get_device_handle(processor)?.get_energy_count()?)
+    fn get_name(&self, device: &Device) -> Result<String> {
+        Ok(self.handle(device)?.get_board_info()?)
     }
 
-    fn get_power(&self, processor: &Processor) -> Result<PowerMeasurement> {
-        trace!("Retrieving power for GPU device {}.", processor.uuid);
-        Ok(PowerMeasurement {
-            timestamp: get_timestamp_micros(),
-            power: self.get_device_handle(processor)?.get_power()?,
-        })
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the accumulator times its resolution is a positive count of microjoules"
+    )]
+    fn get_energy(&self, device: &Device) -> Result<u64> {
+        trace!("retrieving energy for device {}", device.uuid);
+        let count = self.handle(device)?.get_energy_count()?;
+
+        Ok((count.energy_accumulator as f64 * f64::from(count.counter_resolution)) as u64)
     }
 
-    fn get_vram_usage(&self, processor: &Processor) -> Result<u64> {
-        trace!("Retrieving VRAM usage for GPU device {}.", processor.uuid);
-        Ok(self.get_device_handle(processor)?.get_vram_usage()?)
+    fn get_power(&self, device: &Device) -> Result<u32> {
+        trace!("retrieving power for device {}", device.uuid);
+
+        // Watts to milliwatts.
+        Ok(self.handle(device)?.get_power()?.saturating_mul(1000))
     }
 
-    fn get_gpu_activity(&self, processor: &Processor) -> Result<GpuUsageInfo> {
-        trace!(
-            "Retrieving GPU utilization for GPU device {}.",
-            processor.uuid
-        );
-        Ok(self.get_device_handle(processor)?.get_gpu_activity()?)
+    fn get_vram_usage(&self, device: &Device) -> Result<u64> {
+        trace!("retrieving VRAM usage for device {}", device.uuid);
+        Ok(self.handle(device)?.get_vram_usage()?)
+    }
+
+    fn get_utilization(&self, device: &Device) -> Result<u32> {
+        trace!("retrieving GPU utilization for device {}", device.uuid);
+        Ok(self.handle(device)?.get_gpu_activity()?.gpu_usage)
     }
 }
