@@ -11,7 +11,6 @@ use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
 use joule_profiler_core::sensor::Sensor;
 use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::MetricUnit;
 
 use crate::domain::{EnergyUnit, RaplDomainType};
 use crate::error::{RaplError, Result};
@@ -82,8 +81,7 @@ fn read_energy(dir: &Path) -> Result<u64> {
         .map_err(|_| RaplError::NotANumber(path))
 }
 
-/// A zone with a known name and an `energy_uj` file. The file is not read here, so that
-/// listing works without the rights to measure.
+/// A domain with a known name and an `energy_uj` file.
 fn read_domain(dir: &Path, socket: u32, unit: EnergyUnit) -> Option<PowercapDomain> {
     let name = fs::read_to_string(dir.join("name")).ok()?;
     let domain = RaplDomainType::try_from(name.trim()).ok()?;
@@ -154,11 +152,11 @@ impl Sensor for RaplPowercapSensor {
 
 pub struct RaplPowercapProcessor {
     domains: PowercapDomains,
-    unit: MetricUnit,
+    unit: EnergyUnit,
 }
 
 impl RaplPowercapProcessor {
-    fn new(domains: PowercapDomains, unit: MetricUnit) -> Self {
+    fn new(domains: PowercapDomains, unit: EnergyUnit) -> Self {
         Self { domains, unit }
     }
 }
@@ -167,7 +165,7 @@ impl Processor<RaplPowercapSensor> for RaplPowercapProcessor {
     fn metrics(&self) -> Vec<MetricInfo> {
         self.domains
             .iter()
-            .map(|domain| MetricInfo::new(domain.name(), self.unit))
+            .map(|domain| MetricInfo::new(domain.name(), self.unit.metric_unit()))
             .collect()
     }
 
@@ -177,7 +175,7 @@ impl Processor<RaplPowercapSensor> for RaplPowercapProcessor {
         Info::new()
             .with("backend", "powercap")
             .with("domains", domains)
-            .with("unit", self.unit.to_string())
+            .with("unit", self.unit.metric_unit().to_string())
     }
 
     #[allow(
@@ -192,7 +190,8 @@ impl Processor<RaplPowercapSensor> for RaplPowercapProcessor {
     ) -> Result<()> {
         values.extend(self.domains.iter().zip(current.iter().zip(previous)).map(
             |(domain, (current, previous))| {
-                MetricValue::F64(moved(*previous, *current, domain.max_uj) as f64 * domain.factor)
+                self.unit
+                    .value(moved(*previous, *current, domain.max_uj) as f64 * domain.factor)
             },
         ));
 
@@ -233,7 +232,7 @@ pub(crate) fn build(
 
     Ok(Source::new(
         RaplPowercapSensor::new(Arc::clone(&domains)),
-        RaplPowercapProcessor::new(domains, unit.metric_unit()),
+        RaplPowercapProcessor::new(domains, unit),
     ))
 }
 
@@ -251,11 +250,46 @@ mod tests {
             factor: 1.0,
         }]);
 
-        let info = RaplPowercapProcessor::new(domains, MetricUnit::MILLIJOULE).info();
+        let info = RaplPowercapProcessor::new(domains, EnergyUnit::Millijoule).info();
 
         assert_eq!(info.get("backend"), Some(&"powercap".into()));
         assert_eq!(info.get("domains"), Some(&InfoValue::list(["PACKAGE-0"])));
         assert_eq!(info.get("unit"), Some(&"mJ".into()));
+    }
+
+    fn processed(unit: EnergyUnit, previous: u64, current: u64) -> MetricValue {
+        let domains = Arc::new([PowercapDomain {
+            domain: RaplDomainType::Package,
+            socket: 0,
+            path: PathBuf::from("/sys/class/powercap/intel-rapl:0"),
+            max_uj: 1_000_000,
+            factor: unit.per_joule() / 1e6,
+        }]);
+        let mut values = Vec::new();
+        RaplPowercapProcessor::new(domains, unit)
+            .process(&vec![previous], &vec![current], &mut values)
+            .unwrap();
+        values[0]
+    }
+
+    #[test]
+    fn the_energy_of_a_phase_is_in_the_configured_unit() {
+        assert_eq!(
+            processed(EnergyUnit::Microjoule, 1_000, 9_545),
+            MetricValue::U64(8_545)
+        );
+        assert_eq!(
+            processed(EnergyUnit::Microjoule, 999_000, 7_545),
+            MetricValue::U64(8_545)
+        );
+        assert_eq!(
+            processed(EnergyUnit::Millijoule, 1_000, 9_545),
+            MetricValue::U64(9)
+        );
+        assert!(matches!(
+            processed(EnergyUnit::Joule, 1_000, 9_545),
+            MetricValue::F64(joules) if (joules - 0.008_545).abs() < 1e-12
+        ));
     }
 
     #[test]

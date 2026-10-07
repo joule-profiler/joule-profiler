@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use joule_profiler_core::metric::MetricValue;
 use joule_profiler_core::unit::MetricUnit;
 
 use crate::error::{RaplError, Result};
@@ -40,6 +41,19 @@ impl EnergyUnit {
             Self::Joule => 1.0,
             Self::Millijoule => 1e3,
             Self::Microjoule => 1e6,
+        }
+    }
+
+    /// `energy`, in this unit, as whole millijoules or microjoules but fractional joules.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "an energy is positive, and a phase never accumulates 2^64 microjoules"
+    )]
+    pub(crate) fn value(self, energy: f64) -> MetricValue {
+        match self {
+            Self::Joule => MetricValue::F64(energy),
+            Self::Millijoule | Self::Microjoule => MetricValue::U64(energy.round() as u64),
         }
     }
 }
@@ -239,7 +253,25 @@ fn is_domain_available(domain: &RaplDomain) -> Result<bool> {
 
 #[cfg(test)]
 mod test {
-    use crate::{domain::RaplDomainType, error::RaplError};
+    use joule_profiler_core::metric::MetricValue;
+
+    use crate::{
+        domain::{EnergyUnit, RaplDomainType},
+        error::RaplError,
+    };
+
+    #[test]
+    fn millijoules_and_microjoules_are_u64_abd_joules_are_f64() {
+        assert_eq!(
+            EnergyUnit::Microjoule.value(706_726.4),
+            MetricValue::U64(706_726)
+        );
+        assert_eq!(EnergyUnit::Millijoule.value(8.545), MetricValue::U64(9));
+        assert_eq!(
+            EnergyUnit::Joule.value(0.706_726),
+            MetricValue::F64(0.706_726)
+        );
+    }
 
     fn str_to_domain(domain: &str) -> RaplDomainType {
         RaplDomainType::try_from(domain).unwrap()
@@ -329,7 +361,6 @@ mod test {
         assert_eq!("CORE-0", RaplDomainType::Core.to_string_socket(0));
         assert_eq!("PACKAGE-1", RaplDomainType::Package.to_string_socket(1));
         assert_eq!("DRAM-2", RaplDomainType::Dram.to_string_socket(2));
-
         assert_eq!("PSYS", RaplDomainType::Psys.to_string_socket(0));
     }
 }

@@ -6,7 +6,6 @@ use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
 use joule_profiler_core::sensor::Sensor;
 use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::MetricUnit;
 use perf_event::events::Software;
 use perf_event::{Builder, Counter, Group, ReadFormat};
 
@@ -34,7 +33,7 @@ pub(crate) fn build(
 
     Ok(Source::new(
         RaplPerfSensor::new(Arc::clone(&domains)),
-        RaplProcessor::new(domains, unit.metric_unit()),
+        RaplProcessor::new(domains, unit),
     ))
 }
 
@@ -135,11 +134,11 @@ impl Sensor for RaplPerfSensor {
 
 pub struct RaplProcessor {
     domains: RaplDomains,
-    unit: MetricUnit,
+    unit: EnergyUnit,
 }
 
 impl RaplProcessor {
-    fn new(domains: RaplDomains, unit: MetricUnit) -> Self {
+    fn new(domains: RaplDomains, unit: EnergyUnit) -> Self {
         Self { domains, unit }
     }
 }
@@ -148,7 +147,7 @@ impl Processor<RaplPerfSensor> for RaplProcessor {
     fn metrics(&self) -> Vec<MetricInfo> {
         self.domains
             .iter()
-            .map(|domain| MetricInfo::new(domain.name(), self.unit))
+            .map(|domain| MetricInfo::new(domain.name(), self.unit.metric_unit()))
             .collect()
     }
 
@@ -160,7 +159,7 @@ impl Processor<RaplPerfSensor> for RaplProcessor {
                 "domains",
                 InfoValue::list(self.domains.iter().map(RaplDomain::name)),
             )
-            .with("unit", self.unit.to_string())
+            .with("unit", self.unit.metric_unit().to_string())
     }
 
     #[allow(
@@ -175,7 +174,8 @@ impl Processor<RaplPerfSensor> for RaplProcessor {
     ) -> Result<()> {
         values.extend(self.domains.iter().zip(current.iter().zip(previous)).map(
             |(domain, (current, previous))| {
-                MetricValue::F64(current.wrapping_sub(*previous) as f64 * domain.scale)
+                self.unit
+                    .value(current.wrapping_sub(*previous) as f64 * domain.scale)
             },
         ));
         Ok(())
@@ -199,7 +199,7 @@ mod tests {
                 domain(RaplDomainType::Package, 0),
                 domain(RaplDomainType::Dram, 1),
             ]),
-            MetricUnit::MICROJOULE,
+            EnergyUnit::Microjoule,
         );
 
         let info = processor.info();
