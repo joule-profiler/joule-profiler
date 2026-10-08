@@ -17,13 +17,17 @@ use joule_profiler_source_rapl::Rapl;
 use toml::Value;
 
 use crate::cli::SourceName;
-use crate::config::{Settings, configure};
+use crate::config::{ConfigTable, configure};
 
 /// The cgroup source measures `cgroup` unless its table names another.
 #[cfg_attr(not(feature = "cgroup"), allow(unused_variables))]
-pub fn add(profiler: &mut JouleProfiler, settings: &Settings, cgroup: Option<&Path>) -> Result<()> {
-    for name in settings.sources.iter().copied() {
-        let mut table = settings.table(name).cloned();
+pub fn add(
+    profiler: &mut JouleProfiler,
+    config_table: &ConfigTable,
+    cgroup: Option<&Path>,
+) -> Result<()> {
+    for name in config_table.sources.iter().copied() {
+        let mut table = config_table.table(name).cloned();
         let ignore = take_ignore(&mut table);
 
         #[cfg(feature = "cgroup")]

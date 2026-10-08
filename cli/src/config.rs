@@ -54,7 +54,7 @@ struct Injector {
 }
 
 /// The configuration file and the flags, merged.
-pub struct Settings {
+pub struct ConfigTable {
     /// In the order they were named.
     pub sources: Vec<SourceName>,
 
@@ -75,7 +75,7 @@ pub struct Settings {
     pub cgroup: Option<CgroupConfig>,
 }
 
-impl Settings {
+impl ConfigTable {
     pub fn resolve(cli: &Cli) -> Result<Self> {
         let file = read(cli)?;
 

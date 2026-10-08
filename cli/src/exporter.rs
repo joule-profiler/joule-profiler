@@ -5,17 +5,17 @@ use joule_profiler_exporter_json::{JsonExporter, Shape};
 use joule_profiler_exporter_terminal::TerminalExporter;
 
 use crate::cli::OutputFormat;
-use crate::config::Settings;
+use crate::config::ConfigTable;
 
 /// Sets the exporter of the configured format, and logs where its file is.
-pub fn set(profiler: &mut JouleProfiler, settings: &Settings) -> Result<()> {
-    let file = settings.output_file.as_deref();
+pub fn set(profiler: &mut JouleProfiler, config_table: &ConfigTable) -> Result<()> {
+    let file = config_table.output_file.as_deref();
 
-    match settings.output_format {
+    match config_table.output_format {
         OutputFormat::Terminal => profiler.set_exporter(TerminalExporter::default()),
 
         OutputFormat::Json => {
-            let shape = if settings.lines {
+            let shape = if config_table.lines {
                 Shape::Lines
             } else {
                 Shape::Document
