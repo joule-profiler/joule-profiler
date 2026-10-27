@@ -14,7 +14,7 @@ use crate::unit::MetricUnit;
 /// let unit = MetricUnit { unit: Unit::Joule, prefix: UnitPrefix::Micro };
 /// let energy = Metric::new("energy_pkg", 123456u64, unit, "rapl");
 /// ```
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct Metric {
     /// The metric name, (e.g. `energy_pkg`).
     pub name: String,

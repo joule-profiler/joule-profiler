@@ -59,6 +59,9 @@ impl CsvOutput {
             "command",
             "exit_code",
             "token_pattern",
+            "profiler_cpu_time_us",
+            "profiler_cpu_share_percent",
+            "profiler_energy_est_uj",
         ]);
 
         self.writer
@@ -91,6 +94,13 @@ impl CsvOutput {
         let end_token = phase.end_token.to_string();
         let timestamp = phase.timestamp.to_string();
         let exit_code = results.exit_code.to_string();
+        let profiler_cpu_time_us = results.overhead.cpu_time_us.to_string();
+        let profiler_cpu_share_percent = format!("{:.2}", results.overhead.cpu_share_percent);
+        let profiler_energy_est_uj = results
+            .overhead
+            .estimated_energy_uj
+            .map(|v| v.to_string())
+            .unwrap_or_default();
 
         for metric in &phase.metrics {
             self.writer
@@ -110,6 +120,9 @@ impl CsvOutput {
                     cmd,
                     &exit_code,
                     token_pattern,
+                    &profiler_cpu_time_us,
+                    &profiler_cpu_share_percent,
+                    &profiler_energy_est_uj,
                 ])
                 .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
         }
@@ -170,7 +183,7 @@ impl Displayer for CsvOutput {
 mod tests {
     use super::*;
     use joule_profiler_core::{
-        types::{Metric, Phase, PhaseToken, ProfilerResults},
+        types::{Metric, Phase, PhaseToken, ProfilerOverhead, ProfilerResults},
         unit::{MetricUnit, Unit, UnitPrefix},
     };
     use std::fs;
@@ -229,6 +242,7 @@ mod tests {
             duration_ms: 0,
             exit_code,
             phases,
+            overhead: ProfilerOverhead::default(),
         }
     }
 
@@ -375,5 +389,26 @@ mod tests {
         let content = read(&tmp);
 
         assert!(content.contains(r#"""world""""#));
+    }
+
+    #[test]
+    fn phases_writes_overhead_columns() {
+        let (mut csv, tmp) = csv_to_tempfile();
+        let mut iter = results(0, vec![simple_phase(vec![metric("PKG", 1_000)])]);
+        iter.overhead = ProfilerOverhead {
+            cpu_time_us: 250,
+            system_cpu_time_us: 10_000,
+            cpu_share_percent: 2.5,
+            estimated_energy_uj: Some(25),
+            domains: vec![metric("PKG", 25)],
+        };
+
+        csv.display_results(&["cmd".into()], ".*", &iter).unwrap();
+        let content = read(&tmp);
+        assert!(
+            content
+                .contains("profiler_cpu_time_us;profiler_cpu_share_percent;profiler_energy_est_uj")
+        );
+        assert!(content.contains(";250;2.50;25"));
     }
 }

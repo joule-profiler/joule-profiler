@@ -19,6 +19,7 @@ pub mod error;
 
 use crate::config::ProfileConfig;
 use crate::orchestrator::Orchestrator;
+use crate::overhead::{OverheadSnapshot, ProfilerOverhead};
 use crate::phase::{PhaseInfo, PhaseToken};
 use crate::profiler::types::{MeasureData, Phase, ProfilerResults, ReaderResult, Result};
 use crate::sensor::{Sensor, Sensors};
@@ -153,6 +154,8 @@ impl JouleProfiler {
             phases: detected_phases,
             begin_timestamp,
             end_timestamp,
+            begin_overhead,
+            end_overhead,
         } = match measure_result {
             Ok(data) => data,
             Err(err) => {
@@ -213,11 +216,14 @@ impl JouleProfiler {
         }
 
         debug!("Collected {} sensor phase(s)", phases.len());
+        let overhead = ProfilerOverhead::from_snapshots(begin_overhead, end_overhead, &phases);
+
         Ok(ProfilerResults {
             timestamp,
             duration_ms: command_duration_ms,
             exit_code,
             phases,
+            overhead,
         })
     }
 }
@@ -238,6 +244,7 @@ fn measure_phases_blocking(
     let mut detected_phases = Vec::with_capacity(2);
 
     let begin_timestamp = get_timestamp_micros();
+    let begin_overhead = OverheadSnapshot::capture();
     trace!("Begin timestamp: {begin_timestamp}");
 
     orchestrator.measure_blocking()?;
@@ -247,6 +254,7 @@ fn measure_phases_blocking(
     read_and_detect_phases(orchestrator, &mut detected_phases, reader, regex, sink)?;
 
     let end_timestamp = get_timestamp_micros();
+    let end_overhead = OverheadSnapshot::capture();
     trace!("End timestamp: {end_timestamp}");
 
     orchestrator.measure_blocking()?;
@@ -257,6 +265,8 @@ fn measure_phases_blocking(
         phases: detected_phases,
         begin_timestamp,
         end_timestamp,
+        begin_overhead,
+        end_overhead,
     })
 }
 

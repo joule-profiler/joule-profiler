@@ -1,6 +1,7 @@
 use crate::JouleProfilerError;
 use crate::aggregate::Metrics;
 use crate::orchestrator::Orchestrator;
+use crate::overhead::{OverheadSnapshot, ProfilerOverhead};
 use crate::phase::{PhaseInfo, PhaseToken};
 use serde::Serialize;
 
@@ -59,6 +60,9 @@ pub struct ProfilerResults {
 
     /// Phases detected in the program's standard output.
     pub phases: Phases,
+
+    /// Estimated CPU and energy overhead of Joule Profiler during the run.
+    pub overhead: ProfilerOverhead,
 }
 
 /// Phases and begin/end timestamps collected by the reader thread.
@@ -66,6 +70,8 @@ pub(crate) struct MeasureData {
     pub phases: Vec<PhaseInfo>,
     pub begin_timestamp: u128,
     pub end_timestamp: u128,
+    pub begin_overhead: OverheadSnapshot,
+    pub end_overhead: OverheadSnapshot,
 }
 
 /// What the reader thread sends back once done: the orchestrator (to reuse

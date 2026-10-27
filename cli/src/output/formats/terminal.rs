@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use joule_profiler_core::{
     sensor::Sensor,
-    types::{Metric, Phase, ProfilerResults},
+    types::{Metric, Phase, ProfilerOverhead, ProfilerResults},
 };
 
 use crate::output::displayer::{Displayer, DisplayerError};
@@ -123,6 +123,37 @@ impl TerminalOutput {
 
         println!("{}  {:<20}: {:>10}", prefix, "End token", end_info);
     }
+
+    /// Display estimated profiler overhead summary.
+    fn display_overhead(overhead: &ProfilerOverhead, prefix: &str) {
+        println!();
+        Self::print_header("Profiler Overhead (estimated)");
+        println!(
+            "{}  {:<20}: {:>10} µs",
+            prefix, "Profiler CPU time", overhead.cpu_time_us
+        );
+        println!(
+            "{}  {:<20}: {:>10.2} %",
+            prefix, "Profiler CPU share", overhead.cpu_share_percent
+        );
+        if let Some(energy_uj) = overhead.estimated_energy_uj {
+            println!(
+                "{}  {:<20}: {:>10} µJ",
+                prefix, "Estimated energy", energy_uj
+            );
+        }
+
+        if !overhead.domains.is_empty() {
+            println!();
+            Self::print_subheader("Overhead by RAPL domain", prefix);
+            for metric in &overhead.domains {
+                println!(
+                    "{}  {:<20}: {:10.6} {}",
+                    prefix, metric.name, metric.value, metric.unit
+                );
+            }
+        }
+    }
 }
 
 impl Displayer for TerminalOutput {
@@ -147,6 +178,8 @@ impl Displayer for TerminalOutput {
             Self::display_phase_header(phase, prefix);
             Self::display_phase(phase, prefix);
         }
+
+        Self::display_overhead(&results.overhead, prefix);
 
         Ok(())
     }
