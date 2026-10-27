@@ -169,15 +169,6 @@ impl Processor<RaplPowercapSensor> for RaplPowercapProcessor {
             .collect()
     }
 
-    fn info(&self) -> Info {
-        let domains = InfoValue::list(self.domains.iter().map(PowercapDomain::name));
-
-        Info::new()
-            .with("backend", "powercap")
-            .with("domains", domains)
-            .with("unit", self.unit.metric_unit().to_string())
-    }
-
     #[allow(
         clippy::cast_precision_loss,
         reason = "a phase never accumulates 2^52 microjoules"
@@ -230,10 +221,22 @@ pub(crate) fn build(
 
     log::debug!("rapl: {} powercap domains discovered", domains.len());
 
+    let info = info(&domains, unit);
+
     Ok(Source::new(
         RaplPowercapSensor::new(Arc::clone(&domains)),
         RaplPowercapProcessor::new(domains, unit),
-    ))
+    )
+    .with_info(info))
+}
+
+fn info(domains: &[PowercapDomain], unit: EnergyUnit) -> Info {
+    let domains = InfoValue::list(domains.iter().map(PowercapDomain::name));
+
+    Info::new()
+        .with("backend", "powercap")
+        .with("domains", domains)
+        .with("unit", unit.metric_unit().to_string())
 }
 
 #[cfg(test)]
@@ -242,15 +245,15 @@ mod tests {
 
     #[test]
     fn the_domains_and_the_unit_are_in_the_info() {
-        let domains = Arc::new([PowercapDomain {
+        let domains = [PowercapDomain {
             domain: RaplDomainType::Package,
             socket: 0,
             path: PathBuf::from("/sys/class/powercap/intel-rapl:0"),
             max_uj: u64::MAX,
             factor: 1.0,
-        }]);
+        }];
 
-        let info = RaplPowercapProcessor::new(domains, EnergyUnit::Millijoule).info();
+        let info = info(&domains, EnergyUnit::Millijoule);
 
         assert_eq!(info.get("backend"), Some(&"powercap".into()));
         assert_eq!(info.get("domains"), Some(&InfoValue::list(["PACKAGE-0"])));

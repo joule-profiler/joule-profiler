@@ -91,15 +91,12 @@ impl Cgroup {
 
         log::debug!("cgroup: {} metrics reported", layout.metrics().len());
 
+        let info = processor::info(&proc, layout.global, self.poll_interval);
         let layout = Arc::new(layout);
         Ok(Source::new(
-            CgroupSensor::new(
-                Arc::clone(&proc),
-                global,
-                Arc::clone(&layout),
-                self.poll_interval,
-            ),
-            CgroupProcessor::new(layout, proc, self.poll_interval),
-        ))
+            CgroupSensor::new(proc, global, Arc::clone(&layout), self.poll_interval),
+            CgroupProcessor::new(layout),
+        )
+        .with_info(info))
     }
 }

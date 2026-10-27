@@ -19,8 +19,11 @@ use toml::Value;
 use crate::cli::SourceName;
 use crate::config::{ConfigTable, read_source_config};
 
-/// The cgroup source measures `cgroup` unless its table names another.
-#[cfg_attr(not(feature = "cgroup"), allow(unused_variables))]
+/// The cgroup source, and perf on a cgroup, measure `cgroup` unless their table names another.
+#[cfg_attr(
+    not(any(feature = "cgroup", feature = "perf_event")),
+    allow(unused_variables)
+)]
 pub fn add(
     profiler: &mut JouleProfiler,
     config_table: &ConfigTable,
@@ -33,6 +36,18 @@ pub fn add(
         #[cfg(feature = "cgroup")]
         if name == SourceName::Cgroup
             && let Some(cgroup) = cgroup
+        {
+            name_unless_named(&mut table, cgroup);
+        }
+
+        #[cfg(feature = "perf_event")]
+        if name == SourceName::Perf
+            && let Some(cgroup) = cgroup
+            && table
+                .as_ref()
+                .and_then(|table| table.get("scope"))
+                .and_then(Value::as_str)
+                == Some("cgroup")
         {
             name_unless_named(&mut table, cgroup);
         }
@@ -53,7 +68,7 @@ fn build(profiler: &mut JouleProfiler, name: SourceName, table: Option<&Value>) 
         #[cfg(feature = "_rapl")]
         SourceName::Rapl => read_source_config::<Rapl>(name, table)?.build()?,
         #[cfg(feature = "perf_event")]
-        SourceName::Perf => read_source_config::<PerfEvent>(name, table)?.build(),
+        SourceName::Perf => read_source_config::<PerfEvent>(name, table)?.build()?,
         #[cfg(feature = "procfs")]
         SourceName::Procfs => read_source_config::<Procfs>(name, table)?.build()?,
         #[cfg(feature = "cgroup")]
@@ -67,7 +82,7 @@ fn build(profiler: &mut JouleProfiler, name: SourceName, table: Option<&Value>) 
     Ok(())
 }
 
-#[cfg(feature = "cgroup")]
+#[cfg(any(feature = "cgroup", feature = "perf_event"))]
 fn name_unless_named(table: &mut Option<Value>, cgroup: &Path) {
     if let Some(table) = table
         .get_or_insert_with(|| Value::Table(toml::Table::new()))

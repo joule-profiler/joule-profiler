@@ -41,9 +41,6 @@ pub enum RaplError {
     #[error("could not open counter for {0}")]
     OpenCounter(String, #[source] std::io::Error),
 
-    #[error("could not switch the counters of cpu {0} on or off")]
-    Switch(u32, #[source] std::io::Error),
-
     #[error("could not read the counters of cpu {0}")]
     ReadGroup(u32, #[source] std::io::Error),
 

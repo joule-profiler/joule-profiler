@@ -13,18 +13,22 @@ pub struct ProcfsProcessor {
 
     /// Turns the clock ticks of `/proc/<pid>/stat` into milliseconds.
     tick_ms: u64,
-
-    mem_total: u64,
 }
 
 impl ProcfsProcessor {
-    pub(crate) fn new(config: Procfs, ticks_per_second: u64, mem_total: u64) -> Self {
-        Self {
-            config,
-            tick_ms: 1000 / ticks_per_second.max(1),
-            mem_total,
-        }
+    pub(crate) fn new(config: Procfs, tick_ms: u64) -> Self {
+        Self { config, tick_ms }
     }
+}
+
+pub(crate) fn info(config: &Procfs, tick_ms: u64, mem_total: u64) -> Info {
+    Info::new()
+        .with("global", config.global)
+        .with("poll_interval", config.poll_interval)
+        .with("process_poll_interval", config.process_poll_interval)
+        .with("hierarchy_interval", config.hierarchy_interval)
+        .with("mem_total_bytes", mem_total)
+        .with("clock_tick_ms", tick_ms)
 }
 
 impl Processor<ProcfsSensor> for ProcfsProcessor {
@@ -43,16 +47,6 @@ impl Processor<ProcfsSensor> for ProcfsProcessor {
         metrics.extend(IO.map(|name| MetricInfo::new(name, MetricUnit::BYTE)));
         metrics.extend(CPU.map(|name| MetricInfo::new(name, MetricUnit::MILLISECOND)));
         metrics
-    }
-
-    fn info(&self) -> Info {
-        Info::new()
-            .with("global", self.config.global)
-            .with("poll_interval", self.config.poll_interval)
-            .with("process_poll_interval", self.config.process_poll_interval)
-            .with("hierarchy_interval", self.config.hierarchy_interval)
-            .with("mem_total_bytes", self.mem_total)
-            .with("clock_tick_ms", self.tick_ms)
     }
 
     fn process(
@@ -98,7 +92,7 @@ mod tests {
             .global(true)
             .process_poll(Duration::from_millis(20));
 
-        let info = ProcfsProcessor::new(config, 100, 4096).info();
+        let info = info(&config, 10, 4096);
 
         assert_eq!(info.get("global"), Some(&true.into()));
         assert_eq!(info.get("process_poll_interval"), Some(&"20ms".into()));

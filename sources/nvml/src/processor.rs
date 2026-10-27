@@ -1,29 +1,18 @@
-use std::time::Duration;
-
-use joule_profiler_core::info::{Info, InfoValue};
 use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
 use joule_profiler_core::unit::MetricUnit;
 
 use crate::error::Result;
 use crate::hardware::NvmlHardware;
-use crate::sensor::{DeviceSample, DeviceSupport, Devices, NvmlSensor, Snapshot, polls};
+use crate::sensor::{DeviceSample, DeviceSupport, Devices, NvmlSensor, Snapshot};
 
 pub struct NvmlProcessor {
     devices: Devices,
-    poll_interval: Duration,
-
-    /// The model of each GPU, read when the source is built.
-    models: Vec<InfoValue>,
 }
 
 impl NvmlProcessor {
-    pub(crate) fn new(devices: Devices, poll_interval: Duration, models: Vec<InfoValue>) -> Self {
-        Self {
-            devices,
-            poll_interval,
-            models,
-        }
+    pub(crate) fn new(devices: Devices) -> Self {
+        Self { devices }
     }
 }
 
@@ -61,20 +50,6 @@ impl<H: NvmlHardware> Processor<NvmlSensor<H>> for NvmlProcessor {
         }
 
         metrics
-    }
-
-    /// The poll interval, then the model of each GPU.
-    fn info(&self) -> Info {
-        let polling = if polls(&self.devices) {
-            InfoValue::from(self.poll_interval)
-        } else {
-            InfoValue::from("none")
-        };
-
-        self.devices.iter().zip(&self.models).fold(
-            Info::new().with("poll_interval", polling),
-            |info, (device, model)| info.with(format!("GPU-{}", device.index), model.clone()),
-        )
     }
 
     fn process(
@@ -124,38 +99,4 @@ fn energy(previous: &DeviceSample, current: &DeviceSample) -> u64 {
     }
 
     current.drawn_nj / 1_000_000
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::hardware::MockNvmlHardware;
-    use crate::sensor::Device;
-
-    fn processor(support: DeviceSupport) -> NvmlProcessor {
-        NvmlProcessor::new(
-            vec![Device { index: 0, support }].into(),
-            Duration::from_millis(10),
-            vec![InfoValue::from("Some GPU")],
-        )
-    }
-
-    fn info(processor: &NvmlProcessor) -> Info {
-        Processor::<NvmlSensor<MockNvmlHardware>>::info(processor)
-    }
-
-    #[test]
-    fn the_poll_interval_and_the_models_are_in_the_info() {
-        let info = info(&processor(DeviceSupport::Power | DeviceSupport::Vram));
-
-        assert_eq!(info.get("poll_interval"), Some(&"10ms".into()));
-        assert_eq!(info.get("GPU-0"), Some(&"Some GPU".into()));
-    }
-
-    #[test]
-    fn the_poll_interval_is_none_when_no_gpu_is_polled() {
-        let info = info(&processor(DeviceSupport::Energy));
-
-        assert_eq!(info.get("poll_interval"), Some(&"none".into()));
-    }
 }

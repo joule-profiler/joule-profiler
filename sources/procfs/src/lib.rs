@@ -80,9 +80,11 @@ impl Procfs {
     pub fn build(self) -> Result<Source> {
         let mem_total = Meminfo::current()?.mem_total;
         let ticks = procfs::ticks_per_second();
+        let tick_ms = 1000 / ticks.max(1);
 
         log::debug!("procfs: {ticks} clock ticks a second, {mem_total} bytes of memory");
 
+        let info = processor::info(&self, tick_ms, mem_total);
         Ok(Source::new(
             ProcfsSensor::new(
                 self.poll_interval,
@@ -91,7 +93,8 @@ impl Procfs {
                 self.global,
                 mem_total,
             ),
-            ProcfsProcessor::new(self, ticks, mem_total),
-        ))
+            ProcfsProcessor::new(self, tick_ms),
+        )
+        .with_info(info))
     }
 }

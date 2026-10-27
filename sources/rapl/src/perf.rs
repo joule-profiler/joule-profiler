@@ -31,10 +31,24 @@ pub(crate) fn build(
 
     log::debug!("rapl: {} perf domains discovered", domains.len());
 
+    let info = info(&domains, unit);
+
     Ok(Source::new(
         RaplPerfSensor::new(Arc::clone(&domains)),
         RaplProcessor::new(domains, unit),
-    ))
+    )
+    .with_info(info))
+}
+
+fn info(domains: &[RaplDomain], unit: EnergyUnit) -> Info {
+    Info::new()
+        .with("backend", "perf")
+        .with("pmu", PMU)
+        .with(
+            "domains",
+            InfoValue::list(domains.iter().map(RaplDomain::name)),
+        )
+        .with("unit", unit.metric_unit().to_string())
 }
 
 struct SocketGroup {
@@ -46,6 +60,7 @@ struct SocketGroup {
 impl SocketGroup {
     fn new(cpu: u32) -> Result<Self> {
         let group = Builder::new(Software::DUMMY)
+            .enabled(true)
             .read_format(ReadFormat::GROUP | ReadFormat::ID)
             .any_pid()
             .one_cpu(cpu as usize)
@@ -96,17 +111,11 @@ impl Sensor for RaplPerfSensor {
 
             let socket = &mut self.sockets[index];
             let counter = build_counter(domain)?
+                .enabled(true)
                 .build_with_group(&mut socket.group)
                 .map_err(|error| RaplError::OpenCounter(domain.name(), error))?;
 
             socket.counters.push((counter, slot));
-        }
-
-        for socket in &mut self.sockets {
-            socket
-                .group
-                .enable()
-                .map_err(|error| RaplError::Switch(socket.cpu, error))?;
         }
 
         log::debug!("rapl: {} socket groups opened", self.sockets.len());
@@ -130,13 +139,9 @@ impl Sensor for RaplPerfSensor {
         Ok(snapshot)
     }
 
+    /// Closing the groups stops their counters.
     fn close(&mut self) -> Result<()> {
-        for socket in &mut self.sockets {
-            socket
-                .group
-                .disable()
-                .map_err(|error| RaplError::Switch(socket.cpu, error))?;
-        }
+        self.sockets.clear();
         Ok(())
     }
 }
@@ -158,17 +163,6 @@ impl Processor<RaplPerfSensor> for RaplProcessor {
             .iter()
             .map(|domain| MetricInfo::new(domain.name(), self.unit.metric_unit()))
             .collect()
-    }
-
-    fn info(&self) -> Info {
-        Info::new()
-            .with("backend", "perf")
-            .with("pmu", PMU)
-            .with(
-                "domains",
-                InfoValue::list(self.domains.iter().map(RaplDomain::name)),
-            )
-            .with("unit", self.unit.metric_unit().to_string())
     }
 
     #[allow(
@@ -203,15 +197,13 @@ mod tests {
             cpu: 0,
             scale: 1.0,
         };
-        let processor = RaplProcessor::new(
-            Arc::new([
+        let info = info(
+            &[
                 domain(RaplDomainType::Package, 0),
                 domain(RaplDomainType::Dram, 1),
-            ]),
+            ],
             EnergyUnit::Microjoule,
         );
-
-        let info = processor.info();
 
         assert_eq!(info.get("pmu"), Some(&PMU.into()));
         assert_eq!(

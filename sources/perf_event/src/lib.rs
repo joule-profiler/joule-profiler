@@ -1,187 +1,231 @@
-use std::collections::HashSet;
-use std::path::PathBuf;
+//! A source that counts perf events with `perf_event_open(2)`.
+//!
+//! [`PerfEvent`] builds a [`Source`] that reports one metric per [`Event`].
+//!
+//! # Scopes
+//!
+//! - [`ScopeType::Pid`] (default): the profiled process and its children. The counters are
+//!   opened when it starts.
+//! - [`ScopeType::Cgroup`]: every process in a cgroup v2. The counters are opened on each CPU
+//!   before the process starts.
+//!
+//! # Groups
+//!
+//! By default the counters are opened as one group. See [`PerfEvent::group`].
+//!
+//! # Permissions
+//!
+//! Requires `CAP_PERFMON`, or `kernel.perf_event_paranoid` at most 1 for the pid scope and 0 for
+//! the cgroup scope.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use joule_profiler_source_perf_event::{Cgroup, Event, PerfEvent};
+//!
+//! let source = PerfEvent::new()
+//!     .events([Event::CpuCycles, Event::Instructions, Event::TaskClock])
+//!     .scope(Cgroup::new("my.slice").cpus([0, 1]))
+//!     .build()?;
+//! # Ok::<(), joule_profiler_source_perf_event::PerfEventError>(())
+//! ```
 
-use joule_profiler_core::info::Info;
-use joule_profiler_core::source::Source;
+use std::{
+    collections::{BTreeSet, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
+
+use joule_profiler_core::{info::InfoValue, source::Source, util::cgroup::ROOT};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 
-pub mod cgroup;
-pub mod error;
-pub mod event;
-pub mod pid;
-pub mod scope;
+use crate::{
+    processor::PerfProcessor,
+    scope::{PerfScope, cgroup::CgroupScope, pid::PidScope},
+    sensor::PerfSensor,
+    util::{pmus, read_paranoid_level},
+};
 
-pub use cgroup::CgroupScope;
-pub use error::PerfEventError;
+mod config;
+mod counters;
+mod error;
+mod event;
+mod processor;
+mod scope;
+mod sensor;
+mod util;
+
+pub use config::{Cgroup, ScopeType};
+pub use error::{PerfEventError, Result};
 pub use event::Event;
-pub use pid::PidScope;
-pub use scope::{PerfProcessor, PerfScope, PerfSensor};
 
-use crate::cgroup::CGROUP_ROOT;
-
-/// Hardware counters on the profiled program (`scope = "pid"`, the default) or on a cgroup.
+/// Configuration of the `perf_event` source.
+///
+/// Can be deserialized from a `[sources.perf_event]` table.
 #[derive(Debug, Clone)]
-pub enum PerfEvent {
-    Pid(Pid),
-    Cgroup(Cgroup),
+pub struct PerfEvent {
+    events: Option<BTreeSet<Event>>,
+    scope: ScopeType,
+    group: bool,
 }
 
 impl Default for PerfEvent {
     fn default() -> Self {
-        Self::Pid(Pid::default())
+        Self {
+            events: None,
+            scope: ScopeType::default(),
+            group: true,
+        }
     }
 }
 
 impl PerfEvent {
-    pub fn build(self) -> Source {
-        match self {
-            Self::Pid(pid) => pid.build(),
-            Self::Cgroup(cgroup) => cgroup.build(),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for PerfEvent {
-    /// `scope` picks the variant and defaults to `pid`.
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(tag = "scope", rename_all = "lowercase")]
-        enum Scoped {
-            Pid(Pid),
-            Cgroup(Cgroup),
-        }
-
-        let mut table = serde_json::Map::deserialize(deserializer)?;
-        table.entry("scope").or_insert_with(|| "pid".into());
-
-        match Scoped::deserialize(serde_json::Value::Object(table)).map_err(D::Error::custom)? {
-            Scoped::Pid(pid) => Ok(Self::Pid(pid)),
-            Scoped::Cgroup(cgroup) => Ok(Self::Cgroup(cgroup)),
-        }
-    }
-}
-
-/// Counters on the profiled program and the processes it starts.
-#[must_use]
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Pid {
-    /// Default: [`Event::DEFAULT`].
-    events: Option<HashSet<Event>>,
-}
-
-impl Pid {
+    /// Creates the default configuration.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the events to count. The order and duplicates are ignored.
     pub fn events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
         self.events = Some(events.into_iter().collect());
         self
     }
 
-    pub fn build(self) -> Source {
-        let events = ordered(self.events);
-        log::debug!("perf_event: counting {} events on a pid", events.len());
-
-        Source::new(
-            PerfSensor::new(PidScope::new(events.clone())),
-            PerfProcessor::new(events, Info::new().with("scope", "pid")),
-        )
+    /// Sets the scope of the counters.
+    pub fn scope(mut self, scope: impl Into<ScopeType>) -> Self {
+        self.scope = scope.into();
+        self
     }
-}
 
-/// Counters on an existing cgroup.
-#[must_use]
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Cgroup {
-    /// Default: [`Event::DEFAULT`].
-    #[serde(default)]
-    events: Option<HashSet<Event>>,
+    /// Sets whether the counters are opened as one group. Defaults to `true`.
+    ///
+    /// Grouped counters are scheduled and read together, so they cover the same time. A group
+    /// must fit in the hardware counters, otherwise it never runs and reports 0. Ungrouped
+    /// counters are multiplexed by the kernel when needed, and their counts are scaled.
+    ///
+    /// A hardware event leads the group whenever there is one: two groups led by a software
+    /// event on the same process are never scheduled.
+    pub fn group(mut self, group: bool) -> Self {
+        self.group = group;
+        self
+    }
 
-    /// Relative to `root`.
-    name: PathBuf,
-
-    /// Default: `/sys/fs/cgroup`.
-    #[serde(default)]
-    root: Option<PathBuf>,
-
-    /// Default: every online CPU.
-    #[serde(default)]
-    cpus: Option<HashSet<u32>>,
-}
-
-impl Cgroup {
-    pub fn new(name: impl Into<PathBuf>) -> Self {
-        Self {
-            events: None,
-            name: name.into(),
-            root: None,
-            cpus: None,
+    /// Builds the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PerfEventError::NoEvent`] if the list of events is empty.
+    pub fn build(self) -> Result<Source> {
+        let events: Arc<Vec<Event>> = match self.events {
+            None => Event::DEFAULT.to_vec(),
+            Some(events) if events.is_empty() => return Err(PerfEventError::NoEvent),
+            Some(events) => events.into_iter().collect(),
         }
-    }
+        .into();
 
-    pub fn events(mut self, events: impl IntoIterator<Item = Event>) -> Self {
-        self.events = Some(events.into_iter().collect());
-        self
-    }
-
-    pub fn root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.root = Some(root.into());
-        self
-    }
-
-    pub fn cpus(mut self, cpus: impl IntoIterator<Item = u32>) -> Self {
-        self.cpus = Some(cpus.into_iter().collect());
-        self
-    }
-
-    pub fn build(self) -> Source {
-        let events = ordered(self.events);
-        let path = self
-            .root
-            .unwrap_or_else(|| PathBuf::from(CGROUP_ROOT))
-            .join(self.name);
-        log::debug!(
-            "perf_event: counting {} events on cgroup {}",
-            events.len(),
-            path.display()
-        );
-
-        let scope = CgroupScope::new(events.clone(), path, self.cpus);
-        let info = scope.info();
-
-        Source::new(PerfSensor::new(scope), PerfProcessor::new(events, info))
+        Ok(match self.scope {
+            ScopeType::Pid => build_perf_source(events, self.group, PidScope::new(self.group)),
+            ScopeType::Cgroup(cgroup) => {
+                let path = cgroup.root.unwrap_or_else(|| ROOT.into()).join(cgroup.name);
+                build_perf_source(
+                    events,
+                    self.group,
+                    CgroupScope::new(path, cgroup.cpus, self.group),
+                )
+            }
+        })
     }
 }
 
-/// The events, sorted so that the metrics keep the same order.
-fn ordered(events: Option<HashSet<Event>>) -> Vec<Event> {
-    let Some(events) = events else {
-        return Event::DEFAULT.to_vec();
-    };
+/// Builds the source for the given scope.
+fn build_perf_source<S: PerfScope>(events: Arc<Vec<Event>>, group: bool, scope: S) -> Source {
+    let info = scope
+        .info()
+        .with("events", InfoValue::list(events.iter()))
+        .with("group", group)
+        .with("pmus", pmus().map(InfoValue::list))
+        .with("perf_event_paranoid", read_paranoid_level());
 
-    let mut events: Vec<Event> = events.into_iter().collect();
-    events.sort_unstable();
-    events
+    Source::new(
+        PerfSensor::new(Arc::clone(&events), scope),
+        PerfProcessor::new(events, group),
+    )
+    .with_info(info)
+}
+
+/// Deserializes a table with `events`, `group` and `scope` (`pid` by default).
+/// A `cgroup` scope also takes `name`, `root` and `cpus`.
+impl<'de> Deserialize<'de> for PerfEvent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Default, Deserialize)]
+        #[serde(rename_all = "lowercase")]
+        enum Scope {
+            #[default]
+            Pid,
+            Cgroup,
+        }
+
+        #[derive(Default, Deserialize)]
+        #[serde(default, deny_unknown_fields)]
+        struct Table {
+            events: Option<BTreeSet<Event>>,
+            scope: Scope,
+            name: Option<PathBuf>,
+            root: Option<PathBuf>,
+            cpus: Option<HashSet<u32>>,
+            group: Option<bool>,
+        }
+
+        let table = Table::deserialize(deserializer)?;
+
+        let scope = match table.scope {
+            Scope::Pid => {
+                let cgroup_keys = [
+                    ("name", table.name.is_some()),
+                    ("root", table.root.is_some()),
+                    ("cpus", table.cpus.is_some()),
+                ];
+                if let Some((key, _)) = cgroup_keys.iter().find(|(_, set)| *set) {
+                    return Err(D::Error::custom(format!(
+                        "`{key}` needs `scope = \"cgroup\"`"
+                    )));
+                }
+                ScopeType::Pid
+            }
+            Scope::Cgroup => ScopeType::Cgroup(Cgroup {
+                name: table.name.ok_or_else(|| D::Error::missing_field("name"))?,
+                root: table.root,
+                cpus: table.cpus,
+            }),
+        };
+
+        Ok(Self {
+            events: table.events,
+            scope,
+            group: table.group.unwrap_or(true),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
+    use joule_profiler_core::info::Info;
+    use joule_profiler_core::unit::MetricUnit;
     use serde_json::json;
 
     use super::*;
+    use crate::scope::MockPerfScope;
 
     fn read(table: serde_json::Value) -> serde_json::Result<PerfEvent> {
         serde_json::from_value(table)
     }
 
-    fn names(perf: PerfEvent) -> Vec<String> {
+    fn metric_names(perf: PerfEvent) -> Vec<String> {
         perf.build()
+            .unwrap()
             .metrics()
             .into_iter()
             .map(|metric| metric.name)
@@ -189,26 +233,12 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_table_counts_the_default_events_on_the_program() {
-        let perf = read(json!({})).unwrap();
+    fn the_counters_are_grouped_unless_told_otherwise() {
+        let grouped = read(json!({})).unwrap();
+        let ungrouped = read(json!({ "group": false })).unwrap();
 
-        assert!(matches!(perf, PerfEvent::Pid(_)));
-        assert_eq!(names(perf).len(), Event::DEFAULT.len());
-    }
-
-    #[test]
-    fn the_events_of_the_program_are_set_without_naming_its_scope() {
-        let perf = read(json!({ "events": ["instructions"] })).unwrap();
-
-        assert!(matches!(perf, PerfEvent::Pid(_)));
-        assert_eq!(names(perf), ["INSTRUCTIONS"]);
-    }
-
-    #[test]
-    fn the_scope_of_the_program_can_still_be_named() {
-        let perf = read(json!({ "scope": "pid", "events": ["instructions"] })).unwrap();
-
-        assert!(matches!(perf, PerfEvent::Pid(_)));
+        assert!(grouped.group);
+        assert!(!ungrouped.group);
     }
 
     #[test]
@@ -221,19 +251,22 @@ mod tests {
         }))
         .unwrap();
 
-        let PerfEvent::Cgroup(cgroup) = perf else {
+        let ScopeType::Cgroup(cgroup) = perf.scope else {
             panic!("a cgroup scope");
         };
         assert_eq!(cgroup.name, Path::new("my-run"));
+        assert_eq!(cgroup.root.as_deref(), Some(Path::new("/elsewhere")));
         assert_eq!(cgroup.cpus, Some(HashSet::from([0, 1])));
     }
 
     #[test]
-    fn the_program_has_no_cpus_to_count_on() {
+    fn the_keys_of_a_cgroup_need_a_cgroup_scope() {
         let error = read(json!({ "cpus": [0] })).unwrap_err();
 
         assert!(
-            error.to_string().contains("unknown field `cpus`"),
+            error
+                .to_string()
+                .contains("`cpus` needs `scope = \"cgroup\"`"),
             "{error}"
         );
     }
@@ -249,12 +282,64 @@ mod tests {
     }
 
     #[test]
-    fn the_events_come_out_in_the_same_order_whatever_order_they_were_given_in() {
-        let given = read(json!({ "events": ["branch_misses", "instructions", "cpu_cycles"] }));
+    fn a_hardware_event_leads_whenever_there_is_one() {
+        let perf = read(json!({ "events": ["task_clock", "branch_misses"] })).unwrap();
+
+        assert_eq!(metric_names(perf), ["BRANCH_MISSES", "TASK_CLOCK"]);
+    }
+
+    #[test]
+    fn an_empty_list_of_events_is_refused() {
+        let perf = read(json!({ "events": [] })).unwrap();
+
+        assert!(matches!(perf.build(), Err(PerfEventError::NoEvent)));
+    }
+
+    #[test]
+    fn the_clocks_are_reported_in_nanoseconds_and_the_other_events_as_counts() {
+        let source = PerfEvent::new()
+            .events([Event::CpuCycles, Event::CpuClock, Event::TaskClock])
+            .build()
+            .unwrap();
+
+        let units: Vec<MetricUnit> = source
+            .metrics()
+            .into_iter()
+            .map(|metric| metric.unit)
+            .collect();
+        assert_eq!(
+            units,
+            [
+                MetricUnit::COUNT,
+                MetricUnit::NANOSECOND,
+                MetricUnit::NANOSECOND
+            ]
+        );
+    }
+
+    #[test]
+    fn the_info_is_the_scope_then_the_events_and_the_machine() {
+        let mut scope = MockPerfScope::new();
+        scope
+            .expect_info()
+            .returning(|| Info::new().with("scope", "mock"));
+
+        let source = build_perf_source(
+            Arc::new(vec![Event::CpuCycles, Event::TaskClock]),
+            true,
+            scope,
+        );
+        let info = source.info();
+        let keys: Vec<&str> = info.entries().iter().map(|(key, _)| key.as_str()).collect();
 
         assert_eq!(
-            names(given.unwrap()),
-            ["CPU_CYCLES", "INSTRUCTIONS", "BRANCH_MISSES"]
+            keys,
+            ["scope", "events", "group", "pmus", "perf_event_paranoid"]
+        );
+        assert_eq!(info.get("scope"), Some(&"mock".into()));
+        assert_eq!(
+            info.get("events"),
+            Some(&InfoValue::list(["CPU_CYCLES", "TASK_CLOCK"]))
         );
     }
 }

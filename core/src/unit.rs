@@ -104,6 +104,7 @@ impl MetricUnit {
     pub const MICROJOULE: Self = Self::new(UnitPrefix::Micro, Unit::Joule);
     pub const MILLISECOND: Self = Self::new(UnitPrefix::Milli, Unit::Second);
     pub const MICROSECOND: Self = Self::new(UnitPrefix::Micro, Unit::Second);
+    pub const NANOSECOND: Self = Self::new(UnitPrefix::Nano, Unit::Second);
     pub const BYTE: Self = Self::new(UnitPrefix::None, Unit::Byte);
     pub const COUNT: Self = Self::new(UnitPrefix::None, Unit::Count);
     pub const PERCENT: Self = Self::new(UnitPrefix::None, Unit::Percent);

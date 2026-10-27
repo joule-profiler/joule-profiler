@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use joule_profiler_core::info::InfoValue;
+use joule_profiler_core::info::{Info, InfoValue};
 use joule_profiler_core::source::Source;
 use serde::Deserialize;
 
@@ -17,7 +17,7 @@ pub use processor::NvmlProcessor;
 pub use sensor::{Device, DeviceSupport, NvmlSensor, Snapshot};
 
 use crate::hardware::{NvmlHardware, NvmlWrapperHardware};
-use crate::sensor::Devices;
+use crate::sensor::{Devices, polls};
 
 const POLL: Duration = Duration::from_millis(20);
 
@@ -56,13 +56,8 @@ impl Nvml {
         self
     }
 
-    pub fn minimal(mut self) -> Self {
-        self.minimal = true;
-        self
-    }
-
-    pub fn normal(mut self) -> Self {
-        self.minimal = false;
+    pub fn minimal(mut self, minimal: bool) -> Self {
+        self.minimal = minimal;
         self
     }
 
@@ -75,12 +70,13 @@ impl Nvml {
         let mut hardware = NvmlWrapperHardware::new()?;
         let devices = self.resolve(&mut hardware)?;
 
-        let models = models(&hardware, &devices);
+        let info = self.info(&hardware, &devices);
 
         Ok(Source::new(
             NvmlSensor::new(Arc::new(hardware), Arc::clone(&devices), self.poll_interval),
-            NvmlProcessor::new(devices, self.poll_interval, models),
-        ))
+            NvmlProcessor::new(devices),
+        )
+        .with_info(info))
     }
 
     /// The GPUs to measure, each limited to what the mode asks for.
@@ -107,14 +103,20 @@ impl Nvml {
 
         Ok(devices.into())
     }
-}
 
-/// The model of each GPU, or why it cannot be read.
-fn models<H: NvmlHardware>(hardware: &H, devices: &[Device]) -> Vec<InfoValue> {
-    devices
-        .iter()
-        .map(|device| InfoValue::from(hardware.get_name(*device)))
-        .collect()
+    /// The poll interval, then the model of each GPU, or why it cannot be read.
+    fn info<H: NvmlHardware>(&self, hardware: &H, devices: &[Device]) -> Info {
+        let polling = if polls(devices) {
+            InfoValue::from(self.poll_interval)
+        } else {
+            InfoValue::from("none")
+        };
+
+        devices.iter().fold(
+            Info::new().with("poll_interval", polling),
+            |info, device| info.with(format!("GPU-{}", device.index), hardware.get_name(*device)),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -147,7 +149,7 @@ mod tests {
         ]);
 
         let devices = Nvml::new()
-            .minimal()
+            .minimal(true)
             .resolve(&mut hardware)
             .expect("resolves");
 
@@ -162,7 +164,7 @@ mod tests {
         ]);
 
         let devices = Nvml::new()
-            .normal()
+            .minimal(false)
             .resolve(&mut hardware)
             .expect("resolves");
 
@@ -177,7 +179,7 @@ mod tests {
         let mut hardware = found(vec![DeviceSupport::Vram | DeviceSupport::Utilization]);
 
         assert!(matches!(
-            Nvml::new().minimal().resolve(&mut hardware),
+            Nvml::new().minimal(true).resolve(&mut hardware),
             Err(NvmlError::NoDeviceDetected)
         ));
     }
@@ -195,12 +197,50 @@ mod tests {
         });
         let devices = hardware.init_devices(None).unwrap();
 
+        let info = Nvml::new().info(&hardware, &devices);
+
+        let models: Vec<&InfoValue> = info
+            .entries()
+            .iter()
+            .skip(1)
+            .map(|(_, model)| model)
+            .collect();
         assert_eq!(
-            models(&hardware, &devices),
+            models,
             [
-                InfoValue::from("Some GPU"),
-                InfoValue::from("unavailable (no GPU device detected)")
+                &InfoValue::from("Some GPU"),
+                &InfoValue::from("unavailable (no GPU device detected)")
             ]
         );
+    }
+
+    #[test]
+    fn the_poll_interval_is_none_when_no_gpu_is_polled() {
+        let mut hardware = found(vec![DeviceSupport::Energy]);
+        hardware
+            .expect_get_name()
+            .returning(|_| Ok("Some GPU".to_owned()));
+        let devices = hardware.init_devices(None).unwrap();
+
+        let info = Nvml::new()
+            .poll(Duration::from_millis(10))
+            .info(&hardware, &devices);
+
+        assert_eq!(info.get("poll_interval"), Some(&"none".into()));
+    }
+
+    #[test]
+    fn the_poll_interval_is_given_when_a_gpu_is_polled() {
+        let mut hardware = found(vec![DeviceSupport::Power | DeviceSupport::Vram]);
+        hardware
+            .expect_get_name()
+            .returning(|_| Ok("Some GPU".to_owned()));
+        let devices = hardware.init_devices(None).unwrap();
+
+        let info = Nvml::new()
+            .poll(Duration::from_millis(10))
+            .info(&hardware, &devices);
+
+        assert_eq!(info.get("poll_interval"), Some(&"10ms".into()));
     }
 }

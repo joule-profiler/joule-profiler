@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "perf_event counters source for joule-profiler"
+description = "perf_event source for joule-profiler"
 keywords = ["energy", "perf_event", "performance_counters"]
 readme = "README.md"
 
@@ -14,9 +14,12 @@ joule-profiler-core.workspace = true
 log.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 
 perf-event2 = "0.7.4"
+
+[dev-dependencies]
+serde_json.workspace = true
+mockall.workspace = true
 
 [lints]
 workspace = true

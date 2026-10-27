@@ -70,7 +70,7 @@ impl JouleProfiler {
             .chain(
                 self.sources
                     .iter()
-                    .map(|source| (source.name().to_owned(), source.info())),
+                    .map(|source| (source.name().to_owned(), source.info().clone())),
             )
             .collect()
     }

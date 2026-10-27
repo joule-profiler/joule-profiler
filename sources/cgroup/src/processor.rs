@@ -13,34 +13,25 @@ use crate::sensor::{CgroupSensor, Reading, Snapshot};
 
 pub struct CgroupProcessor {
     layout: Arc<Layout>,
-    cgroup: Arc<Cgroup>,
-    poll_interval: Duration,
 }
 
 impl CgroupProcessor {
-    pub(crate) fn new(layout: Arc<Layout>, cgroup: Arc<Cgroup>, poll_interval: Duration) -> Self {
-        Self {
-            layout,
-            cgroup,
-            poll_interval,
-        }
+    pub(crate) fn new(layout: Arc<Layout>) -> Self {
+        Self { layout }
     }
+}
+
+pub(crate) fn info(cgroup: &Cgroup, global: bool, poll_interval: Duration) -> Info {
+    Info::new()
+        .with("cgroup", cgroup.path().display().to_string())
+        .with("controllers", controllers(cgroup).map(InfoValue::list))
+        .with("global", global)
+        .with("poll_interval", poll_interval)
 }
 
 impl Processor<CgroupSensor> for CgroupProcessor {
     fn metrics(&self) -> Vec<MetricInfo> {
         self.layout.metrics()
-    }
-
-    fn info(&self) -> Info {
-        Info::new()
-            .with("cgroup", self.cgroup.path().display().to_string())
-            .with(
-                "controllers",
-                controllers(&self.cgroup).map(InfoValue::list),
-            )
-            .with("global", self.layout.global)
-            .with("poll_interval", self.poll_interval)
     }
 
     fn process(
@@ -128,11 +119,7 @@ mod tests {
         for global in [false, true] {
             let controllers = ["cpu", "memory", "io"].map(String::from);
             let layout = Arc::new(Layout::expected(&controllers, global));
-            let mut processor = CgroupProcessor::new(
-                Arc::clone(&layout),
-                Arc::new(Cgroup::at("/sys/fs/cgroup/a-run")),
-                Duration::from_millis(10),
-            );
+            let mut processor = CgroupProcessor::new(Arc::clone(&layout));
             let mut values = Vec::new();
 
             processor
@@ -150,12 +137,7 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("cgroup.controllers"), "cpu io memory\n").unwrap();
 
-        let processor = CgroupProcessor::new(
-            Arc::new(Layout::expected(&[], false)),
-            Arc::new(Cgroup::at(&path)),
-            Duration::from_millis(10),
-        );
-        let info = processor.info();
+        let info = info(&Cgroup::at(&path), false, Duration::from_millis(10));
         fs::remove_dir_all(&path).unwrap();
 
         assert_eq!(info.get("cgroup"), Some(&path.display().to_string().into()));

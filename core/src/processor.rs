@@ -1,4 +1,3 @@
-use crate::info::Info;
 use crate::metric::{MetricInfo, MetricValue};
 use crate::sensor::Sensor;
 
@@ -7,11 +6,6 @@ use crate::sensor::Sensor;
 pub trait Processor<S: Sensor>: Send + 'static {
     /// The metrics `process` produces, in order.
     fn metrics(&self) -> Vec<MetricInfo>;
-
-    /// The setup of the source and the hardware it found.
-    fn info(&self) -> Info {
-        Info::default()
-    }
 
     /// Pushes one value per metric into `values`.
     fn process(

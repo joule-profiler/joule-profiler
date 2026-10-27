@@ -131,4 +131,4 @@ Each value is polled every `poll_interval` and reported with a `_min`, `_max` an
 | Requirement | Version |
 | - | - |
 | Linux kernel | cgroup v2 enabled (Linux 4.5) |
-| Permissions | Write access to the cgroup hierarchy: root, or a delegated subtree (e.g. a systemd user session) with the required controllers enabled |
+| Permissions | Write access to the cgroup hierarchy: root, or a delegated subtree (e.g., a systemd user session) with the required controllers enabled |

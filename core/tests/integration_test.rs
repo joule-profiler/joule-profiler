@@ -173,10 +173,6 @@ impl Processor<CountingSensor> for CountingProcessor {
         vec![MetricInfo::new("measures", MetricUnit::COUNT)]
     }
 
-    fn info(&self) -> Info {
-        Info::new().with("counts", "measures")
-    }
-
     fn process(
         &mut self,
         previous: &usize,
@@ -322,14 +318,17 @@ fn the_info_is_the_machine_then_every_source_without_starting_any() {
     let events = Events::default();
     let mut profiler = JouleProfiler::new();
     for _ in 0..2 {
-        profiler.add_source(Source::new(
-            CountingSensor {
-                measures: 0,
-                fail: Fail::Nothing,
-                events: events.clone(),
-            },
-            CountingProcessor,
-        ));
+        profiler.add_source(
+            Source::new(
+                CountingSensor {
+                    measures: 0,
+                    fail: Fail::Nothing,
+                    events: events.clone(),
+                },
+                CountingProcessor,
+            )
+            .with_info(Info::new().with("counts", "measures")),
+        );
     }
 
     let info = profiler.info();

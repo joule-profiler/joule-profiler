@@ -22,7 +22,7 @@ compile_error!("at least one source feature must be enabled");
     about = "Measure program metrics from various sources like RAPL, perf_event or NVML"
 )]
 pub struct Cli {
-    /// Sources to activate, comma separated. (e.g. "rapl,perf,procfs")
+    /// Sources to activate, comma separated. (e.g., "rapl,perf,procfs")
     #[cfg_attr(
         feature = "_rapl",
         arg(long, value_delimiter = ',', default_value = "rapl")
@@ -36,7 +36,7 @@ pub struct Cli {
 
     #[allow(clippy::doc_markdown, reason = "this is the help clap prints")]
     /// Overrides one value of the configuration, as `section.key=value`. Repeatable.
-    /// (e.g. -D sources.perf_event.scope=cgroup)
+    /// (e.g., -D sources.perf_event.scope=cgroup)
     #[arg(short = 'D', long = "define", value_name = "KEY=VALUE")]
     pub set: Vec<String>,
 

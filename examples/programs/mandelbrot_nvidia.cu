@@ -133,7 +133,7 @@ __global__ void mandelbrot_k(int *dwells, int w, int h, complex cmin,
 
 int main(int argc, char **argv) {
   // n = number of times to recompute the image inside the timed region.
-  // Defaults to 1; pass on the command line, e.g.  ./mandelbrot 10
+  // Defaults to 1; pass on the command line (e.g., ./mandelbrot 10)
   int n = 1;
   if (argc > 1) {
     n = atoi(argv[1]);

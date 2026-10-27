@@ -10,33 +10,44 @@ use crate::profiler::{AbortHandle, Starting};
 use crate::sensor::Sensor;
 use crate::trigger::Trigger;
 
-/// A sensor and its processor, type-erased.
-pub struct Source(Box<dyn AnySource>);
+/// A sensor and its processor, type-erased, with the info of the source.
+pub struct Source {
+    inner: Box<dyn AnySource>,
+    info: Info,
+}
 
 impl Source {
     pub fn new<S: Sensor, P: Processor<S>>(sensor: S, processor: P) -> Self {
-        Self(Box::new((sensor, processor)))
+        Self {
+            inner: Box::new((sensor, processor)),
+            info: Info::default(),
+        }
+    }
+
+    /// The setup of the source and the hardware it found.
+    pub fn with_info(mut self, info: Info) -> Self {
+        self.info = info;
+        self
     }
 
     pub fn name(&self) -> &str {
-        self.0.name()
+        self.inner.name()
     }
 
     pub fn metrics(&self) -> Vec<MetricInfo> {
-        self.0.metrics()
+        self.inner.metrics()
     }
 
-    /// The info of its processor.
-    pub fn info(&self) -> Info {
-        self.0.info()
+    pub fn info(&self) -> &Info {
+        &self.info
     }
 
     pub(crate) fn init(&mut self) -> Result<()> {
-        self.0.init()
+        self.inner.init()
     }
 
     pub(crate) fn attach(&mut self, target: Target) -> Result<()> {
-        self.0.attach(target)
+        self.inner.attach(target)
     }
 
     pub(crate) fn start<'scope>(
@@ -45,11 +56,11 @@ impl Source {
         trigger: &'scope Trigger,
         abort: &'scope AbortHandle<'scope>,
     ) -> Result<(Starting<'scope, ()>, Process<'scope>)> {
-        self.0.start(scope, trigger, abort)
+        self.inner.start(scope, trigger, abort)
     }
 
     pub(crate) fn close(&mut self) -> Result<()> {
-        self.0.close()
+        self.inner.close()
     }
 }
 
@@ -60,7 +71,6 @@ pub(crate) type Process<'a> = Box<dyn FnMut(&mut Vec<MetricValue>) -> Result<boo
 trait AnySource: Send {
     fn name(&self) -> &str;
     fn metrics(&self) -> Vec<MetricInfo>;
-    fn info(&self) -> Info;
     fn init(&mut self) -> Result<()>;
     fn attach(&mut self, target: Target) -> Result<()>;
     fn start<'scope>(
@@ -79,10 +89,6 @@ impl<S: Sensor, P: Processor<S>> AnySource for (S, P) {
 
     fn metrics(&self) -> Vec<MetricInfo> {
         self.1.metrics()
-    }
-
-    fn info(&self) -> Info {
-        self.1.info()
     }
 
     fn init(&mut self) -> Result<()> {
