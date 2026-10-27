@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core library for joule-profiler, handling orchestration and energy measurements"
+description = "Core library for Joule Profiler, handling orchestration and energy measurements"
 keywords = ["energy", "profiling"]
 
 [dependencies]

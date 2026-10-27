@@ -1,8 +1,8 @@
 # RAPL metric source
 
-RAPL energy source for [joule-profiler](https://github.com/joule-profiler/joule-profiler).
+RAPL energy source for [Joule Profiler](https://github.com/joule-profiler/joule-profiler).
 
-This crate builds a `Source` for `joule-profiler-core` that measures Intel RAPL energy counters via two interchangeable backends: **perf_event** (syscall, the default) and **powercap** (sysfs). The backend is selected with the `backend` key of the `[sources.rapl]` table, from a configuration file or with `-D sources.rapl.backend=powercap` on the command line.
+This crate builds a `Source` for Joule Profiler that measures Intel RAPL energy counters via two interchangeable backends: **perf_event** (syscall, the default) and **powercap** (sysfs). The backend is selected with the `backend` key of the `[sources.rapl]` table, from a configuration file or with `-D sources.rapl.backend=powercap` on the command line.
 
 ## What is RAPL?
 

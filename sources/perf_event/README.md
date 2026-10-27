@@ -1,7 +1,7 @@
 # perf_event metric source
 
 Performance counter source for Joule Profiler, using the Linux perf_event subsystem.
-This crate builds a `Source` for `joule-profiler-core` that collects hardware and software performance counters (CPU cycles, instructions, cache misses, branch mispredictions…) via the perf_event_open(2) syscall, per phase.
+This crate builds a `Source` for Joule Profiler that collects hardware and software performance counters (CPU cycles, instructions, cache misses, branch mispredictions...) via the perf_event_open(2) syscall, per phase.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ events = ["cpu_cycles", "instructions", "cache_misses", "branch_misses"] # the d
 
 The available hardware events are `cpu_cycles`, `instructions`, `cache_references`, `cache_misses`, `branch_instructions`, `branch_misses`, `bus_cycles` and `ref_cpu_cycles`.
 
-The available software events, counted by the kernel, are `cpu_clock`, `task_clock`, `page_faults`, `context_switches`, `cpu_migrations`, `minor_faults`, `major_faults`, `alignment_faults`, `emulation_faults` and `cgroup_switches` (Linux 5.13+). The perf names (`cycles`, `branches`, `cs`, `minor-faults`…) are accepted too.
+The available software events, counted by the kernel, are `cpu_clock`, `task_clock`, `page_faults`, `context_switches`, `cpu_migrations`, `minor_faults`, `major_faults`, `alignment_faults`, `emulation_faults` and `cgroup_switches` (Linux 5.13+). The perf names (`cycles`, `branches`, `cs`, `minor-faults`...) are accepted too.
 
 Alternatively, counters can be scoped to a **cgroup v2** instead of the process's pid, with `scope = "cgroup"`:
 

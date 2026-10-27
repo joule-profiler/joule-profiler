@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple workload for testing joule-profiler phase detection.
+Simple workload for testing Joule Profiler phase detection.
 
 Usage:
     joule-profiler profile -- python3 examples/programs/workload.py

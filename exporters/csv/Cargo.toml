@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CSV exporter for joule-profiler"
+description = "CSV exporter for Joule Profiler"
 
 [dependencies]
 joule-profiler-core.workspace = true

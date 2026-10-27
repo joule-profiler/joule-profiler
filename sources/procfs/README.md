@@ -1,8 +1,8 @@
 # Procfs metric source
 
-Procfs metric source for [joule-profiler](https://github.com/joule-profiler/joule-profiler).
+Procfs metric source for [Joule Profiler](https://github.com/joule-profiler/joule-profiler).
 
-This crate builds a `Source` for `joule-profiler-core` that collects **process-level** and, optionally, **system-wide** metrics using the Linux **procfs** interface.
+This crate builds a `Source` for Joule Profiler that collects **process-level** and, optionally, **system-wide** metrics using the Linux **procfs** interface.
 
 The implementation relies on the `/proc` filesystem to read runtime information about the memory, I/O and CPU time of the profiled program and of every process it starts.
 

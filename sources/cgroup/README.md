@@ -1,8 +1,8 @@
 # Cgroup metric source
 
-Cgroup v2 metric source for [joule-profiler](https://github.com/joule-profiler/joule-profiler).
+Cgroup v2 metric source for [Joule Profiler](https://github.com/joule-profiler/joule-profiler).
 
-This crate builds a `Source` for `joule-profiler-core` that collects **process-level** and, optionally, **system-wide** metrics using Linux **cgroup v2** interfaces.
+This crate builds a `Source` for Joule Profiler that collects **process-level** and, optionally, **system-wide** metrics using Linux **cgroup v2** interfaces.
 
 Control groups (cgroups v2) are a Linux kernel feature that allows grouping processes and tracking/limiting their resource usage.
 This source uses cgroup files exposed under `/sys/fs/cgroup`.

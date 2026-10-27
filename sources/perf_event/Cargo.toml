@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "perf_event source for joule-profiler"
+description = "perf_event source for Joule Profiler"
 keywords = ["energy", "perf_event", "performance_counters"]
 readme = "README.md"
 

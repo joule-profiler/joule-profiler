@@ -2,7 +2,7 @@
 
 AMD SMI metric source for [Joule Profiler](https://github.com/joule-profiler/joule-profiler).
 
-This crate builds a `Source` for `joule-profiler-core` that measures AMD GPU energy counters via the **AMD System Management Interface** library. It also tracks VRAM usage and GPU utilization at a configurable polling interval.
+This crate builds a `Source` for Joule Profiler that measures AMD GPU energy counters via the **AMD System Management Interface** library. It also tracks VRAM usage and GPU utilization at a configurable polling interval.
 
 ## What is AMD SMI?
 

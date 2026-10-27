@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "procfs source for joule-profiler"
+description = "procfs source for Joule Profiler"
 keywords = ["procfs", "linux", "io", "memory"]
 readme = "README.md"
 

@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CGroup v2 metrics source for joule-profiler"
+description = "CGroup v2 metrics source for Joule Profiler"
 keywords = ["cgroup", "memory", "profiling", "linux", "process"]
 readme = "README.md"
 
