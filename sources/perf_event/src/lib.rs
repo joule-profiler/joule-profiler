@@ -1,6 +1,7 @@
-//! A source that counts perf events with `perf_event_open(2)`.
+//! `perf_event` source for Joule Profiler.
 //!
-//! [`PerfEvent`] builds a [`Source`] that reports one metric per [`Event`].
+//! Counts hardware and software events, such as CPU cycles, instructions, cache misses or
+//! the task clock time spent, using the `perf_event` Linux interface.
 //!
 //! # Scopes
 //!
@@ -11,12 +12,14 @@
 //!
 //! # Groups
 //!
-//! By default the counters are opened as one group. See [`PerfEvent::group`].
+//! By default the counters are opened as one group, but the source can be configured to not group them.
+//! It can be useful in case you have more counters to open than the processor can actually handle
+//! simultaneously. See [`PerfEvent::group`].
 //!
 //! # Permissions
 //!
-//! Requires `CAP_PERFMON`, or `kernel.perf_event_paranoid` at most 1 for the pid scope and 0 for
-//! the cgroup scope.
+//! Requires `kernel.perf_event_paranoid` at most 1 for the pid scope and 0 for
+//! the cgroup scope or `CAP_PERFMON` capability.
 //!
 //! # Example
 //!
@@ -26,8 +29,7 @@
 //! let source = PerfEvent::new()
 //!     .events([Event::CpuCycles, Event::Instructions, Event::TaskClock])
 //!     .scope(Cgroup::new("my.slice").cpus([0, 1]))
-//!     .build()?;
-//! # Ok::<(), joule_profiler_source_perf_event::PerfEventError>(())
+//!     .build().unwrap();
 //! ```
 
 use std::{
@@ -36,7 +38,7 @@ use std::{
     sync::Arc,
 };
 
-use joule_profiler_core::{info::InfoValue, source::Source, util::cgroup::ROOT};
+use joule_profiler_core::{info::InfoValue, source::Source, util::cgroup::ROOT_PATH};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 
@@ -44,7 +46,7 @@ use crate::{
     processor::PerfProcessor,
     scope::{PerfScope, cgroup::CgroupScope, pid::PidScope},
     sensor::PerfSensor,
-    util::{pmus, read_paranoid_level},
+    util::{read_paranoid_level, read_pmus_list},
 };
 
 mod config;
@@ -81,7 +83,6 @@ impl Default for PerfEvent {
 }
 
 impl PerfEvent {
-    /// Creates the default configuration.
     pub fn new() -> Self {
         Self::default()
     }
@@ -127,7 +128,10 @@ impl PerfEvent {
         Ok(match self.scope {
             ScopeType::Pid => build_perf_source(events, self.group, PidScope::new(self.group)),
             ScopeType::Cgroup(cgroup) => {
-                let path = cgroup.root.unwrap_or_else(|| ROOT.into()).join(cgroup.name);
+                let path = cgroup
+                    .root
+                    .unwrap_or_else(|| ROOT_PATH.into())
+                    .join(cgroup.name);
                 build_perf_source(
                     events,
                     self.group,
@@ -144,7 +148,7 @@ fn build_perf_source<S: PerfScope>(events: Arc<Vec<Event>>, group: bool, scope: 
         .info()
         .with("events", InfoValue::list(events.iter()))
         .with("group", group)
-        .with("pmus", pmus().map(InfoValue::list))
+        .with("pmus", read_pmus_list().map(InfoValue::list))
         .with("perf_event_paranoid", read_paranoid_level());
 
     Source::new(

@@ -31,7 +31,7 @@ pub(crate) const COUNTERS: [(&str, MetricUnit); 10] = [
 ];
 
 /// The index of `usage_usec` in [`COUNTERS`].
-pub(crate) const USAGE: usize = 0;
+pub(crate) const USAGE_USEC_INDEX: usize = 0;
 
 pub(crate) trait Usage {
     fn memory_usage(&self) -> Result<[Option<u64>; MEMORY.len()]>;

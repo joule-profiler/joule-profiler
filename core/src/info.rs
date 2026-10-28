@@ -11,15 +11,6 @@ pub struct Info {
     entries: Vec<(String, InfoValue)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum InfoValue {
-    Bool(bool),
-    Number(MetricValue),
-    Text(String),
-    List(Vec<String>),
-}
-
 impl Info {
     pub fn new() -> Self {
         Self::default()
@@ -46,6 +37,15 @@ impl Serialize for Info {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_map(self.entries.iter().map(|(key, value)| (key, value)))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum InfoValue {
+    Bool(bool),
+    Number(MetricValue),
+    Text(String),
+    List(Vec<String>),
 }
 
 impl InfoValue {

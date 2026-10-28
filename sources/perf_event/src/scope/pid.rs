@@ -54,16 +54,16 @@ impl PerfScope for PidScope {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.opened = None;
-        Ok(())
-    }
-
     fn read(&mut self, events: &[Event]) -> Result<Vec<RawCount>> {
         self.opened
             .as_mut()
             .ok_or(PerfEventError::NotOpened)?
             .read(events)
+    }
+
+    fn close(&mut self) -> Result<()> {
+        self.opened = None;
+        Ok(())
     }
 }
 
@@ -77,7 +77,7 @@ impl OpenedCounters {
     fn read(&mut self, events: &[Event]) -> Result<Vec<RawCount>> {
         match &mut self.leader {
             Leader::ReadGrouped(group) => {
-                let data = group.read().map_err(PerfEventError::ReadCounters)?;
+                let data = group.read().map_err(PerfEventError::ReadGroup)?;
                 let (enabled, running) = (data.time_enabled(), data.time_running());
                 let readings = iter::once(group.as_counter())
                     .chain(&self.counters)
@@ -123,13 +123,13 @@ fn open_group(event: Event, pid: i32) -> Result<Leader> {
                 pid_counter_builder(event, pid)
                     .read_format(ReadFormat::TOTAL_TIME_ENABLED | ReadFormat::TOTAL_TIME_RUNNING)
                     .build()
-                    .map_err(PerfEventError::OpenLeader)?,
+                    .map_err(PerfEventError::OpenGroup)?,
             ))
         }
 
         Err(err) => Err(match err.kind() {
             ErrorKind::PermissionDenied => PerfEventError::PermissionDenied(err),
-            _ => PerfEventError::OpenLeader(err),
+            _ => PerfEventError::OpenGroup(err),
         }),
     }
 }

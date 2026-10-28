@@ -1,12 +1,9 @@
 use std::sync::Arc;
-use std::time::Duration;
 
-use joule_profiler_core::info::{Info, InfoValue};
 use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
-use joule_profiler_core::util::cgroup::Cgroup;
 
-use crate::cgroup::{USAGE, controllers};
+use crate::cgroup::USAGE_USEC_INDEX;
 use crate::error::Result;
 use crate::layout::Layout;
 use crate::sensor::{CgroupSensor, Reading, Snapshot};
@@ -19,14 +16,6 @@ impl CgroupProcessor {
     pub(crate) fn new(layout: Arc<Layout>) -> Self {
         Self { layout }
     }
-}
-
-pub(crate) fn info(cgroup: &Cgroup, global: bool, poll_interval: Duration) -> Info {
-    Info::new()
-        .with("cgroup", cgroup.path().display().to_string())
-        .with("controllers", controllers(cgroup).map(InfoValue::list))
-        .with("global", global)
-        .with("poll_interval", poll_interval)
 }
 
 impl Processor<CgroupSensor> for CgroupProcessor {
@@ -75,14 +64,14 @@ impl CgroupProcessor {
     }
 }
 
-/// The CPU usage over the phase, 100% being one full core.
+/// The CPU usage over the phase.
 #[allow(
     clippy::cast_precision_loss,
     reason = "a phase never lasts 2^52 microseconds"
 )]
 fn cpu_usage(previous: &Reading, current: &Reading, elapsed: u128) -> MetricValue {
-    let spent = current.counters[USAGE]
-        .zip(previous.counters[USAGE])
+    let spent = current.counters[USAGE_USEC_INDEX]
+        .zip(previous.counters[USAGE_USEC_INDEX])
         .map_or(0, |(current, previous)| current.saturating_sub(previous));
 
     if elapsed == 0 {
@@ -95,7 +84,6 @@ fn cpu_usage(previous: &Reading, current: &Reading, elapsed: u128) -> MetricValu
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
-    use std::{fs, process};
 
     use joule_profiler_core::util::stats::MinMaxMean;
 
@@ -129,22 +117,5 @@ mod tests {
             assert_eq!(values.len(), processor.metrics().len());
             assert!(values.contains(&MetricValue::U64(150)));
         }
-    }
-
-    #[test]
-    fn the_cgroup_and_its_controllers_are_in_the_info() {
-        let path = std::env::temp_dir().join(format!("joule-cgroup-info-{}", process::id()));
-        fs::create_dir_all(&path).unwrap();
-        fs::write(path.join("cgroup.controllers"), "cpu io memory\n").unwrap();
-
-        let info = info(&Cgroup::at(&path), false, Duration::from_millis(10));
-        fs::remove_dir_all(&path).unwrap();
-
-        assert_eq!(info.get("cgroup"), Some(&path.display().to_string().into()));
-        assert_eq!(
-            info.get("controllers"),
-            Some(&InfoValue::list(["cpu", "io", "memory"]))
-        );
-        assert_eq!(info.get("poll_interval"), Some(&"10ms".into()));
     }
 }

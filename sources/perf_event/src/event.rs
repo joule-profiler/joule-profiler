@@ -103,7 +103,7 @@ pub enum Event {
 }
 
 impl Event {
-    /// Events counted when none are configured.
+    /// Events counted by default when none are configured.
     pub const DEFAULT: [Self; 4] = [
         Self::CpuCycles,
         Self::Instructions,

@@ -1,24 +1,11 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use joule_profiler_core::metric::MetricValue;
 use joule_profiler_core::unit::MetricUnit;
-
-use crate::error::{RaplError, Result};
-
-#[cfg(feature = "backend-perf")]
-use {
-    crate::{counter::build_counter, perf::PMU},
-    joule_profiler_core::util::sys::{read_cpu_list, socket_topology},
-    perf_event::events::Dynamic,
-    std::{collections::HashSet, io::ErrorKind, path::Path},
-};
-
-/// The CPUs the `power` PMU counts on, one per socket.
-#[cfg(feature = "backend-perf")]
-const PMU_CPUMASK: &str = "/sys/bus/event_source/devices/power/cpumask";
+use serde::Deserialize;
 
 /// The unit the energy is reported in.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EnergyUnit {
     Joule,
@@ -28,15 +15,8 @@ pub enum EnergyUnit {
 }
 
 impl EnergyUnit {
-    pub(crate) fn metric_unit(self) -> MetricUnit {
-        match self {
-            Self::Joule => MetricUnit::JOULE,
-            Self::Millijoule => MetricUnit::MILLIJOULE,
-            Self::Microjoule => MetricUnit::MICROJOULE,
-        }
-    }
-
-    pub fn per_joule(self) -> f64 {
+    /// Returns the multiplicator for each unit.
+    pub(crate) fn per_joule(self) -> f64 {
         match self {
             Self::Joule => 1.0,
             Self::Millijoule => 1e3,
@@ -44,7 +24,7 @@ impl EnergyUnit {
         }
     }
 
-    /// `energy`, in this unit, as whole millijoules or microjoules but fractional joules.
+    /// Returns `energy` as unsigned integer in millijoules or microjoules, or as fractional joules.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -58,33 +38,18 @@ impl EnergyUnit {
     }
 }
 
-#[cfg(feature = "backend-perf")]
-pub(crate) const DOMAINS: [RaplDomainType; 5] = [
-    RaplDomainType::Package,
-    RaplDomainType::Core,
-    RaplDomainType::Uncore,
-    RaplDomainType::Dram,
-    RaplDomainType::Psys,
-];
-
-#[cfg(feature = "backend-perf")]
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RaplDomain {
-    pub domain: RaplDomainType,
-    pub socket: u32,
-    pub cpu: u32,
-    pub scale: f64,
-}
-
-#[cfg(feature = "backend-perf")]
-impl RaplDomain {
-    pub fn name(&self) -> String {
-        self.domain.to_string_socket(self.socket)
+impl From<EnergyUnit> for MetricUnit {
+    fn from(value: EnergyUnit) -> Self {
+        match value {
+            EnergyUnit::Joule => MetricUnit::JOULE,
+            EnergyUnit::Millijoule => MetricUnit::MILLIJOULE,
+            EnergyUnit::Microjoule => MetricUnit::MICROJOULE,
+        }
     }
 }
 
-/// A RAPL (Running Average Power Limit) energy domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
+/// A RAPL energy domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RaplDomainType {
     /// The whole socket (PKG).
@@ -103,164 +68,40 @@ pub enum RaplDomainType {
     Psys,
 }
 
-impl RaplDomainType {
-    /// `PACKAGE-0`, or `PSYS` which has no socket.
-    pub fn to_string_socket(self, socket: u32) -> String {
-        match self {
-            RaplDomainType::Psys => RaplDomainType::Psys.to_string(),
-            domain_type => format!("{domain_type}-{socket}"),
-        }
-    }
-
-    /// The event name in the `power` PMU.
-    pub fn to_perf_event(self) -> &'static str {
-        match self {
-            RaplDomainType::Package => "energy-pkg",
-            RaplDomainType::Core => "energy-cores",
-            RaplDomainType::Uncore => "energy-gpu",
-            RaplDomainType::Dram => "energy-ram",
-            RaplDomainType::Psys => "energy-psys",
-        }
-    }
-}
-
 impl Display for RaplDomainType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let domain_type = match self {
-            RaplDomainType::Package => "PACKAGE",
-            RaplDomainType::Core => "CORE",
-            RaplDomainType::Uncore => "UNCORE",
-            RaplDomainType::Dram => "DRAM",
-            RaplDomainType::Psys => "PSYS",
-        };
-        f.write_str(domain_type)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Package => "PACKAGE",
+            Self::Core => "CORE",
+            Self::Uncore => "UNCORE",
+            Self::Dram => "DRAM",
+            Self::Psys => "PSYS",
+        })
     }
 }
 
-impl TryFrom<&str> for RaplDomainType {
-    type Error = RaplError;
-
-    fn try_from(value: &str) -> Result<Self> {
-        let eq = |s| value.eq_ignore_ascii_case(s);
-
-        let domain_type = if eq("core") || eq("pp0") || eq("energy-cores") {
-            RaplDomainType::Core
-        } else if eq("uncore") || eq("pp1") || eq("energy-uncore") || eq("energy-gpu") {
-            RaplDomainType::Uncore
-        } else if eq("dram") || eq("ram") || eq("energy-ram") {
-            RaplDomainType::Dram
-        } else if (value.len() >= 7 && value[..7].eq_ignore_ascii_case("package"))
-            || eq("energy-pkg")
-        {
-            RaplDomainType::Package
-        } else if eq("psys") || eq("platform") || eq("energy-psys") {
-            RaplDomainType::Psys
-        } else {
-            return Err(RaplError::UnknownDomain(value.to_string()));
-        };
-
-        Ok(domain_type)
-    }
+/// A domain on one socket, and on one die when the socket has several.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RaplDomain {
+    pub(crate) domain_type: RaplDomainType,
+    pub(crate) socket: u32,
+    pub(crate) die: Option<u32>,
 }
 
-#[cfg(feature = "backend-perf")]
-pub(crate) fn discover_domains(
-    sockets_spec: Option<&HashSet<u32>>,
-    domains_filter: Option<&HashSet<RaplDomainType>>,
-    unit: EnergyUnit,
-) -> Result<Vec<RaplDomain>> {
-    let mut available = Vec::new();
-
-    let domains = match domains_filter {
-        Some(d) => d.iter().copied().collect::<Vec<_>>(),
-        None => DOMAINS.to_vec(),
-    };
-
-    for domain in domains {
-        if let Some(scale) = get_domain_scale(domain)? {
-            available.push((domain, scale * unit.per_joule()));
-        }
-    }
-
-    let topology = socket_topology().map_err(RaplError::Topology)?;
-
-    if let Some(wanted) = sockets_spec
-        && let Some(unknown) = wanted
-            .iter()
-            .find(|id| !topology.iter().any(|socket| socket.id == **id))
-    {
-        return Err(RaplError::UnknownSocket(*unknown));
-    }
-
-    let mut found = Vec::new();
-
-    for cpu in read_cpu_list(Path::new(PMU_CPUMASK))
-        .map_err(|error| RaplError::Read(PMU_CPUMASK.into(), error))?
-    {
-        let socket = topology
-            .iter()
-            .find(|socket| socket.holds(cpu))
-            .ok_or(RaplError::CpuPackage(cpu))?
-            .id;
-
-        if sockets_spec.is_some_and(|wanted| !wanted.contains(&socket)) {
-            continue;
-        }
-
-        for (domain, scale) in &available {
-            let candidate = RaplDomain {
-                domain: *domain,
-                socket,
-                cpu,
-                scale: *scale,
-            };
-
-            if is_domain_available(&candidate)? {
-                found.push(candidate);
-            }
-        }
-    }
-
-    Ok(found)
-}
-
-#[cfg(feature = "backend-perf")]
-fn get_domain_scale(domain: RaplDomainType) -> Result<Option<f64>> {
-    let mut builder = Dynamic::builder(PMU).map_err(RaplError::Pmu)?;
-    if builder.event(domain.to_perf_event()).is_err() {
-        return Ok(None);
-    }
-    builder.scale().map_err(RaplError::Pmu)
-}
-
-#[cfg(feature = "backend-perf")]
-fn is_domain_available(domain: &RaplDomain) -> Result<bool> {
-    let counter = match build_counter(domain) {
-        Ok(counter) => counter,
-        Err(RaplError::Pmu(error)) if error.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
-    };
-
-    match counter.build() {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::PermissionDenied => {
-            Err(RaplError::OpenCounter(domain.name(), error))
-        }
-        Err(error) => {
-            log::debug!("rapl: {} unavailable: {error}", domain.name());
-            Ok(false)
+impl RaplDomain {
+    /// Returns the metric name of the domain, such as `PACKAGE-0`, `PACKAGE-0-DIE-1` or `PSYS`.
+    pub(crate) fn name(&self) -> String {
+        match (self.domain_type, self.die) {
+            (RaplDomainType::Psys, _) => self.domain_type.to_string(),
+            (_, Some(die)) => format!("{}-{}-DIE-{die}", self.domain_type, self.socket),
+            (_, None) => format!("{}-{}", self.domain_type, self.socket),
         }
     }
 }
 
 #[cfg(test)]
-mod test {
-    use joule_profiler_core::metric::MetricValue;
-
-    use crate::{
-        domain::{EnergyUnit, RaplDomainType},
-        error::RaplError,
-    };
+mod tests {
+    use super::*;
 
     #[test]
     fn millijoules_and_microjoules_are_rounded_and_joules_are_not() {
@@ -276,28 +117,15 @@ mod test {
     }
 
     #[test]
-    fn a_domain_is_read_from_any_of_its_names_whatever_their_case() {
-        for (name, domain) in [
-            ("pp0", RaplDomainType::Core),
-            ("energy-gpu", RaplDomainType::Uncore),
-            ("PACKAGE", RaplDomainType::Package),
-            ("Ram", RaplDomainType::Dram),
-            ("platform", RaplDomainType::Psys),
-        ] {
-            assert_eq!(RaplDomainType::try_from(name).ok(), Some(domain), "{name}");
-        }
-    }
+    fn a_metric_is_named_after_its_socket_and_die_except_for_psys() {
+        let domain = |domain_type, die| RaplDomain {
+            domain_type,
+            socket: 1,
+            die,
+        };
 
-    #[test]
-    fn a_name_that_is_close_to_a_domain_is_still_refused() {
-        for name in ["", "cores", "pp2", "energy-core", "energy-package", "sys"] {
-            assert!(
-                matches!(
-                    RaplDomainType::try_from(name),
-                    Err(RaplError::UnknownDomain(unknown)) if unknown == name
-                ),
-                "{name}"
-            );
-        }
+        assert_eq!(domain(RaplDomainType::Dram, None).name(), "DRAM-1");
+        assert_eq!(domain(RaplDomainType::Dram, Some(2)).name(), "DRAM-1-DIE-2");
+        assert_eq!(domain(RaplDomainType::Psys, Some(2)).name(), "PSYS");
     }
 }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use joule_profiler_core::info::{Info, InfoValue};
 use joule_profiler_core::source::Source;
 use serde::Deserialize;
 
@@ -16,7 +17,7 @@ pub use error::CgroupError;
 pub use processor::CgroupProcessor;
 pub use sensor::{CgroupSensor, Snapshot};
 
-use joule_profiler_core::util::cgroup::{Cgroup as CgroupDir, ROOT};
+use joule_profiler_core::util::cgroup::{Cgroup as CgroupDir, ROOT_PATH};
 
 use crate::cgroup::controllers;
 use crate::error::Result;
@@ -74,7 +75,7 @@ impl Cgroup {
     /// The metrics depend on the files of the cgroup. If it does not exist yet, as when listing
     /// before a run, they are predicted from the controllers it will get.
     pub fn build(self) -> Result<Source> {
-        let root = self.root.unwrap_or_else(|| ROOT.into());
+        let root = self.root.unwrap_or_else(|| ROOT_PATH.into());
 
         let proc = Arc::new(CgroupDir::at(root.join(self.name)));
         let global = Arc::new(CgroupDir::at(root));
@@ -91,12 +92,54 @@ impl Cgroup {
 
         log::debug!("cgroup: {} metrics reported", layout.metrics().len());
 
-        let info = processor::info(&proc, layout.global, self.poll_interval);
+        let info = info(&proc, layout.global, self.poll_interval);
         let layout = Arc::new(layout);
         Ok(Source::new(
             CgroupSensor::new(proc, global, Arc::clone(&layout), self.poll_interval),
             CgroupProcessor::new(layout),
         )
         .with_info(info))
+    }
+}
+
+pub(crate) fn info(
+    cgroup: &joule_profiler_core::util::cgroup::Cgroup,
+    global: bool,
+    poll_interval: Duration,
+) -> Info {
+    Info::new()
+        .with("cgroup", cgroup.path().display().to_string())
+        .with("controllers", controllers(cgroup).map(InfoValue::list))
+        .with("global", global)
+        .with("poll_interval", poll_interval)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, process, time::Duration};
+
+    use joule_profiler_core::info::InfoValue;
+
+    use crate::info;
+
+    #[test]
+    fn the_cgroup_and_its_controllers_are_in_the_info() {
+        let path = std::env::temp_dir().join(format!("joule-cgroup-info-{}", process::id()));
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("cgroup.controllers"), "cpu io memory\n").unwrap();
+
+        let info = info(
+            &joule_profiler_core::util::cgroup::Cgroup::at(&path),
+            false,
+            Duration::from_millis(10),
+        );
+        fs::remove_dir_all(&path).unwrap();
+
+        assert_eq!(info.get("cgroup"), Some(&path.display().to_string().into()));
+        assert_eq!(
+            info.get("controllers"),
+            Some(&InfoValue::list(["cpu", "io", "memory"]))
+        );
+        assert_eq!(info.get("poll_interval"), Some(&"10ms".into()));
     }
 }

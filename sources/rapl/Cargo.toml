@@ -13,6 +13,7 @@ readme = "README.md"
 joule-profiler-core.workspace = true
 log.workspace = true
 serde.workspace = true
+humantime-serde.workspace = true
 thiserror.workspace = true
 
 perf-event2 = { version = "0.7.4", optional = true }

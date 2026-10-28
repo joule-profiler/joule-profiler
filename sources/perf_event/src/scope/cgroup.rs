@@ -19,7 +19,7 @@ use crate::{
     scope::{Leader, PerfScope, counter_builder, open_counter},
 };
 
-const ONLINE_CPUS_PATH: &str = "/sys/devices/system/cpu/online";
+const ONLINE_CPUS_FILE_PATH: &str = "/sys/devices/system/cpu/online";
 
 /// Counts every process in a cgroup, on each selected CPU.
 pub(crate) struct CgroupScope {
@@ -64,11 +64,6 @@ impl PerfScope for CgroupScope {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<()> {
-        self.opened = None;
-        Ok(())
-    }
-
     fn read(&mut self, events: &[Event]) -> Result<Vec<RawCount>> {
         let opened = self.opened.as_mut().ok_or(PerfEventError::NotOpened)?;
         let mut totals = vec![RawCount::default(); events.len()];
@@ -78,6 +73,11 @@ impl PerfScope for CgroupScope {
         }
 
         Ok(totals)
+    }
+
+    fn close(&mut self) -> Result<()> {
+        self.opened = None;
+        Ok(())
     }
 }
 
@@ -105,7 +105,7 @@ impl CpuCounters {
                     .build_group()
                     .map_err(|err| match err.kind() {
                         ErrorKind::PermissionDenied => PerfEventError::PermissionDenied(err),
-                        _ => PerfEventError::OpenGroup(cpu, err),
+                        _ => PerfEventError::OpenCpuGroup(cpu, err),
                     })?,
             )
         } else {
@@ -135,7 +135,7 @@ impl CpuCounters {
             Leader::ReadGrouped(group) => {
                 let data = group
                     .read()
-                    .map_err(|error| PerfEventError::ReadGroup(self.cpu, error))?;
+                    .map_err(|error| PerfEventError::ReadCpuGroup(self.cpu, error))?;
                 let (enabled, running) = (data.time_enabled(), data.time_running());
                 let counters = iter::once(group.as_counter()).chain(&self.counters);
 
@@ -169,16 +169,16 @@ fn cgroup_counter_builder(event: Event, cpu: u32, cgroup: &File) -> Builder<'_> 
 
 /// Returns the requested CPUs, or every online CPU, sorted. Fails if a requested CPU is offline.
 fn resolve_cpus(cpus_spec: Option<&HashSet<u32>>) -> Result<Vec<u32>> {
-    let path = Path::new(ONLINE_CPUS_PATH);
+    let path = Path::new(ONLINE_CPUS_FILE_PATH);
     let online_cpus =
-        read_cpu_list(path).map_err(|error| PerfEventError::Read(path.into(), error))?;
+        read_cpu_list(path).map_err(|error| PerfEventError::ReadOnlineCpus(path.into(), error))?;
 
     let Some(cpus_spec) = cpus_spec else {
         return Ok(online_cpus);
     };
 
     if let Some(offline_cpus) = cpus_spec.iter().find(|cpu| !online_cpus.contains(cpu)) {
-        return Err(PerfEventError::OfflineCpu(*offline_cpus));
+        return Err(PerfEventError::UnavailableCpu(*offline_cpus));
     }
 
     let mut cpus: Vec<u32> = cpus_spec.iter().copied().collect();
@@ -194,12 +194,15 @@ mod tests {
     fn a_cpu_that_is_not_online_is_refused() {
         let result = resolve_cpus(Some(&HashSet::from([u32::MAX])));
 
-        assert!(matches!(result, Err(PerfEventError::OfflineCpu(u32::MAX))));
+        assert!(matches!(
+            result,
+            Err(PerfEventError::UnavailableCpu(u32::MAX))
+        ));
     }
 
     #[test]
     fn every_online_cpu_is_counted_by_default() {
-        let online = read_cpu_list(Path::new(ONLINE_CPUS_PATH)).unwrap();
+        let online = read_cpu_list(Path::new(ONLINE_CPUS_FILE_PATH)).unwrap();
 
         assert_eq!(resolve_cpus(None).unwrap(), online);
     }

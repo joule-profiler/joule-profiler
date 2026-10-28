@@ -3,9 +3,10 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
-const CPU_ROOT: &str = "/sys/devices/system/cpu";
+const CPU_PATH: &str = "/sys/devices/system/cpu";
 const PACKAGE_ID: &str = "topology/physical_package_id";
-const CPUINFO: &str = "/proc/cpuinfo";
+const DIE_ID: &str = "topology/die_id";
+const CPUINFO_FILE_PATH: &str = "/proc/cpuinfo";
 const MODEL_NAME: &str = "model name";
 
 pub fn is_root() -> bool {
@@ -18,17 +19,25 @@ pub fn is_root() -> bool {
 pub struct Socket {
     pub id: u32,
     pub cpus: Vec<u32>,
+    pub dies: Vec<Die>,
+}
+
+/// A die of a package and its logical CPUs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Die {
+    pub id: u32,
+    pub cpus: Vec<u32>,
 }
 
 impl Socket {
-    pub fn holds(&self, cpu: u32) -> bool {
+    pub fn has_cpu(&self, cpu: u32) -> bool {
         self.cpus.binary_search(&cpu).is_ok()
     }
 }
 
 /// The sockets of the machine. Offline CPUs are left out.
 pub fn socket_topology() -> io::Result<Vec<Socket>> {
-    read_topology(Path::new(CPU_ROOT))
+    read_topology(Path::new(CPU_PATH))
 }
 
 fn read_topology(root: &Path) -> io::Result<Vec<Socket>> {
@@ -40,14 +49,29 @@ fn read_topology(root: &Path) -> io::Result<Vec<Socket>> {
         let Some(cpu) = cpu_number(&entry.file_name().to_string_lossy()) else {
             continue;
         };
-        let Some(id) = read_package(&entry.path().join(PACKAGE_ID))? else {
+        let Some(id) = read_id(&entry.path().join(PACKAGE_ID))? else {
             continue;
         };
+        // Before Linux 5.3, there is no `die_id` and a package is a single die.
+        let die_id = read_id(&entry.path().join(DIE_ID))?.unwrap_or(0);
 
-        match sockets.iter_mut().find(|socket| socket.id == id) {
-            Some(socket) => socket.cpus.push(cpu),
-            None => sockets.push(Socket {
+        let index = if let Some(index) = sockets.iter().position(|socket| socket.id == id) {
+            index
+        } else {
+            sockets.push(Socket {
                 id,
+                cpus: Vec::new(),
+                dies: Vec::new(),
+            });
+            sockets.len() - 1
+        };
+        let socket = &mut sockets[index];
+        socket.cpus.push(cpu);
+
+        match socket.dies.iter_mut().find(|die| die.id == die_id) {
+            Some(die) => die.cpus.push(cpu),
+            None => socket.dies.push(Die {
+                id: die_id,
                 cpus: vec![cpu],
             }),
         }
@@ -56,6 +80,10 @@ fn read_topology(root: &Path) -> io::Result<Vec<Socket>> {
     sockets.sort_unstable_by_key(|socket| socket.id);
     for socket in &mut sockets {
         socket.cpus.sort_unstable();
+        socket.dies.sort_unstable_by_key(|die| die.id);
+        for die in &mut socket.dies {
+            die.cpus.sort_unstable();
+        }
     }
 
     Ok(sockets)
@@ -116,7 +144,7 @@ pub fn cpu_list(cpus: &[u32]) -> String {
 
 /// The model name of the first CPU in `/proc/cpuinfo`.
 pub fn cpu_model() -> io::Result<String> {
-    read_model(BufReader::new(File::open(CPUINFO)?))
+    read_model(BufReader::new(File::open(CPUINFO_FILE_PATH)?))
 }
 
 fn read_model(cpuinfo: impl BufRead) -> io::Result<String> {
@@ -130,11 +158,11 @@ fn read_model(cpuinfo: impl BufRead) -> io::Result<String> {
 
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        format!("{CPUINFO} names no {MODEL_NAME}"),
+        format!("{CPUINFO_FILE_PATH} names no {MODEL_NAME}"),
     ))
 }
 
-fn read_package(path: &Path) -> io::Result<Option<u32>> {
+fn read_id(path: &Path) -> io::Result<Option<u32>> {
     let id = match fs::read_to_string(path) {
         Ok(id) => id,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -144,7 +172,7 @@ fn read_package(path: &Path) -> io::Result<Option<u32>> {
     id.trim().parse().map(Some).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("bad package id: {id:?}"),
+            format!("bad id in {}: {id:?}", path.display()),
         )
     })
 }
@@ -153,16 +181,19 @@ fn read_package(path: &Path) -> io::Result<Option<u32>> {
 mod tests {
     use super::*;
 
-    fn fake_machine(name: &str, cpus: &[(u32, Option<u32>)]) -> std::path::PathBuf {
+    fn fake_machine(name: &str, cpus: &[(u32, Option<u32>, Option<u32>)]) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("joule-topo-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
 
-        for (cpu, package) in cpus {
+        for (cpu, package, die) in cpus {
             let dir = root.join(format!("cpu{cpu}")).join("topology");
             fs::create_dir_all(&dir).unwrap();
 
             if let Some(package) = package {
                 fs::write(dir.join("physical_package_id"), format!("{package}\n")).unwrap();
+            }
+            if let Some(die) = die {
+                fs::write(dir.join("die_id"), format!("{die}\n")).unwrap();
             }
         }
 
@@ -174,46 +205,84 @@ mod tests {
     fn cpus_are_grouped_by_package() {
         let root = fake_machine(
             "grouped",
-            &[(0, Some(0)), (1, Some(1)), (2, Some(0)), (3, Some(1))],
+            &[
+                (0, Some(0), Some(0)),
+                (1, Some(1), Some(0)),
+                (2, Some(0), Some(0)),
+                (3, Some(1), Some(0)),
+            ],
         );
 
         let sockets = read_topology(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        let cpus: Vec<(u32, Vec<u32>)> = sockets
+            .into_iter()
+            .map(|socket| (socket.id, socket.cpus))
+            .collect();
+        assert_eq!(cpus, [(0, vec![0, 2]), (1, vec![1, 3])]);
+    }
+
+    #[test]
+    fn cpus_are_grouped_by_die_within_their_package() {
+        let root = fake_machine(
+            "dies",
+            &[
+                (0, Some(0), Some(0)),
+                (1, Some(0), Some(1)),
+                (2, Some(0), Some(0)),
+                (3, Some(0), Some(1)),
+            ],
+        );
+
+        let sockets = read_topology(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
 
         assert_eq!(
-            sockets,
-            vec![
-                Socket {
+            sockets[0].dies,
+            [
+                Die {
                     id: 0,
                     cpus: vec![0, 2]
                 },
-                Socket {
+                Die {
                     id: 1,
                     cpus: vec![1, 3]
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_package_is_a_single_die_before_linux_5_3() {
+        let root = fake_machine("nodie", &[(0, Some(0), None), (1, Some(0), None)]);
+
+        let sockets = read_topology(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(
+            sockets[0].dies,
+            [Die {
+                id: 0,
+                cpus: vec![0, 1]
+            }]
+        );
     }
 
     #[test]
     fn a_cpu_without_a_package_is_left_out() {
-        let root = fake_machine("offline", &[(0, Some(0)), (1, None)]);
+        let root = fake_machine("offline", &[(0, Some(0), Some(0)), (1, None, None)]);
 
         let sockets = read_topology(&root).unwrap();
-
-        assert_eq!(
-            sockets,
-            vec![Socket {
-                id: 0,
-                cpus: vec![0]
-            }]
-        );
         fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(sockets.len(), 1);
+        assert_eq!(sockets[0].cpus, [0]);
     }
 
     #[test]
     fn directories_that_are_not_cpus_are_ignored() {
-        let root = fake_machine("neighbours", &[(0, Some(0))]);
+        let root = fake_machine("neighbours", &[(0, Some(0), Some(0))]);
 
         assert_eq!(read_topology(&root).unwrap().len(), 1);
         fs::remove_dir_all(&root).unwrap();

@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::error::ErrorChain;
 
-pub const ROOT: &str = "/sys/fs/cgroup";
+pub const ROOT_PATH: &str = "/sys/fs/cgroup";
 
 const PROCS: &str = "cgroup.procs";
 const CONTROLLERS: &str = "cgroup.controllers";
@@ -205,7 +205,7 @@ pub struct CgroupConfig {
 impl Default for CgroupConfig {
     fn default() -> Self {
         Self {
-            parent: PathBuf::from(ROOT),
+            parent: PathBuf::from(ROOT_PATH),
             name: format!("joule-profiler-{}", std::process::id()),
             controllers: None,
             attach: true,
@@ -397,7 +397,7 @@ impl Drop for RunCgroup {
 
         if self.created {
             // The root is the only cgroup that can hold processes and enable controllers at once.
-            self.cgroup.move_processes_to(&Cgroup::at(ROOT));
+            self.cgroup.move_processes_to(&Cgroup::at(ROOT_PATH));
 
             if let Err(error) = self.cgroup.remove() {
                 log::warn!("removing {} failed: {error}", self.cgroup.path.display());

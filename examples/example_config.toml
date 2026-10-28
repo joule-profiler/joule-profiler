@@ -58,6 +58,9 @@ backend = "perf"                 # perf | powercap
 unit = "microjoule"              # joule | millijoule | microjoule
 sockets = [0]                    # omit for every socket
 domains = ["package", "core", "uncore", "dram", "psys"] # omit for every domain found
+# With `backend = "powercap"`:
+#root = "/sys/class/powercap"
+#poll_interval = "1s"            # how often the counters are read, so that no wrap is missed
 
 # perf_event, on the process tree of the program.
 [sources.perf_event]

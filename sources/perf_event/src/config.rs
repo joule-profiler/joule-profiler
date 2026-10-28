@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::PathBuf};
 
-/// What the counters measure.
+/// The scope to use to open counters, either the process or a cgroup.
 #[derive(Debug, Default, Clone)]
 pub enum ScopeType {
     /// The profiled process and its children.
