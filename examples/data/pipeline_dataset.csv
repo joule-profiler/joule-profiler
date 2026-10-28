@@ -1,0 +1,8 @@
+order_id,region,category,quantity,unit_price_cents,status
+1001,eu,book,2,1250,completed
+1002,us,book,1,2000,completed
+1003,eu,game,3,700,cancelled
+1004,apac,book,4,525,completed
+1005,us,game,2,1500,completed
+1006,eu,game,1,1000,completed
+1007,us,book,5,800,cancelled

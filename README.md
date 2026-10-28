@@ -68,6 +68,17 @@ Some sources like Cgroup or RAPL with the powercap backend can also require root
 
 Some examples programs and outputs are provided in the [examples](examples) directory. Also a library usage example is provided.
 
+### Data Pipeline Example
+
+The [data pipeline benchmark](examples/programs/data_pipeline_benchmark.py) loads a fixed CSV dataset, filters and transforms completed orders, computes deterministic regional totals, and writes a JSON result. It uses only the Python standard library. Each stage's processing work is repeated deterministically, while the final result is written once; use `--iterations 1` for a quick functional check:
+
+```bash
+python3 examples/programs/data_pipeline_benchmark.py --iterations 1 --output data_pipeline_result.json
+joule-profiler --output-format json profile -- python3 examples/programs/data_pipeline_benchmark.py --iterations 100 --output profiled_pipeline_result.json
+```
+
+The output path must not already exist. The profiler measures intervals between successive stdout markers: `START -> __LOAD__` is the preamble, followed by LOAD, TRANSFORM, ANALYZE, and WRITE intervals, with `__WRITE__ -> END` covering the end of the program. Running the script validates the deterministic pipeline result; energy values require a compiled Joule Profiler executable and supported Linux metric sources.
+
 ## Documentation
 
 **[Full Documentation](https://joule-profiler.github.io/)**
