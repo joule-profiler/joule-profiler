@@ -1,21 +1,20 @@
-use std::collections::{HashSet, VecDeque};
-use std::fmt::Write as _;
-use std::fs::File;
-use std::io::Read as _;
-use std::time::{Duration, Instant};
+use std::fs;
+use std::sync::Arc;
+use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use joule_profiler_core::injector::Target;
 use joule_profiler_core::sensor::Sensor;
 use joule_profiler_core::util::poller::Poller;
 use joule_profiler_core::util::shared::{Consumer, shared};
 use joule_profiler_core::util::stats::MinMaxMean;
-use procfs::process::Process;
-use procfs::{Current, Meminfo};
 
 use crate::error::{ProcfsError, Result};
+use crate::hierarchy::get_process_descendants;
+use crate::poller::{poll_hierarchy, poll_machine_memory, poll_process_memory};
 
-/// The memory of the process tree, in snapshot order.
-pub(crate) const PROC: [&str; 5] = [
+/// The metrics related to the memory of the process tree.
+pub(crate) const PROCESS_METRICS: [&str; 5] = [
     "proc_vm_size",
     "proc_rss",
     "proc_pss",
@@ -23,79 +22,74 @@ pub(crate) const PROC: [&str; 5] = [
     "proc_anon",
 ];
 
-/// The memory of the machine, in snapshot order.
-pub(crate) const GLOBAL: [&str; 4] = [
+/// The metrics related to the memory of the machine.
+pub(crate) const GLOBAL_MEMORY_METRICS: [&str; 4] = [
     "global_mem_used",
     "global_cached",
     "global_anon",
     "global_swap_free",
 ];
 
-pub(crate) const IO: [&str; 2] = ["proc_io_read_bytes", "proc_io_write_bytes"];
+/// The metrics related to the I/O of the process tree.
+pub(crate) const IO_METRICS: [&str; 2] = ["proc_io_read_bytes", "proc_io_write_bytes"];
 
-/// The CPU time of the process tree, read in clock ticks.
-pub(crate) const CPU: [&str; 2] = ["proc_cpu_user", "proc_cpu_system"];
+/// The metrics related to the CPU time of the process tree, read in clock ticks.
+pub(crate) const CPU_METRICS: [&str; 2] = ["proc_cpu_user", "proc_cpu_system"];
 
-/// What the polling thread read since the last boundary.
+/// What the polling threads read since the last boundary.
 #[derive(Default, Clone)]
-pub(crate) struct PolledMemory {
-    pub(crate) proc: [MinMaxMean; PROC.len()],
-    pub(crate) global: [MinMaxMean; GLOBAL.len()],
+pub(crate) struct MemorySnapshot {
+    pub(crate) proc: [MinMaxMean; PROCESS_METRICS.len()],
+    pub(crate) global: [MinMaxMean; GLOBAL_MEMORY_METRICS.len()],
 }
 
+/// What the sensor reads at a phase boundary.
 pub struct Snapshot {
-    pub(crate) polled: PolledMemory,
-    pub(crate) io: [u64; IO.len()],
-    pub(crate) cpu: [u64; CPU.len()],
+    pub(crate) memory: MemorySnapshot,
+    pub(crate) io: [u64; IO_METRICS.len()],
+    pub(crate) cpu: [u64; CPU_METRICS.len()],
 }
 
-/// The polling thread lists the process tree, which is costly, every `hierarchy_interval` only.
+/// Reads the I/O and CPU time of the process tree at each boundary. Three polling threads, each
+/// at its own interval, read the memory of the process tree, list the tree again, and read the
+/// memory of the machine when `global` is set.
 pub struct ProcfsSensor {
     poll_interval: Duration,
     process_poll_interval: Duration,
+    hierarchy_poll_interval: Duration,
     global: bool,
-
     mem_total: u64,
 
-    hierarchy_interval: Duration,
-
     /// The profiled process.
-    root: i32,
+    root_pid: i32,
 
-    /// The process tree, as of the last listing.
-    pids: Vec<i32>,
+    /// The process tree.
+    pids: Arc<ArcSwap<Vec<i32>>>,
 
-    polled: Option<Consumer<PolledMemory>>,
-
-    /// A new process tree, if it was listed again since the last boundary.
-    hierarchy: Option<Consumer<Option<Vec<i32>>>>,
-
-    poller: Option<Poller>,
-
-    /// Buffers reused at every boundary.
-    files: ProcFiles,
+    process_memory: Option<Consumer<[MinMaxMean; PROCESS_METRICS.len()]>>,
+    machine_memory: Option<Consumer<[MinMaxMean; GLOBAL_MEMORY_METRICS.len()]>>,
+    pollers: Vec<Poller>,
 }
 
 impl ProcfsSensor {
     pub(crate) fn new(
         poll_interval: Duration,
         process_poll_interval: Duration,
-        hierarchy_interval: Duration,
+        hierarchy_poll_interval: Duration,
         global: bool,
         mem_total: u64,
     ) -> Self {
         Self {
             poll_interval,
             process_poll_interval,
-            hierarchy_interval,
+            hierarchy_poll_interval,
             global,
             mem_total,
-            root: 0,
-            pids: Vec::new(),
-            polled: None,
-            hierarchy: None,
-            poller: None,
-            files: ProcFiles::default(),
+            root_pid: 0,
+            pids: Arc::default(),
+            process_memory: None,
+            machine_memory: None,
+            pollers: Vec::new(),
         }
     }
 }
@@ -109,164 +103,116 @@ impl Sensor for ProcfsSensor {
     }
 
     fn attach(&mut self, target: Target) -> Result<()> {
-        let root = target.pid;
-        let mut pids = descendants(root);
+        let root_pid = target.pid;
+        self.root_pid = root_pid;
+        self.pids.store(Arc::new(get_process_descendants(root_pid)));
 
-        self.root = root;
-        self.pids.clone_from(&pids);
+        let (mut process_writer, process_reader) = shared();
+        self.process_memory = Some(process_reader);
+        let pids = Arc::clone(&self.pids);
+        self.pollers
+            .push(Poller::start(self.process_poll_interval, move || {
+                poll_process_memory(&pids, &mut process_writer);
+                Ok::<(), ProcfsError>(())
+            }));
 
-        let (mut polled, consumer) = shared();
-        self.polled = Some(consumer);
+        let pids = Arc::clone(&self.pids);
+        self.pollers
+            .push(Poller::start(self.hierarchy_poll_interval, move || {
+                poll_hierarchy(root_pid, &pids);
+                Ok::<(), ProcfsError>(())
+            }));
 
-        let (mut hierarchy, consumer) = shared();
-        self.hierarchy = Some(consumer);
-
-        let mem_total = self.mem_total;
-        let global = self.global;
-        let every = self.process_poll_interval;
-        let rebuild_every = self.hierarchy_interval;
-
-        let mut looked = None::<Instant>;
-        let mut walked = Instant::now();
-
-        self.poller = Some(Poller::start(self.poll_interval, move || {
-            if walked.elapsed() >= rebuild_every {
-                pids = descendants(root);
-                hierarchy.write(|hierarchy| *hierarchy = Some(pids.clone()));
-                walked = Instant::now();
-            }
-
-            let machine = global.then(|| read_global(mem_total)).transpose()?;
-            let due = looked.is_none_or(|looked| looked.elapsed() >= every);
-            let memory = due.then(|| sum_process(&pids));
-
-            if due {
-                looked = Some(Instant::now());
-            }
-
-            polled.write(|polled| {
-                if let Some(machine) = machine {
-                    fill(&mut polled.global, machine);
-                }
-                if let Some(memory) = memory {
-                    fill(&mut polled.proc, memory);
-                }
-            });
-
-            Ok::<(), ProcfsError>(())
-        }));
+        if self.global {
+            let (mut machine_writer, machine_reader) = shared();
+            self.machine_memory = Some(machine_reader);
+            let mem_total = self.mem_total;
+            self.pollers
+                .push(Poller::start(self.poll_interval, move || {
+                    poll_machine_memory(mem_total, &mut machine_writer)
+                }));
+        }
 
         Ok(())
     }
 
     fn measure(&mut self) -> Result<Snapshot> {
-        let polled = self
-            .polled
+        let pids = self.pids.load_full();
+        let (io, cpu) = read_cpu_and_io_counters(self.root_pid, &pids);
+
+        let proc = self
+            .process_memory
             .as_mut()
             .ok_or(ProcfsError::NotAttached)?
             .consume();
+        let global = self
+            .machine_memory
+            .as_mut()
+            .map(Consumer::consume)
+            .unwrap_or_default();
 
-        if let Some(pids) = self.hierarchy.as_mut().and_then(Consumer::consume) {
-            self.pids = pids;
-        }
-
-        let (io, cpu) = counters(&mut self.files, self.root, &self.pids);
-
-        Ok(Snapshot { polled, io, cpu })
+        Ok(Snapshot {
+            memory: MemorySnapshot { proc, global },
+            io,
+            cpu,
+        })
     }
 
     fn close(&mut self) -> Result<()> {
-        self.poller = None;
+        self.pollers.clear();
         Ok(())
     }
 }
 
-fn fill<const N: usize>(stats: &mut [MinMaxMean; N], values: [u64; N]) {
-    for (stat, value) in stats.iter_mut().zip(values) {
-        stat.add(value);
-    }
-}
-
-fn sum_process(processes: &[i32]) -> [u64; PROC.len()] {
-    let mut total = [0u64; PROC.len()];
+/// Reads CPU and I/O counters for the process hierarchy.
+/// Only the root, because the child would be counted twice.
+#[allow(clippy::similar_names)]
+fn read_cpu_and_io_counters(
+    root: i32,
+    processes: &[i32],
+) -> ([u64; IO_METRICS.len()], [u64; CPU_METRICS.len()]) {
+    let mut io = [0u64; IO_METRICS.len()];
+    let mut cpu = [0u64; CPU_METRICS.len()];
 
     for pid in processes.iter().copied() {
-        if let Some(memory) = read_process(pid) {
-            for (total, value) in total.iter_mut().zip(memory) {
+        if let Some(text) = read_proc_file(pid, "io") {
+            for (total, value) in io.iter_mut().zip(read_io(&text)) {
                 *total += value;
             }
         }
+
+        let Some(stats) = read_proc_file(pid, "stat") else {
+            continue;
+        };
+
+        if pid == root {
+            let Some((utime, stime, cutime, cstime)) = read_cpu_full(&stats) else {
+                continue;
+            };
+            cpu[0] += utime;
+            cpu[1] += stime;
+            cpu[0] += cutime;
+            cpu[1] += cstime;
+        } else {
+            let Some((utime, stime)) = read_cpu(&stats) else {
+                continue;
+            };
+            cpu[0] += utime;
+            cpu[1] += stime;
+        }
     }
 
-    total
+    (io, cpu)
 }
 
-fn read_process(pid: i32) -> Option<[u64; PROC.len()]> {
-    let process = Process::new(pid).ok()?;
-
-    let mut memory = [0u64; PROC.len()];
-    memory[0] = process.stat().ok()?.vsize;
-
-    if let Some(entry) = process
-        .smaps_rollup()
-        .ok()?
-        .memory_map_rollup
-        .0
-        .first()
-        .map(|entry| &entry.extension.map)
-    {
-        let read = |key: &str| entry.get(key).copied().unwrap_or_default();
-
-        memory[1] = read("Rss");
-        memory[2] = read("Pss");
-        memory[3] = read("Shared_Clean") + read("Shared_Dirty");
-        memory[4] = read("Anonymous");
-    }
-
-    Some(memory)
-}
-
-fn read_global(mem_total: u64) -> Result<[u64; GLOBAL.len()]> {
-    let meminfo = Meminfo::current()?;
-
-    let used = mem_total.saturating_sub(
-        meminfo
-            .mem_available
-            .unwrap_or(meminfo.mem_free + meminfo.cached),
-    );
-
-    Ok([
-        used,
-        meminfo.cached,
-        meminfo.anon_pages.unwrap_or_default(),
-        meminfo.swap_free,
-    ])
-}
-
-#[derive(Default)]
-pub(crate) struct ProcFiles {
-    path: String,
-    text: String,
-}
-
-impl ProcFiles {
-    fn read(&mut self, pid: i32, file: &str) -> Option<&str> {
-        self.path.clear();
-        let _ = write!(self.path, "/proc/{pid}/{file}");
-
-        self.text.clear();
-        File::open(&self.path)
-            .ok()?
-            .read_to_string(&mut self.text)
-            .ok()?;
-
-        Some(&self.text)
-    }
+/// Reads `/proc/<pid>/<file>`, or `None` if the process has ended.
+fn read_proc_file(pid: i32, file: &str) -> Option<String> {
+    fs::read_to_string(format!("/proc/{pid}/{file}")).ok()
 }
 
 /// The bytes a process read and wrote, from `/proc/<pid>/io`.
-fn read_io(text: &str) -> [u64; IO.len()] {
-    let mut io = [0u64; IO.len()];
+fn read_io(text: &str) -> [u64; IO_METRICS.len()] {
+    let mut io = [0u64; IO_METRICS.len()];
 
     for line in text.lines() {
         let Some((key, value)) = line.split_once(':') else {
@@ -284,116 +230,58 @@ fn read_io(text: &str) -> [u64; IO.len()] {
     io
 }
 
-/// `utime`, `stime`, `cutime` and `cstime`, counted from the last `)`: the name may hold one.
-fn read_cpu(text: &str) -> Option<[u64; 4]> {
-    const UTIME: usize = 11;
-
-    let mut fields = text
-        .get(text.rfind(')')? + 1..)?
-        .split_ascii_whitespace()
-        .skip(UTIME);
-
-    // `cutime` and `cstime` are signed: a negative one counts as 0.
-    let mut spent = [0u64; 4];
-    for slot in &mut spent {
-        *slot = u64::try_from(fields.next()?.parse::<i64>().ok()?).unwrap_or_default();
-    }
-
-    Some(spent)
+/// Returns CPU metrics `utime`, `stime`.
+fn read_cpu(text: &str) -> Option<(u64, u64)> {
+    let mut fields = cpu_fields(text)?;
+    let mut next_unsigned = || fields.next()?.parse::<u64>().ok();
+    Some((next_unsigned()?, next_unsigned()?))
 }
 
-/// The I/O of an exited child is lost, unlike its CPU time: the cgroup source counts both.
-fn counters(
-    files: &mut ProcFiles,
-    root: i32,
-    processes: &[i32],
-) -> ([u64; IO.len()], [u64; CPU.len()]) {
-    let mut io = [0u64; IO.len()];
-    let mut cpu = [0u64; CPU.len()];
+/// Returns CPU metrics `utime`, `stime`, `cutime` and `cstime`.
+/// Negative `cutime` and `cstime` values count as 0.
+#[allow(clippy::similar_names)]
+fn read_cpu_full(text: &str) -> Option<(u64, u64, u64, u64)> {
+    let mut fields = cpu_fields(text)?;
 
-    for pid in processes.iter().copied() {
-        if let Some(text) = files.read(pid, "io") {
-            for (total, value) in io.iter_mut().zip(read_io(text)) {
-                *total += value;
-            }
-        }
+    let mut next_unsigned = || fields.next()?.parse::<u64>().ok();
+    let utime = next_unsigned()?;
+    let stime = next_unsigned()?;
 
-        let Some(spent) = files.read(pid, "stat").and_then(read_cpu) else {
-            continue;
-        };
+    let mut next_signed = || u64::try_from(fields.next()?.parse::<i64>().ok()?.max(0)).ok();
+    let cutime = next_signed()?;
+    let cstime = next_signed()?;
 
-        cpu[0] += spent[0];
-        cpu[1] += spent[1];
-
-        // Only the root's, or a reaped child would be counted twice.
-        if pid == root {
-            cpu[0] += spent[2];
-            cpu[1] += spent[3];
-        }
-    }
-
-    (io, cpu)
+    Some((utime, stime, cutime, cstime))
 }
 
-/// The process and its descendants, without threads.
-fn descendants(root: i32) -> Vec<i32> {
-    let mut found = HashSet::from([root]);
-    let mut queue = VecDeque::from([root]);
-
-    while let Some(pid) = queue.pop_front() {
-        for child in children(pid) {
-            if found.insert(child) {
-                queue.push_back(child);
-            }
-        }
-    }
-
-    let mut found: Vec<i32> = found.into_iter().collect();
-    found.sort_unstable();
-
-    found
-}
-
-/// The children of a process, from the `children` file of each of its threads.
-fn children(pid: i32) -> Vec<i32> {
-    let Ok(process) = Process::new(pid) else {
-        return Vec::new();
-    };
-    let Ok(tasks) = process.tasks() else {
-        return Vec::new();
-    };
-
-    tasks
-        .flatten()
-        .flat_map(|task| {
-            let path = format!("/proc/{pid}/task/{}/children", task.tid);
-
-            std::fs::read_to_string(path)
-                .unwrap_or_default()
-                .split_whitespace()
-                .filter_map(|child| child.parse().ok())
-                .collect::<Vec<i32>>()
-        })
-        .collect()
+fn cpu_fields(text: &str) -> Option<impl Iterator<Item = &str>> {
+    const UTIME_INDEX: usize = 11;
+    Some(
+        text.get(text.rfind(')')? + 1..)?
+            .split_ascii_whitespace()
+            .skip(UTIME_INDEX),
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    use procfs::process::Process;
+
     use super::*;
 
-    const AWKWARD: &str = "42 (my (odd) prog) S 1 42 42 0 -1 4194304 100 0 0 0 \
+    const STAT: &str = "42 (my (odd) prog) S 1 42 42 0 -1 4194304 100 0 0 0 \
                            11 22 33 44 20 0 1 0 900 2621440 371 0 0 0 0 0";
 
     #[test]
     fn the_processor_time_is_read_past_a_command_that_holds_spaces() {
-        assert_eq!(read_cpu(AWKWARD), Some([11, 22, 33, 44]));
+        assert_eq!(read_cpu_full(STAT), Some((11, 22, 33, 44)));
     }
 
     #[test]
     fn a_reaped_child_that_reads_negative_counts_as_nothing() {
-        let odd = AWKWARD.replace(" 11 22 33 44 ", " 11 22 -1 -2 ");
+        let odd = STAT.replace(" 11 22 33 44 ", " 11 22 -1 -2 ");
 
-        assert_eq!(read_cpu(&odd), Some([11, 22, 0, 0]));
+        assert_eq!(read_cpu_full(&odd), Some((11, 22, 0, 0)));
     }
 
     #[test]
@@ -417,39 +305,37 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)]
     fn reading_proc_straight_says_what_the_crate_says() {
         let pid = i32::try_from(std::process::id()).expect("a pid fits in an i32");
-        let mut files = ProcFiles::default();
         let process = Process::new(pid).expect("this process is in /proc");
 
         let stat = process.stat().expect("its stat");
-        let ours = read_cpu(files.read(pid, "stat").expect("its stat, read straight"))
-            .expect("four numbers");
+        let (utime, stime, cutime, cstime) =
+            read_cpu_full(&read_proc_file(pid, "stat").expect("its stat, read straight"))
+                .expect("four numbers");
 
-        // The counters move between the two reads.
         assert!(
-            ours[0].abs_diff(stat.utime) <= 1 && ours[1].abs_diff(stat.stime) <= 1,
-            "utime/stime: straight {ours:?}, crate {} {}",
+            utime.abs_diff(stat.utime) <= 1 && stime.abs_diff(stat.stime) <= 1,
+            "utime/stime: straight ({utime} {stime}), crate {} {}",
             stat.utime,
             stat.stime
         );
-        assert_eq!(ours[2], u64::try_from(stat.cutime).unwrap_or_default());
-        assert_eq!(ours[3], u64::try_from(stat.cstime).unwrap_or_default());
+        assert_eq!(cutime, u64::try_from(stat.cutime).unwrap_or_default());
+        assert_eq!(cstime, u64::try_from(stat.cstime).unwrap_or_default());
 
         if let Ok(io) = process.io() {
-            let ours = read_io(files.read(pid, "io").expect("its io, read straight"));
+            let io_counters = read_io(&read_proc_file(pid, "io").expect("its io, read straight"));
 
-            assert_eq!(ours[0], io.read_bytes, "read_bytes");
-            assert_eq!(ours[1], io.write_bytes, "write_bytes");
+            assert_eq!(io_counters[0], io.read_bytes, "read_bytes");
+            assert_eq!(io_counters[1], io.write_bytes, "write_bytes");
         }
     }
 
     #[test]
     fn a_process_that_is_gone_is_one_less_rather_than_a_failure() {
-        let mut files = ProcFiles::default();
-
-        assert!(files.read(-1, "stat").is_none());
-        let (io, cpu) = counters(&mut files, -1, &[-1]);
+        assert!(read_proc_file(-1, "stat").is_none());
+        let (io, cpu) = read_cpu_and_io_counters(-1, &[-1]);
 
         assert_eq!(io, [0, 0]);
         assert_eq!(cpu, [0, 0]);

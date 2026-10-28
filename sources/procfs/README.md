@@ -2,26 +2,27 @@
 
 Procfs metric source for [Joule Profiler](https://github.com/joule-profiler/joule-profiler).
 
-This crate builds a `Source` for Joule Profiler that collects **process-level** and, optionally, **system-wide** metrics using the Linux **procfs** interface.
+This sources collects memory, I/O and CPU metrics at **process-level** and, optionally, **system-wide** using the Linux **procfs** interface.
 
 The implementation relies on the `/proc` filesystem to read runtime information about the memory, I/O and CPU time of the profiled program and of every process it starts.
 
 ## Architecture
 
-A single polling thread:
-* reads the memory of the process tree every `process_poll_interval`, and of the machine every `poll_interval` when `global` is set;
-* lists the process tree again from the profiled program PID every `hierarchy_interval` only, since that is the costly part.
+Three polling threads run during the profile, each at its own interval:
+* one reads the memory of the process tree every `process_poll_interval`;
+* one lists the process tree again from the profiled program PID every `hierarchy_poll_interval`, since that is the costly part;
+* one reads the memory of the machine every `poll_interval`, only when `global` is set.
 
-At each phase boundary, the I/O and CPU time of the process tree are read directly, and the memory is reported as the minimum, maximum and average of what the thread polled during the phase.
+At each phase boundary, the I/O and CPU time of the process tree are read directly, and the memory is reported as the minimum, maximum and average of what was polled during the phase.
 
 ## Configuration
 
 ```toml
 [sources.procfs]
-poll_interval = "10ms"         # the memory of the machine, when `global`
-process_poll_interval = "20ms" # the memory of the process tree
-hierarchy_interval = "1s"      # how often the process tree is listed again
-global = false                 # also reports the memory of the machine
+poll_interval = "10ms"           # the memory of the machine, when `global`
+process_poll_interval = "20ms"   # the memory of the process tree
+hierarchy_poll_interval = "1s"   # how often the process tree is listed again
+global = false                   # also reports the memory of the machine
 ```
 
 ## Implemented metrics

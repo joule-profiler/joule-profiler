@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "procfs source for Joule Profiler"
-keywords = ["procfs", "linux", "io", "memory"]
+keywords = ["procfs", "linux"]
 readme = "README.md"
 
 [dependencies]
@@ -17,6 +17,7 @@ humantime-serde.workspace = true
 thiserror.workspace = true
 
 procfs = "0.18.0"
+arc-swap = "1.7.1"
 
 [lints]
 workspace = true

@@ -77,7 +77,7 @@ events = ["cpu_cycles", "instructions", "cache_misses", "branch_misses"]
 ignore_on_failure = true
 poll_interval = "10ms"           # the memory of the machine, when `global`
 process_poll_interval = "20ms"   # the memory of the process tree
-hierarchy_interval = "1s"        # how often the process tree is listed again
+hierarchy_poll_interval = "1s"   # how often the process tree is listed again
 global = false                   # also reports the memory of the machine
 
 # cgroup v2. It measures the cgroup made for the run unless it names one, so
