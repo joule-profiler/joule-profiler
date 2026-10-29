@@ -2,7 +2,9 @@ use anyhow::Result;
 use joule_profiler_cli::config::load_global_config;
 use joule_profiler_cli::config::source::register_source;
 use joule_profiler_cli::config::table::ConfigTable;
-use joule_profiler_cli::{CliArgs, config_table_to_displayer, init_logging};
+use joule_profiler_cli::{
+    CliArgs, ProfilerCommand, config_table_to_displayer, generate_completions, init_logging,
+};
 use joule_profiler_core::JouleProfiler;
 use joule_profiler_core::config::Command;
 
@@ -27,6 +29,11 @@ use joule_profiler_source_rapl::powercap;
 async fn main() -> Result<()> {
     let mut cli = CliArgs::from_args();
     cli.validate()?;
+
+    if let ProfilerCommand::Autocomplete(args) = cli.command {
+        generate_completions(args.shell, &mut std::io::stdout());
+        return Ok(());
+    }
 
     init_logging(cli.verbose);
 

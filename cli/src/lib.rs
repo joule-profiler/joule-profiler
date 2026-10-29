@@ -1,9 +1,12 @@
 use std::{collections::HashSet, path::PathBuf};
 
-use clap::{ArgAction, Parser, ValueEnum};
+use std::io::Write;
+
+use clap::{ArgAction, CommandFactory, Parser, ValueEnum};
+use clap_complete::{Shell, generate};
 
 use anyhow::{Result, bail};
-pub use commands::ProfilerCommand;
+pub use commands::{AutocompleteArgs, CompletionShell, ProfilerCommand};
 #[cfg(feature = "rapl")]
 use serde::Deserialize;
 
@@ -94,6 +97,18 @@ impl CliArgs {
 
         Ok(())
     }
+}
+
+/// Generate a completion script from the current CLI definition.
+pub fn generate_completions(shell: CompletionShell, output: &mut impl Write) {
+    let shell = match shell {
+        CompletionShell::Bash => Shell::Bash,
+        CompletionShell::Zsh => Shell::Zsh,
+        CompletionShell::Fish => Shell::Fish,
+        CompletionShell::PowerShell => Shell::PowerShell,
+    };
+    let mut command = CliArgs::command();
+    generate(shell, &mut command, "joule-profiler", output);
 }
 
 #[cfg(not(any(
@@ -194,7 +209,7 @@ pub fn init_logging(verbose: u8) {
 
 #[cfg(test)]
 mod tests {
-    use clap::ValueEnum;
+    use clap::{Parser, ValueEnum};
     use joule_profiler_core::source::MetricReader;
 
     use super::*;
@@ -277,5 +292,42 @@ mod tests {
     fn validate_accepts_distinct_sources() {
         let cli = cli_args_with_sources(Source::value_variants().to_vec());
         assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn autocomplete_parses_supported_shells() {
+        for shell in ["bash", "zsh", "fish", "powershell"] {
+            let cli = CliArgs::try_parse_from(["joule-profiler", "autocomplete", shell]).unwrap();
+
+            assert!(matches!(cli.command, ProfilerCommand::Autocomplete(_)));
+        }
+    }
+
+    #[test]
+    fn autocomplete_rejects_unsupported_shell() {
+        let error =
+            CliArgs::try_parse_from(["joule-profiler", "autocomplete", "elvish"]).unwrap_err();
+
+        assert!(error.to_string().contains("invalid value"));
+        assert!(error.to_string().contains("elvish"));
+    }
+
+    #[test]
+    fn autocomplete_generates_scripts_from_cli_definition() {
+        for (name, shell) in [
+            ("bash", CompletionShell::Bash),
+            ("zsh", CompletionShell::Zsh),
+            ("fish", CompletionShell::Fish),
+            ("powershell", CompletionShell::PowerShell),
+        ] {
+            let mut output = Vec::new();
+            generate_completions(shell, &mut output);
+            let script = String::from_utf8(output).unwrap();
+
+            assert!(!script.is_empty(), "{name}");
+            assert!(script.contains("profile"), "{name}");
+            assert!(script.contains("list-sensors"), "{name}");
+            assert!(script.contains("output-format"), "{name}: {script}");
+        }
     }
 }

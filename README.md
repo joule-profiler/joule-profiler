@@ -46,6 +46,19 @@ joule-profiler --output-format json profile -- <COMMAND>
 joule-profiler --sources rapl,nvml profile -- <COMMAND>
 ```
 
+### Shell completion
+
+Joule Profiler can generate completion scripts for Bash, Zsh, Fish, and PowerShell. The script is printed to standard output, so it can be redirected to a file:
+
+```bash
+joule-profiler autocomplete bash > joule-profiler.bash
+joule-profiler autocomplete zsh > _joule-profiler
+joule-profiler autocomplete fish > joule-profiler.fish
+joule-profiler autocomplete powershell > joule-profiler.ps1
+```
+
+The generated file is not installed or loaded automatically. For a temporary session, use `source joule-profiler.bash` in Bash, `fpath=("$PWD" $fpath); autoload -U compinit && compinit` in Zsh, `source joule-profiler.fish` in Fish, or `. .\joule-profiler.ps1` in PowerShell.
+
 A configuration file can be used to configure the tool using the CLI flag `--config`, see [configuration file](examples/example_config.toml). The CLI arguments will ALWAYS override the configuration arguments.
 
 Any key of the configuration file can be set from the command line with `-D KEY=VALUE`, where `KEY` is the toml key. This works with or without a `--config` file, and can be repeated:

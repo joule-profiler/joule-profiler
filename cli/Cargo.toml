@@ -31,6 +31,7 @@ humantime-serde.workspace = true
 anyhow = "1.0.100"
 env_logger = "0.11.8"
 clap = { version = "4.5.53", features = ["derive"] }
+clap_complete = "4.5.65"
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 toml = "1.1.2"
 humantime = "2.3.0"

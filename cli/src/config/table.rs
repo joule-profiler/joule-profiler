@@ -205,6 +205,9 @@ impl ConfigTable {
                 Command::Profile(config)
             }
             ProfilerCommand::ListSensors => Command::ListSensors,
+            ProfilerCommand::Autocomplete(_) => {
+                bail!("autocomplete command must be handled before configuration")
+            }
         };
 
         Ok(Config { command })
