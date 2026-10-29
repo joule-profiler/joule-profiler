@@ -1,6 +1,6 @@
-use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fs, io};
 
 use arc_swap::ArcSwap;
 use joule_profiler_core::injector::Target;
@@ -36,6 +36,12 @@ pub(crate) const IO_METRICS: [&str; 2] = ["proc_io_read_bytes", "proc_io_write_b
 /// The metrics related to the CPU time of the process tree, read in clock ticks.
 pub(crate) const CPU_METRICS: [&str; 2] = ["proc_cpu_user", "proc_cpu_system"];
 
+/// The metrics related to the CPU time of the machine, read in clock ticks.
+pub(crate) const GLOBAL_CPU_METRICS: [&str; 3] =
+    ["global_cpu_user", "global_cpu_system", "global_cpu_idle"];
+
+const STAT_FILE_PATH: &str = "/proc/stat";
+
 /// A memory snapshot containing process and global metrics.
 #[derive(Default, Clone)]
 pub(crate) struct MemorySnapshot {
@@ -48,6 +54,7 @@ pub struct Snapshot {
     pub(crate) memory: MemorySnapshot,
     pub(crate) io: [u64; IO_METRICS.len()],
     pub(crate) cpu: [u64; CPU_METRICS.len()],
+    pub(crate) global_cpu: [u64; GLOBAL_CPU_METRICS.len()],
 }
 
 /// Reads the I/O and CPU time of the process tree at each boundary. Three polling threads, each
@@ -151,10 +158,17 @@ impl Sensor for ProcfsSensor {
             .map(Consumer::consume)
             .unwrap_or_default();
 
+        let global_cpu = if self.global {
+            read_global_cpu()?
+        } else {
+            [0; GLOBAL_CPU_METRICS.len()]
+        };
+
         Ok(Snapshot {
             memory: MemorySnapshot { proc, global },
             io,
             cpu,
+            global_cpu,
         })
     }
 
@@ -203,6 +217,39 @@ fn read_cpu_and_io_counters(
     }
 
     (io, cpu)
+}
+
+/// Reads the CPU time of the machine from `/proc/stat`.
+fn read_global_cpu() -> Result<[u64; GLOBAL_CPU_METRICS.len()]> {
+    let text = fs::read_to_string(STAT_FILE_PATH)
+        .map_err(|error| ProcfsError::Read(STAT_FILE_PATH.into(), error))?;
+
+    parse_global_cpu(&text).ok_or_else(|| {
+        ProcfsError::Read(
+            STAT_FILE_PATH.into(),
+            io::Error::new(io::ErrorKind::InvalidData, "no `cpu` line"),
+        )
+    })
+}
+
+/// Returns the user, system and idle time of the machine from the `cpu` line of `/proc/stat`,
+/// in clock ticks. `nice` counts as user, `irq` and `softirq` as system, and `iowait` as idle.
+fn parse_global_cpu(text: &str) -> Option<[u64; GLOBAL_CPU_METRICS.len()]> {
+    let mut fields = text.lines().next()?.split_ascii_whitespace();
+    if fields.next()? != "cpu" {
+        return None;
+    }
+
+    let ticks: Vec<u64> = fields
+        .take(7)
+        .map(str::parse)
+        .collect::<std::result::Result<_, _>>()
+        .ok()?;
+    let [user, nice, system, idle, iowait, irq, softirq] = ticks[..] else {
+        return None;
+    };
+
+    Some([user + nice, system + irq + softirq, idle + iowait])
 }
 
 /// Reads `/proc/<pid>/<file>`, or `None` if the process has ended.
@@ -288,6 +335,25 @@ mod tests {
     fn a_stat_that_is_not_one_is_not_read() {
         assert_eq!(read_cpu(""), None);
         assert_eq!(read_cpu("42 (prog) S 1"), None);
+    }
+
+    #[test]
+    fn the_cpu_time_of_the_machine_groups_its_fields_into_user_system_and_idle() {
+        let stat = "cpu  100 10 50 1000 20 3 7 0 0 0\ncpu0 1 2 3 4 5 6 7 0 0 0\n";
+
+        assert_eq!(parse_global_cpu(stat), Some([110, 60, 1020]));
+    }
+
+    #[test]
+    fn a_stat_without_a_cpu_line_is_not_read() {
+        assert_eq!(parse_global_cpu(""), None);
+        assert_eq!(parse_global_cpu("cpu0 1 2 3 4 5 6 7\n"), None);
+        assert_eq!(parse_global_cpu("cpu 1 2 3\n"), None);
+    }
+
+    #[test]
+    fn the_cpu_time_of_this_machine_is_read() {
+        assert!(read_global_cpu().is_ok());
     }
 
     #[test]

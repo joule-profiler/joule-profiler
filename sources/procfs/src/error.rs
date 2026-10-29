@@ -1,3 +1,6 @@
+use std::io;
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 /// A [`Result`](std::result::Result) with a [`ProcfsError`].
@@ -8,6 +11,9 @@ pub type Result<T> = std::result::Result<T, ProcfsError>;
 pub enum ProcfsError {
     #[error("reading /proc")]
     Procfs(#[from] procfs::ProcError),
+
+    #[error("reading {0}")]
+    Read(PathBuf, #[source] io::Error),
 
     #[error("the source was never attached to a process")]
     NotAttached,

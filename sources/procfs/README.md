@@ -22,7 +22,7 @@ At each phase boundary, the I/O and CPU time of the process tree are read direct
 poll_interval = "10ms"           # the memory of the machine, when `global`
 process_poll_interval = "100ms"   # the memory of the process tree
 hierarchy_poll_interval = "500ms"   # how often the process tree is listed again
-global = false                   # also reports the memory of the machine
+global = false                   # also reports the memory and CPU time of the machine
 ```
 
 ## Implemented metrics
@@ -66,10 +66,20 @@ Each value is reported with a `_min`, `_max` and `_avg` suffix, in bytes.
 | `proc_cpu_user` | CPU time spent in user space during the phase, in ms |
 | `proc_cpu_system` | CPU time spent in kernel space during the phase, in ms |
 
+### CPU (system-wide)
+
+| Metric | Description |
+| - | - |
+| `global_cpu_user` | CPU time the machine spent in user space during the phase, `nice` included, in ms |
+| `global_cpu_system` | CPU time the machine spent in kernel space during the phase, interrupts included, in ms |
+| `global_cpu_idle` | CPU time the machine spent idle during the phase, `iowait` included, in ms |
+
+The times add up over every CPU: on a machine with 8 CPUs, a phase of 1 s accounts for 8000 ms.
+
 ### Design notes
 
 * Memory metrics are tracked as extrema and averages over the phase rather than instantaneous snapshots
-* System-wide metrics are derived from `/proc/meminfo`
+* System-wide metrics are derived from `/proc/meminfo` and `/proc/stat`
 * I/O metrics come from `/proc/[pid]/io`, CPU time from `/proc/[pid]/stat`
 * The process tree is listed again periodically to include the processes started during the run
 
@@ -78,9 +88,9 @@ Each value is reported with a `_min`, `_max` and `_avg` suffix, in bytes.
 | Requirement | Version |
 | - | - |
 | Linux kernel | Procfs support (all modern Linux kernels) |
-| Permissions | Read access to `/proc` (typically available to all users, some fields may require elevated privileges) |
+| Permissions | Read access to `/proc` (typically available to all users) |
 
 ## Notes
 
 > [!NOTE]
-> Some metrics may be unavailable depending on kernel configuration or permissions
+> Some metrics may be unavailable depending on kernel version, configuration or permissions

@@ -7,7 +7,8 @@ use joule_profiler_core::util::stats::MinMaxMean;
 use crate::Procfs;
 use crate::error::Result;
 use crate::sensor::{
-    CPU_METRICS, GLOBAL_MEMORY_METRICS, IO_METRICS, PROCESS_METRICS, ProcfsSensor, Snapshot,
+    CPU_METRICS, GLOBAL_CPU_METRICS, GLOBAL_MEMORY_METRICS, IO_METRICS, PROCESS_METRICS,
+    ProcfsSensor, Snapshot,
 };
 
 /// Computes the metrics of each phase from two snapshots of the sensor.
@@ -53,6 +54,11 @@ impl Processor<ProcfsSensor> for ProcfsProcessor {
 
         metrics.extend(IO_METRICS.map(|name| MetricInfo::new(name, MetricUnit::BYTE)));
         metrics.extend(CPU_METRICS.map(|name| MetricInfo::new(name, MetricUnit::MILLISECOND)));
+        if self.config.global {
+            metrics.extend(
+                GLOBAL_CPU_METRICS.map(|name| MetricInfo::new(name, MetricUnit::MILLISECOND)),
+            );
+        }
         metrics
     }
 
@@ -81,6 +87,13 @@ impl Processor<ProcfsSensor> for ProcfsProcessor {
             let ticks = current.saturating_sub(*previous);
 
             values.push(MetricValue::U64(ticks * self.tick_ms));
+        }
+
+        if self.config.global {
+            for (current, previous) in current.global_cpu.iter().zip(&previous.global_cpu) {
+                let ticks = current.saturating_sub(*previous);
+                values.push(MetricValue::U64(ticks * self.tick_ms));
+            }
         }
 
         Ok(())

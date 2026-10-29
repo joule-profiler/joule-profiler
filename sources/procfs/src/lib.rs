@@ -1,7 +1,7 @@
 //! `procfs` source for Joule Profiler.
 //!
 //! Reads the memory, I/O and CPU time of the profiled program and of every child processes,
-//! from the `/proc` files of Linux, and optionally the memory of the whole machine.
+//! from the `/proc` files of Linux, and optionally the memory and CPU time of the whole machine.
 //!
 //! # Example
 //!
@@ -90,7 +90,8 @@ impl Procfs {
         self
     }
 
-    /// Sets whether the memory of the whole machine is reported too. Defaults to `false`.
+    /// Sets whether the memory and CPU time of the whole machine are reported too. Defaults to
+    /// `false`.
     pub fn global(mut self, global: bool) -> Self {
         self.global = global;
         self
