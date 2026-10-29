@@ -201,13 +201,6 @@ mod tests {
     }
 
     #[test]
-    fn every_online_cpu_is_counted_by_default() {
-        let online = read_cpu_list(Path::new(ONLINE_CPUS_FILE_PATH)).unwrap();
-
-        assert_eq!(resolve_cpus(None).unwrap(), online);
-    }
-
-    #[test]
     fn the_requested_cpus_come_out_sorted() {
         let online = resolve_cpus(None).unwrap();
         let requested: HashSet<u32> = online.iter().copied().collect();

@@ -55,7 +55,7 @@ impl Powercap {
         self
     }
 
-    /// Sets how often the counters are read, so that counter wraps are seen.
+    /// Sets how often the counters are read, so that counter wraps are seen. Defaults to 1min.
     pub fn poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self

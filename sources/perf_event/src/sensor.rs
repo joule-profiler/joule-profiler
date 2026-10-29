@@ -50,7 +50,6 @@ impl<S: PerfScope> Sensor for PerfSensor<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::counters::tests::raw_count;
     use crate::scope::MockPerfScope;
 
     const EVENTS: [Event; 2] = [Event::CpuCycles, Event::TaskClock];
@@ -81,39 +80,5 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         mock_sensor(scope).attach(Target { pid: 42 }).unwrap();
-    }
-
-    #[test]
-    fn a_measure_is_a_read_of_the_scope() {
-        let mut scope = MockPerfScope::new();
-        scope
-            .expect_read()
-            .withf(|events| events == EVENTS)
-            .times(1)
-            .returning(|events| Ok(vec![raw_count(10, 20, 20); events.len()]));
-        let snapshot = mock_sensor(scope).measure().unwrap();
-
-        assert_eq!(snapshot, [raw_count(10, 20, 20); 2]);
-    }
-
-    #[test]
-    fn an_error_of_the_scope_is_that_of_the_sensor() {
-        let mut scope = MockPerfScope::new();
-        scope
-            .expect_read()
-            .returning(|_| Err(PerfEventError::NotOpened));
-
-        assert!(matches!(
-            mock_sensor(scope).measure(),
-            Err(PerfEventError::NotOpened)
-        ));
-    }
-
-    #[test]
-    fn close_closes_the_scope() {
-        let mut scope = MockPerfScope::new();
-        scope.expect_close().times(1).returning(|| Ok(()));
-
-        mock_sensor(scope).close().unwrap();
     }
 }

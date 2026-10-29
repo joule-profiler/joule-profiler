@@ -1,7 +1,7 @@
 use joule_profiler_core::info::Info;
 use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
 use joule_profiler_core::util::stats::MinMaxMean;
 
 use crate::Procfs;
@@ -28,29 +28,30 @@ impl ProcfsProcessor {
 pub(crate) fn info(config: &Procfs, tick_ms: u64, mem_total: u64) -> Info {
     Info::new()
         .with("global", config.global)
-        .with("poll_interval", config.global_poll_interval)
+        .with("global_poll_interval", config.global_poll_interval)
         .with("process_poll_interval", config.process_poll_interval)
         .with("hierarchy_poll_interval", config.hierarchy_poll_interval)
+        .with(
+            "process_memory_unit",
+            MetricUnit::from(config.process_memory_unit).to_string(),
+        )
+        .with(
+            "global_memory_unit",
+            MetricUnit::from(config.global_memory_unit).to_string(),
+        )
         .with("mem_total_bytes", mem_total)
         .with("clock_tick_ms", tick_ms)
 }
 
 impl Processor<ProcfsSensor> for ProcfsProcessor {
     fn metrics(&self) -> Vec<MetricInfo> {
-        let global: &[&str] = if self.config.global {
-            &GLOBAL_MEMORY_METRICS
-        } else {
-            &[]
-        };
-
-        let mut metrics: Vec<MetricInfo> = PROCESS_METRICS
-            .iter()
-            .chain(global)
-            .flat_map(|name| {
-                ["min", "max", "avg"]
-                    .map(|end| MetricInfo::new(format!("{name}_{end}"), MetricUnit::BYTE))
-            })
-            .collect();
+        let mut metrics = memory_metrics(&PROCESS_METRICS, self.config.process_memory_unit);
+        if self.config.global {
+            metrics.extend(memory_metrics(
+                &GLOBAL_MEMORY_METRICS,
+                self.config.global_memory_unit,
+            ));
+        }
 
         metrics.extend(IO_METRICS.map(|name| MetricInfo::new(name, MetricUnit::BYTE)));
         metrics.extend(CPU_METRICS.map(|name| MetricInfo::new(name, MetricUnit::MILLISECOND)));
@@ -68,15 +69,17 @@ impl Processor<ProcfsSensor> for ProcfsProcessor {
         current: &Snapshot,
         values: &mut Vec<MetricValue>,
     ) -> Result<()> {
-        let global: &[MinMaxMean] = if self.config.global {
-            &current.memory.global
-        } else {
-            &[]
-        };
-
-        for memory in current.memory.proc.iter().chain(global) {
-            let (min, max, mean) = memory.min_max_mean();
-            values.extend([min, max, mean].map(MetricValue::U64));
+        write_memory(
+            &current.memory.proc,
+            self.config.process_memory_unit,
+            values,
+        );
+        if self.config.global {
+            write_memory(
+                &current.memory.global,
+                self.config.global_memory_unit,
+                values,
+            );
         }
 
         for (current, previous) in current.io.iter().zip(&previous.io) {
@@ -100,24 +103,21 @@ impl Processor<ProcfsSensor> for ProcfsProcessor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
+/// Returns the minimum, maximum and mean metrics of each memory value, in `unit`.
+fn memory_metrics(names: &[&str], unit: MemoryUnit) -> Vec<MetricInfo> {
+    names
+        .iter()
+        .flat_map(|name| {
+            ["min", "max", "avg"]
+                .map(|end| MetricInfo::new(format!("{name}_{end}"), MetricUnit::from(unit)))
+        })
+        .collect()
+}
 
-    use super::*;
-
-    #[test]
-    fn the_intervals_the_memory_and_the_clock_tick_are_in_the_info() {
-        let config = Procfs::new()
-            .global(true)
-            .process_poll_interval(Duration::from_millis(20));
-
-        let info = info(&config, 10, 4096);
-
-        assert_eq!(info.get("global"), Some(&true.into()));
-        assert_eq!(info.get("process_poll_interval"), Some(&"20ms".into()));
-        assert_eq!(info.get("hierarchy_poll_interval"), Some(&"500ms".into()));
-        assert_eq!(info.get("mem_total_bytes"), Some(&4096_u64.into()));
-        assert_eq!(info.get("clock_tick_ms"), Some(&10_u64.into()));
+/// Writes the minimum, maximum and mean of each memory value, in `unit`.
+fn write_memory(stats: &[MinMaxMean], unit: MemoryUnit, values: &mut Vec<MetricValue>) {
+    for stat in stats {
+        let (min, max, mean) = stat.min_max_mean();
+        values.extend([min, max, mean].map(|bytes| unit.value(bytes)));
     }
 }

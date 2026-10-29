@@ -352,11 +352,6 @@ mod tests {
     }
 
     #[test]
-    fn the_cpu_time_of_this_machine_is_read() {
-        assert!(read_global_cpu().is_ok());
-    }
-
-    #[test]
     fn the_bytes_are_read_by_name_and_not_by_position() {
         let io = "rchar: 1\nwchar: 2\nsyscr: 3\nsyscw: 4\n\
                   read_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 0\n";

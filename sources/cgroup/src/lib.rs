@@ -1,145 +1,234 @@
+//! `cgroup` source for Joule Profiler.
+//!
+//! Reads the memory, CPU time and I/O of a cgroup v2, from the files of `/sys/fs/cgroup`. Every
+//! process in the cgroup is measured, so the profiled program and everything it starts are
+//! counted, even a process that leaves its process tree.
+//!
+//! Unlike the `procfs` source, the kernel does the accounting: short-lived and ended processes
+//! are counted, and the cost does not grow with the number of processes.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use joule_profiler_source_cgroup::Cgroup;
+//!
+//! let source = Cgroup::new("my.slice").global(true).build().unwrap();
+//! ```
+
+mod cgroup;
+mod error;
+mod layout;
+mod processor;
+mod sensor;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use joule_profiler_core::info::{Info, InfoValue};
 use joule_profiler_core::source::Source;
+use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
+use joule_profiler_core::util::cgroup::{Cgroup as CgroupDir, ROOT_PATH};
 use serde::Deserialize;
 
-pub mod cgroup;
-pub mod error;
-pub mod processor;
-pub mod sensor;
-
-mod layout;
-
 pub use error::CgroupError;
-pub use processor::CgroupProcessor;
-pub use sensor::{CgroupSensor, Snapshot};
-
-use joule_profiler_core::util::cgroup::{Cgroup as CgroupDir, ROOT_PATH};
 
 use crate::cgroup::controllers;
 use crate::error::Result;
-use crate::layout::Layout;
+use crate::layout::{AvailableValues, Layout};
+use crate::processor::CgroupProcessor;
+use crate::sensor::CgroupSensor;
 
-const POLL: Duration = Duration::from_millis(10);
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Memory, CPU and I/O of a cgroup. Both the builder and the `[sources.cgroup]` table.
+/// Configuration of the cgroup source.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cgroup {
     name: PathBuf,
 
-    /// Default: `/sys/fs/cgroup`.
     #[serde(default)]
     root: Option<PathBuf>,
 
-    #[serde(default = "poll", with = "humantime_serde")]
-    poll_interval: Duration,
+    #[serde(default = "default_poll_interval", with = "humantime_serde")]
+    process_poll_interval: Duration,
 
-    /// Also reports the whole hierarchy.
+    #[serde(default = "default_poll_interval", with = "humantime_serde")]
+    global_poll_interval: Duration,
+
     #[serde(default)]
     global: bool,
+
+    #[serde(default)]
+    process_memory_unit: MemoryUnit,
+
+    #[serde(default)]
+    global_memory_unit: MemoryUnit,
 }
 
-fn poll() -> Duration {
-    POLL
+fn default_poll_interval() -> Duration {
+    DEFAULT_POLL_INTERVAL
 }
 
 impl Cgroup {
+    /// Initializes a configuration for the cgroup with its `name`, relative to the root.
     pub fn new(name: impl Into<PathBuf>) -> Self {
         Self {
             name: name.into(),
             root: None,
-            poll_interval: POLL,
+            process_poll_interval: DEFAULT_POLL_INTERVAL,
+            global_poll_interval: DEFAULT_POLL_INTERVAL,
             global: false,
+            process_memory_unit: MemoryUnit::default(),
+            global_memory_unit: MemoryUnit::default(),
         }
     }
 
+    /// Sets the cgroup root. Defaults to `/sys/fs/cgroup`.
     pub fn root(mut self, root: impl Into<PathBuf>) -> Self {
         self.root = Some(root.into());
         self
     }
 
-    pub fn poll(mut self, interval: Duration) -> Self {
-        self.poll_interval = interval;
+    /// Sets how often the memory of the cgroup is read. Defaults to 20ms.
+    pub fn process_poll_interval(mut self, interval: Duration) -> Self {
+        self.process_poll_interval = interval;
         self
     }
 
+    /// Sets how often the memory of the root cgroup is read, when `global` is set. Defaults to
+    /// 20ms.
+    pub fn global_poll_interval(mut self, interval: Duration) -> Self {
+        self.global_poll_interval = interval;
+        self
+    }
+
+    /// Sets whether the root cgroup, that is the whole machine, is reported too. Defaults to
+    /// `false`.
     pub fn global(mut self, global: bool) -> Self {
         self.global = global;
         self
     }
 
-    /// The metrics depend on the files of the cgroup. If it does not exist yet, as when listing
-    /// before a run, they are predicted from the controllers it will get.
-    pub fn build(self) -> Result<Source> {
-        let root = self.root.unwrap_or_else(|| ROOT_PATH.into());
+    /// Sets the unit of the memory of the cgroup. Defaults to bytes.
+    pub fn process_memory_unit(mut self, unit: MemoryUnit) -> Self {
+        self.process_memory_unit = unit;
+        self
+    }
 
-        let proc = Arc::new(CgroupDir::at(root.join(self.name)));
+    /// Sets the unit of the memory of the root cgroup, when `global` is set. Defaults to bytes.
+    pub fn global_memory_unit(mut self, unit: MemoryUnit) -> Self {
+        self.global_memory_unit = unit;
+        self
+    }
+
+    /// Builds the source. The metrics depend on the files of the cgroup: if it does not exist
+    /// yet, as when listing the metrics before a run, they are predicted from the controllers
+    /// its parent gives it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CgroupError::NotACgroup`] if the root or the cgroup is a directory that is not a
+    /// cgroup v2, and [`CgroupError::Read`] if one of its files cannot be read.
+    pub fn build(self) -> Result<Source> {
+        let root = self.root.clone().unwrap_or_else(|| ROOT_PATH.into());
+
+        let proc = Arc::new(CgroupDir::at(root.join(&self.name)));
         let global = Arc::new(CgroupDir::at(root));
 
-        let layout = if proc.exists() {
-            Layout::probe(&proc, self.global)?
+        for cgroup in [&global, &proc] {
+            if cgroup.exists() && !cgroup.is_cgroup() {
+                return Err(CgroupError::NotACgroup(cgroup.path().to_path_buf()));
+            }
+        }
+
+        let proc_values = if proc.exists() {
+            AvailableValues::probe(&proc)?
         } else {
-            Layout::expected(&controllers(&proc)?, self.global)
+            AvailableValues::expected(&controllers(&proc)?)
         };
 
-        if layout.is_empty() {
-            return Err(CgroupError::NothingToRead(proc.path().to_path_buf()));
-        }
+        let layout = Layout {
+            proc: proc_values,
+            global: self
+                .global
+                .then(|| AvailableValues::probe(&global))
+                .transpose()?,
+            process_memory_unit: self.process_memory_unit,
+            global_memory_unit: self.global_memory_unit,
+        };
 
         log::debug!("cgroup: {} metrics reported", layout.metrics().len());
 
-        let info = info(&proc, layout.global, self.poll_interval);
+        let info = info(&proc, &self, layout.global.is_some());
         let layout = Arc::new(layout);
         Ok(Source::new(
-            CgroupSensor::new(proc, global, Arc::clone(&layout), self.poll_interval),
+            CgroupSensor::new(
+                proc,
+                global,
+                Arc::clone(&layout),
+                self.process_poll_interval,
+                self.global_poll_interval,
+            ),
             CgroupProcessor::new(layout),
         )
         .with_info(info))
     }
 }
 
-pub(crate) fn info(
-    cgroup: &joule_profiler_core::util::cgroup::Cgroup,
-    global: bool,
-    poll_interval: Duration,
-) -> Info {
+/// Returns the info of the source: the cgroup, its controllers and the configuration.
+fn info(cgroup: &CgroupDir, config: &Cgroup, global: bool) -> Info {
     Info::new()
         .with("cgroup", cgroup.path().display().to_string())
         .with("controllers", controllers(cgroup).map(InfoValue::list))
         .with("global", global)
-        .with("poll_interval", poll_interval)
+        .with("process_poll_interval", config.process_poll_interval)
+        .with("global_poll_interval", config.global_poll_interval)
+        .with(
+            "process_memory_unit",
+            MetricUnit::from(config.process_memory_unit).to_string(),
+        )
+        .with(
+            "global_memory_unit",
+            MetricUnit::from(config.global_memory_unit).to_string(),
+        )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, process, time::Duration};
+    use std::{fs, path::Path, process};
 
-    use joule_profiler_core::info::InfoValue;
+    use serde_json::json;
 
-    use crate::info;
+    use super::*;
+
+    fn read(table: serde_json::Value) -> serde_json::Result<Cgroup> {
+        serde_json::from_value(table)
+    }
 
     #[test]
-    fn the_cgroup_and_its_controllers_are_in_the_info() {
-        let path = std::env::temp_dir().join(format!("joule-cgroup-info-{}", process::id()));
-        fs::create_dir_all(&path).unwrap();
-        fs::write(path.join("cgroup.controllers"), "cpu io memory\n").unwrap();
+    fn a_table_that_only_names_its_cgroup_takes_the_defaults() {
+        let cgroup = read(json!({ "name": "my.slice" })).unwrap();
 
-        let info = info(
-            &joule_profiler_core::util::cgroup::Cgroup::at(&path),
-            false,
-            Duration::from_millis(10),
-        );
-        fs::remove_dir_all(&path).unwrap();
+        assert_eq!(cgroup.name, Path::new("my.slice"));
+        assert_eq!(cgroup.root, None);
+        assert_eq!(cgroup.process_poll_interval, DEFAULT_POLL_INTERVAL);
+        assert!(!cgroup.global);
+    }
 
-        assert_eq!(info.get("cgroup"), Some(&path.display().to_string().into()));
-        assert_eq!(
-            info.get("controllers"),
-            Some(&InfoValue::list(["cpu", "io", "memory"]))
-        );
-        assert_eq!(info.get("poll_interval"), Some(&"10ms".into()));
+    #[test]
+    fn a_table_without_a_name_is_refused() {
+        assert!(read(json!({})).is_err());
+    }
+
+    #[test]
+    fn a_directory_that_is_not_a_cgroup_is_refused() {
+        let root = std::env::temp_dir().join(format!("joule-cgroup-not-one-{}", process::id()));
+        fs::create_dir_all(&root).unwrap();
+
+        let built = Cgroup::new("run").root(&root).build();
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(matches!(built, Err(CgroupError::NotACgroup(path)) if path == root));
     }
 }

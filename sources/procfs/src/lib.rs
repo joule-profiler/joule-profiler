@@ -20,6 +20,7 @@
 use std::time::Duration;
 
 use joule_profiler_core::source::Source;
+use joule_profiler_core::unit::MemoryUnit;
 use procfs::{Current, Meminfo};
 use serde::Deserialize;
 
@@ -53,6 +54,10 @@ pub struct Procfs {
     hierarchy_poll_interval: Duration,
 
     global: bool,
+
+    process_memory_unit: MemoryUnit,
+
+    global_memory_unit: MemoryUnit,
 }
 
 impl Default for Procfs {
@@ -62,6 +67,8 @@ impl Default for Procfs {
             process_poll_interval: DEFAULT_PROCESS_POLL,
             hierarchy_poll_interval: DEFAULT_HIERARCHY_POLL,
             global: false,
+            process_memory_unit: MemoryUnit::default(),
+            global_memory_unit: MemoryUnit::default(),
         }
     }
 }
@@ -71,20 +78,20 @@ impl Procfs {
         Self::default()
     }
 
-    /// Sets how often the memory of the machine is read, when `global` is set.
+    /// Sets how often the memory of the machine is read, when `global` is set. Defaults to 10ms.
     pub fn global_poll_interval(mut self, interval: Duration) -> Self {
         self.global_poll_interval = interval;
         self
     }
 
-    /// Sets how often the memory of the process tree is read.
+    /// Sets how often the memory of the process tree is read. Defaults to 100ms.
     pub fn process_poll_interval(mut self, interval: Duration) -> Self {
         self.process_poll_interval = interval;
         self
     }
 
-    /// Sets how often the process tree is listed again. A process that starts and
-    /// ends in between is missed.
+    /// Sets how often the process tree is listed again. A process that starts and ends in between
+    /// is missed. Defaults to 500ms.
     pub fn hierarchy_poll_interval(mut self, interval: Duration) -> Self {
         self.hierarchy_poll_interval = interval;
         self
@@ -94,6 +101,18 @@ impl Procfs {
     /// `false`.
     pub fn global(mut self, global: bool) -> Self {
         self.global = global;
+        self
+    }
+
+    /// Sets the unit of the memory of the process tree. Defaults to bytes.
+    pub fn process_memory_unit(mut self, unit: MemoryUnit) -> Self {
+        self.process_memory_unit = unit;
+        self
+    }
+
+    /// Sets the unit of the memory of the machine, when `global` is set. Defaults to bytes.
+    pub fn global_memory_unit(mut self, unit: MemoryUnit) -> Self {
+        self.global_memory_unit = unit;
         self
     }
 

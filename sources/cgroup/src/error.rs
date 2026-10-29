@@ -3,20 +3,19 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-pub type Result<T> = std::result::Result<T, CgroupError>;
+pub(crate) type Result<T> = std::result::Result<T, CgroupError>;
 
+/// An error returned by the cgroup source.
 #[derive(Debug, Error)]
 pub enum CgroupError {
-    #[error(
-        "the cgroup {0} does not exist: create it, or configure Joule Profiler to create one using the `[cgroup]` config table"
-    )]
+    #[error("the cgroup {0} does not exist")]
     NotFound(PathBuf),
+
+    #[error("{0} is not a cgroup v2")]
+    NotACgroup(PathBuf),
 
     #[error("reading {0}")]
     Read(PathBuf, #[source] io::Error),
-
-    #[error("the cgroup {0} reports none of the values this source reads")]
-    NothingToRead(PathBuf),
 
     #[error("the source was never attached to a process")]
     NotAttached,

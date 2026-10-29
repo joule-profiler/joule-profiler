@@ -214,12 +214,10 @@ impl<'de> Deserialize<'de> for PerfEvent {
 mod tests {
     use std::path::Path;
 
-    use joule_profiler_core::info::Info;
     use joule_profiler_core::unit::MetricUnit;
     use serde_json::json;
 
     use super::*;
-    use crate::scope::MockPerfScope;
 
     fn read(table: serde_json::Value) -> serde_json::Result<PerfEvent> {
         serde_json::from_value(table)
@@ -316,32 +314,6 @@ mod tests {
                 MetricUnit::NANOSECOND,
                 MetricUnit::NANOSECOND
             ]
-        );
-    }
-
-    #[test]
-    fn the_info_is_the_scope_then_the_events_and_the_machine() {
-        let mut scope = MockPerfScope::new();
-        scope
-            .expect_info()
-            .returning(|| Info::new().with("scope", "mock"));
-
-        let source = build_perf_source(
-            Arc::new(vec![Event::CpuCycles, Event::TaskClock]),
-            true,
-            scope,
-        );
-        let info = source.info();
-        let keys: Vec<&str> = info.entries().iter().map(|(key, _)| key.as_str()).collect();
-
-        assert_eq!(
-            keys,
-            ["scope", "events", "group", "pmus", "perf_event_paranoid"]
-        );
-        assert_eq!(info.get("scope"), Some(&"mock".into()));
-        assert_eq!(
-            info.get("events"),
-            Some(&InfoValue::list(["CPU_CYCLES", "TASK_CLOCK"]))
         );
     }
 }

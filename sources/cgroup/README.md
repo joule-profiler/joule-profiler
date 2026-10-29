@@ -9,7 +9,7 @@ This source uses cgroup files exposed under `/sys/fs/cgroup`.
 
 ## Which cgroup is measured
 
-### The cgroup made for the run
+### A cgroup created for the run
 
 When `[sources.cgroup]` names no cgroup, Joule Profiler makes one for the run, moves the profiled program into it, and measures it. It is configured with the top-level `[cgroup]` table, whose keys are all optional:
 
@@ -28,14 +28,17 @@ Making it needs write access to the parent: root, or a delegated subtree (e.g. a
 
 ### An existing cgroup
 
-To measure a cgroup that already exists instead, name it in the source table. No cgroup is then made for the run, unless a `[cgroup]` table is given.
+To measure a cgroup that already exists instead, name it in the source table. No cgroup is then created for the run, unless a `[cgroup]` table is given.
 
 ```toml
 [sources.cgroup]
-name = "my.slice"       # relative to `root`, use "parent/child" for a nested cgroup
-#root = "/sys/fs/cgroup" # the default
-#poll_interval = "10ms"  # the default
-#global = false          # also reports the root cgroup
+name = "my.slice"              # relative to `root`, use "parent/child" for a nested cgroup
+#root = "/sys/fs/cgroup"       # the default
+#process_poll_interval = "20ms" # the default
+#global = false                 # also reports the root cgroup
+#global_poll_interval = "20ms"  # the default, for the root cgroup
+#process_memory_unit = "byte"   # byte | kilobyte | megabyte | gigabyte
+#global_memory_unit = "byte"    # for the root cgroup
 ```
 
 The controllers `cpu`, `memory` and `io` must then be enabled on its parent, which Joule Profiler does **not** do for an existing cgroup. A metric whose controller is missing is not reported.
@@ -85,7 +88,7 @@ The slice can then be named in `[sources.cgroup]`, and in `[sources.perf_event]`
 
 ## Implemented metrics
 
-The metrics of the measured cgroup are prefixed with `proc`. With `global = true`, the same metrics are also reported for the root cgroup, prefixed with `global`.
+The metrics of the measured cgroup are prefixed with `proc`. With `global = true`, the metrics the root cgroup exposes are also reported, prefixed with `global`. The root cgroup has no `memory.current`, `memory.peak` or `memory.swap.current`, so it reports no `global_current`, `global_peak` or `global_swap_current`.
 
 The metrics reported depend on the controllers of the cgroup. Here is the list of the metrics implemented.
 
@@ -105,7 +108,7 @@ The metrics reported depend on the controllers of the cgroup. Here is the list o
 
 ### Memory
 
-Each value is polled every `poll_interval` and reported with a `_min`, `_max` and `_avg` suffix, in bytes.
+Each value is polled every `process_poll_interval`, or `global_poll_interval` for the root cgroup, and reported with a `_min`, `_max` and `_avg` suffix, in `process_memory_unit`, or `global_memory_unit` for the root cgroup. The multiples are decimal: a kilobyte is 1000 bytes.
 
 | Metric | Description |
 | - | - |

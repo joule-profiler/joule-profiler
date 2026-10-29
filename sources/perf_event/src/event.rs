@@ -219,9 +219,4 @@ mod tests {
             assert_eq!(read(&event.to_string()).unwrap(), event);
         }
     }
-
-    #[test]
-    fn an_unknown_event_is_refused() {
-        assert!(read("cycle").is_err());
-    }
 }

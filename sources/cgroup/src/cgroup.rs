@@ -16,8 +16,8 @@ pub(crate) const MEMORY: [&str; 9] = [
     "swap_current",
 ];
 
-/// The counters of `cpu.stat`, then the bytes of `io.stat` summed over the devices.
-pub(crate) const COUNTERS: [(&str, MetricUnit); 10] = [
+/// The counters of `cpu.stat`.
+pub(crate) const CPU_COUNTERS: [(&str, MetricUnit); 8] = [
     ("usage_usec", MetricUnit::MICROSECOND),
     ("user_usec", MetricUnit::MICROSECOND),
     ("system_usec", MetricUnit::MICROSECOND),
@@ -26,20 +26,25 @@ pub(crate) const COUNTERS: [(&str, MetricUnit); 10] = [
     ("throttled_usec", MetricUnit::MICROSECOND),
     ("nr_bursts", MetricUnit::COUNT),
     ("burst_usec", MetricUnit::MICROSECOND),
+];
+
+/// The bytes of `io.stat`, summed over the devices.
+pub(crate) const IO_COUNTERS: [(&str, MetricUnit); 2] = [
     ("read_bytes", MetricUnit::BYTE),
     ("write_bytes", MetricUnit::BYTE),
 ];
 
-/// The index of `usage_usec` in [`COUNTERS`].
+/// The index of `usage_usec` in [`CPU_COUNTERS`].
 pub(crate) const USAGE_USEC_INDEX: usize = 0;
 
 pub(crate) trait Usage {
-    fn memory_usage(&self) -> Result<[Option<u64>; MEMORY.len()]>;
-    fn counters(&self) -> Result<[Option<u64>; COUNTERS.len()]>;
+    fn read_memory_usage(&self) -> Result<[Option<u64>; MEMORY.len()]>;
+    fn read_cpu_counters(&self) -> Result<[Option<u64>; CPU_COUNTERS.len()]>;
+    fn read_io_counters(&self) -> Result<[Option<u64>; IO_COUNTERS.len()]>;
 }
 
 impl Usage for Cgroup {
-    fn memory_usage(&self) -> Result<[Option<u64>; MEMORY.len()]> {
+    fn read_memory_usage(&self) -> Result<[Option<u64>; MEMORY.len()]> {
         let read = |file: &str| {
             self.read_u64(file)
                 .map_err(|error| read_failed(self, file, error))
@@ -61,45 +66,39 @@ impl Usage for Cgroup {
         ])
     }
 
-    fn counters(&self) -> Result<[Option<u64>; COUNTERS.len()]> {
+    fn read_cpu_counters(&self) -> Result<[Option<u64>; CPU_COUNTERS.len()]> {
         let stat = self
             .read_keyed("cpu.stat")
             .map_err(|error| read_failed(self, "cpu.stat", error))?;
-        let [read, written] = io_bytes(self)?;
 
-        Ok(COUNTERS.map(|(name, _)| match name {
-            "read_bytes" => read,
-            "write_bytes" => written,
-            _ => stat.get(name).copied(),
-        }))
+        Ok(CPU_COUNTERS.map(|(name, _)| stat.get(name).copied()))
     }
-}
 
-/// The bytes read and written, summed over the devices of `io.stat`.
-fn io_bytes(cgroup: &Cgroup) -> Result<[Option<u64>; 2]> {
-    let Some(content) = cgroup
-        .read("io.stat")
-        .map_err(|error| read_failed(cgroup, "io.stat", error))?
-    else {
-        return Ok([None, None]);
-    };
+    fn read_io_counters(&self) -> Result<[Option<u64>; IO_COUNTERS.len()]> {
+        let Some(content) = self
+            .read("io.stat")
+            .map_err(|error| read_failed(self, "io.stat", error))?
+        else {
+            return Ok([None; IO_COUNTERS.len()]);
+        };
 
-    let mut totals = [None, None];
+        let mut totals = [None; IO_COUNTERS.len()];
 
-    for field in content.split_whitespace() {
-        for (total, prefix) in totals.iter_mut().zip(["rbytes=", "wbytes="]) {
-            if let Some(value) = field.strip_prefix(prefix)
-                && let Ok(value) = value.parse::<u64>()
-            {
-                *total = Some(total.unwrap_or_default() + value);
+        for field in content.split_whitespace() {
+            for (total, prefix) in totals.iter_mut().zip(["rbytes=", "wbytes="]) {
+                if let Some(value) = field.strip_prefix(prefix)
+                    && let Ok(value) = value.parse::<u64>()
+                {
+                    *total = Some(total.unwrap_or_default() + value);
+                }
             }
         }
-    }
 
-    Ok(totals)
+        Ok(totals)
+    }
 }
 
-/// The controllers of the cgroup, or those its parent can give it if it does not exist yet.
+/// The controllers of the cgroup, or those of its parent if it does not exist yet.
 pub(crate) fn controllers(cgroup: &Cgroup) -> Result<Vec<String>> {
     match cgroup.path().parent() {
         Some(parent) if !cgroup.exists() => {

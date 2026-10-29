@@ -1,86 +1,42 @@
 use joule_profiler_core::metric::MetricInfo;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
 use joule_profiler_core::util::cgroup::Cgroup;
 
-use crate::cgroup::{COUNTERS, MEMORY, Usage};
+use crate::cgroup::{CPU_COUNTERS, IO_COUNTERS, MEMORY, Usage};
 use crate::error::Result;
 
-/// The metrics the cgroup reports.
-pub(crate) struct Layout {
+/// The values a cgroup reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AvailableValues {
     pub(crate) memory: [bool; MEMORY.len()],
-    pub(crate) counters: [bool; COUNTERS.len()],
-    pub(crate) global: bool,
+    pub(crate) cpu: [bool; CPU_COUNTERS.len()],
+    pub(crate) io: [bool; IO_COUNTERS.len()],
 }
 
-impl Layout {
-    /// The values the cgroup has.
-    pub(crate) fn probe(cgroup: &Cgroup, global: bool) -> Result<Self> {
+impl AvailableValues {
+    /// Returns the values the cgroup really reports.
+    pub(crate) fn probe(cgroup: &Cgroup) -> Result<Self> {
         Ok(Self {
-            memory: cgroup.memory_usage()?.map(|value| value.is_some()),
-            counters: cgroup.counters()?.map(|value| value.is_some()),
-            global,
+            memory: cgroup.read_memory_usage()?.map(|value| value.is_some()),
+            cpu: cgroup.read_cpu_counters()?.map(|value| value.is_some()),
+            io: cgroup.read_io_counters()?.map(|value| value.is_some()),
         })
     }
 
-    /// The values a cgroup with these controllers will have.
-    pub(crate) fn expected(controllers: &[String], global: bool) -> Self {
+    /// Returns the values a cgroup with these controllers will have.
+    pub(crate) fn expected(controllers: &[String]) -> Self {
         let has = |controller: &str| controllers.iter().any(|name| name == controller);
 
         Self {
             memory: [has("memory"); MEMORY.len()],
-            counters: COUNTERS.map(|(name, _)| match name {
-                // In every `cpu.stat`.
-                "usage_usec" | "user_usec" | "system_usec" => true,
-                "read_bytes" | "write_bytes" => has("io"),
-                _ => has("cpu"),
+            cpu: CPU_COUNTERS.map(|(name, _)| {
+                matches!(name, "usage_usec" | "user_usec" | "system_usec") || has("cpu")
             }),
-            global,
+            io: [has("io"); IO_COUNTERS.len()],
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        !self
-            .memory
-            .iter()
-            .chain(&self.counters)
-            .any(|reported| *reported)
-    }
-
-    /// The metrics, in the order the processor writes them.
-    pub(crate) fn metrics(&self) -> Vec<MetricInfo> {
-        let mut metrics = Vec::new();
-
-        for scope in self.scopes() {
-            for (name, _) in self.memory() {
-                metrics.extend(
-                    ["min", "max", "avg"].map(|end| {
-                        MetricInfo::new(format!("{scope}_{name}_{end}"), MetricUnit::BYTE)
-                    }),
-                );
-            }
-
-            for ((name, unit), _) in self.counters() {
-                metrics.push(MetricInfo::new(format!("{scope}_{name}"), unit));
-            }
-
-            metrics.push(MetricInfo::new(
-                format!("{scope}_cpu_usage"),
-                MetricUnit::PERCENT,
-            ));
-        }
-
-        metrics
-    }
-
-    fn scopes(&self) -> &'static [&'static str] {
-        if self.global {
-            &["proc", "global"]
-        } else {
-            &["proc"]
-        }
-    }
-
-    /// The reported memory values, with their index.
+    /// Returns the available memory values, with their index.
     pub(crate) fn memory(&self) -> impl Iterator<Item = (&'static str, usize)> + '_ {
         MEMORY
             .iter()
@@ -89,15 +45,76 @@ impl Layout {
             .map(|(index, name)| (*name, index))
     }
 
-    /// The reported counters, with their index.
-    pub(crate) fn counters(
+    /// Returns the available counters of `cpu.stat`, with their index.
+    pub(crate) fn cpu_counters(
         &self,
     ) -> impl Iterator<Item = ((&'static str, MetricUnit), usize)> + '_ {
-        COUNTERS
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| self.counters[*index])
-            .map(|(index, counter)| (*counter, index))
+        available_counters(&CPU_COUNTERS, &self.cpu)
+    }
+
+    /// Returns the available counters of `io.stat`, with their index.
+    pub(crate) fn io_counters(
+        &self,
+    ) -> impl Iterator<Item = ((&'static str, MetricUnit), usize)> + '_ {
+        available_counters(&IO_COUNTERS, &self.io)
+    }
+
+    /// Adds the metrics of these values, named after `scope`, with the memory in `memory_unit`.
+    fn add_metrics(&self, scope: &str, memory_unit: MemoryUnit, metrics: &mut Vec<MetricInfo>) {
+        for (name, _) in self.memory() {
+            metrics.extend(["min", "max", "avg"].map(|end| {
+                MetricInfo::new(
+                    format!("{scope}_{name}_{end}"),
+                    MetricUnit::from(memory_unit),
+                )
+            }));
+        }
+
+        for ((name, unit), _) in self.cpu_counters().chain(self.io_counters()) {
+            metrics.push(MetricInfo::new(format!("{scope}_{name}"), unit));
+        }
+
+        metrics.push(MetricInfo::new(
+            format!("{scope}_cpu_usage"),
+            MetricUnit::PERCENT,
+        ));
+    }
+}
+
+/// Returns the counters whose flag is set, with their index.
+fn available_counters<'a>(
+    counters: &'a [(&'static str, MetricUnit)],
+    flags: &'a [bool],
+) -> impl Iterator<Item = ((&'static str, MetricUnit), usize)> + 'a {
+    counters
+        .iter()
+        .zip(flags)
+        .enumerate()
+        .filter(|(_, (_, available))| **available)
+        .map(|(index, (counter, _))| (*counter, index))
+}
+
+/// The values the source reports: those of the cgroup and those of the root cgroup when
+/// `global`.
+pub(crate) struct Layout {
+    pub(crate) proc: AvailableValues,
+    pub(crate) global: Option<AvailableValues>,
+    pub(crate) process_memory_unit: MemoryUnit,
+    pub(crate) global_memory_unit: MemoryUnit,
+}
+
+impl Layout {
+    /// Returns the metrics, in the order the processor writes them.
+    pub(crate) fn metrics(&self) -> Vec<MetricInfo> {
+        let mut metrics = Vec::new();
+
+        self.proc
+            .add_metrics("proc", self.process_memory_unit, &mut metrics);
+        if let Some(global) = &self.global {
+            global.add_metrics("global", self.global_memory_unit, &mut metrics);
+        }
+
+        metrics
     }
 }
 
@@ -109,14 +126,25 @@ mod tests {
         names.iter().map(ToString::to_string).collect()
     }
 
+    fn names(layout: &Layout) -> Vec<String> {
+        layout
+            .metrics()
+            .into_iter()
+            .map(|metric| metric.name)
+            .collect()
+    }
+
     #[test]
     fn a_cgroup_without_controllers_is_expected_to_report_its_cpu_time_only() {
-        let layout = Layout::expected(&[], false);
-
-        let names: Vec<String> = layout.metrics().into_iter().map(|m| m.name).collect();
+        let layout = Layout {
+            proc: AvailableValues::expected(&[]),
+            global: None,
+            process_memory_unit: MemoryUnit::default(),
+            global_memory_unit: MemoryUnit::default(),
+        };
 
         assert_eq!(
-            names,
+            names(&layout),
             [
                 "proc_usage_usec",
                 "proc_user_usec",
@@ -128,9 +156,28 @@ mod tests {
 
     #[test]
     fn each_controller_brings_its_values() {
-        let layout = Layout::expected(&controllers(&["cpu", "memory", "io"]), false);
+        let values = AvailableValues::expected(&controllers(&["cpu", "memory", "io"]));
 
-        assert!(layout.memory.iter().all(|reported| *reported));
-        assert!(layout.counters.iter().all(|reported| *reported));
+        assert!(values.memory.iter().all(|available| *available));
+        assert!(values.cpu.iter().all(|available| *available));
+        assert!(values.io.iter().all(|available| *available));
+    }
+
+    #[test]
+    fn the_root_cgroup_only_declares_the_values_it_has() {
+        let mut root = AvailableValues::expected(&controllers(&["cpu", "memory", "io"]));
+        root.memory[0] = false;
+
+        let layout = Layout {
+            proc: AvailableValues::expected(&controllers(&["cpu", "memory", "io"])),
+            global: Some(root),
+            process_memory_unit: MemoryUnit::default(),
+            global_memory_unit: MemoryUnit::default(),
+        };
+
+        let names = names(&layout);
+        assert!(names.iter().any(|name| name == "proc_current_max"));
+        assert!(!names.iter().any(|name| name == "global_current_max"));
+        assert!(names.iter().any(|name| name == "global_anon_max"));
     }
 }

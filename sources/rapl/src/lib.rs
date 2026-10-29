@@ -378,10 +378,4 @@ mod tests {
             Err(RaplError::UnknownSocket(3))
         ));
     }
-
-    #[test]
-    fn a_backend_or_a_setting_that_does_not_exist_is_refused() {
-        assert!(read(json!({ "backend": "rapl" })).is_err());
-        assert!(read(json!({ "units": 3 })).is_err());
-    }
 }

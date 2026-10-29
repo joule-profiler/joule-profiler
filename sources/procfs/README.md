@@ -19,10 +19,12 @@ At each phase boundary, the I/O and CPU time of the process tree are read direct
 
 ```toml
 [sources.procfs]
-poll_interval = "10ms"           # the memory of the machine, when `global`
 process_poll_interval = "100ms"   # the memory of the process tree
-hierarchy_poll_interval = "500ms"   # how often the process tree is listed again
-global = false                   # also reports the memory and CPU time of the machine
+hierarchy_poll_interval = "500ms" # how often the process tree is listed again
+global = false                    # also reports the memory and CPU time of the machine
+global_poll_interval = "10ms"     # the memory of the machine, when `global`
+process_memory_unit = "byte"      # byte | kilobyte | megabyte | gigabyte
+global_memory_unit = "byte"       # the memory of the machine
 ```
 
 ## Implemented metrics
@@ -31,7 +33,7 @@ Process metrics are prefixed with `proc`, and system-wide metrics, reported only
 
 ### Memory (process-level)
 
-Each value is reported with a `_min`, `_max` and `_avg` suffix, in bytes.
+Each value is reported with a `_min`, `_max` and `_avg` suffix, in `process_memory_unit`. The multiples are decimal: a kilobyte is 1000 bytes.
 
 | Metric | Description |
 | - | - |
@@ -43,7 +45,7 @@ Each value is reported with a `_min`, `_max` and `_avg` suffix, in bytes.
 
 ### Memory (system-wide)
 
-Each value is reported with a `_min`, `_max` and `_avg` suffix, in bytes.
+Each value is reported with a `_min`, `_max` and `_avg` suffix, in `global_memory_unit`.
 
 | Metric | Description |
 | - | - |

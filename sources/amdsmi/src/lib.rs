@@ -62,6 +62,7 @@ impl AmdSmi {
         self
     }
 
+    /// Sets how often the power, VRAM and utilization of the GPUs are read. Defaults to 20ms.
     pub fn poll(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self

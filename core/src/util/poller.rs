@@ -4,16 +4,31 @@ use std::time::Duration;
 
 use crate::error::ErrorChain;
 
-/// A thread that calls `tick` every interval until it is dropped.
+/// A thread that calls `tick` regularly until it is dropped.
 pub struct Poller {
     stop: Arc<(Mutex<bool>, Condvar)>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Poller {
+    /// Starts a thread that calls `tick` every `every`. A failed call is logged.
     pub fn start<E: std::error::Error + 'static>(
         every: Duration,
         mut tick: impl FnMut() -> Result<(), E> + Send + 'static,
+    ) -> Self {
+        Self::start_scheduled(every, move || {
+            if let Err(error) = tick() {
+                log::warn!("polling failed: {}", ErrorChain(&error));
+            }
+            every
+        })
+    }
+
+    /// Starts a thread that waits `first`, then calls `tick` and waits the duration it returns,
+    /// again and again.
+    pub fn start_scheduled(
+        first: Duration,
+        mut tick: impl FnMut() -> Duration + Send + 'static,
     ) -> Self {
         let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let waited = Arc::clone(&stop);
@@ -21,10 +36,11 @@ impl Poller {
         let thread = thread::spawn(move || {
             let (stopped, wake) = &*waited;
             let mut asked = lock(stopped);
+            let mut wait = first;
 
             while !*asked {
                 let (waiting, timed_out) = wake
-                    .wait_timeout_while(asked, every, |stopped| !*stopped)
+                    .wait_timeout_while(asked, wait, |stopped| !*stopped)
                     .unwrap_or_else(PoisonError::into_inner);
                 asked = waiting;
 
@@ -33,9 +49,7 @@ impl Poller {
                 }
 
                 drop(asked);
-                if let Err(error) = tick() {
-                    log::warn!("polling failed: {}", ErrorChain(&error));
-                }
+                wait = tick();
                 asked = lock(stopped);
             }
         });
@@ -119,5 +133,21 @@ mod tests {
             "dropping it waited {:?}",
             at.elapsed()
         );
+    }
+
+    #[test]
+    fn a_scheduled_poller_waits_what_its_tick_returns() {
+        let looks = Arc::new(AtomicUsize::new(0));
+
+        let counted = Arc::clone(&looks);
+        let poller = Poller::start_scheduled(Duration::from_millis(5), move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+            Duration::from_secs(30)
+        });
+
+        thread::sleep(Duration::from_millis(150));
+        drop(poller);
+
+        assert_eq!(looks.load(Ordering::Relaxed), 1);
     }
 }

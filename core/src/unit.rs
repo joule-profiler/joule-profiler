@@ -4,6 +4,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
+use crate::metric::MetricValue;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("invalid metric unit `{0}`")]
 pub struct UnitParseError(String);
@@ -173,6 +175,53 @@ impl<'de> Deserialize<'de> for MetricUnit {
     }
 }
 
+/// The unit the memory is reported in. The multiples are decimal: a kilobyte is 1000 bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryUnit {
+    #[default]
+    #[serde(alias = "b")]
+    Byte,
+
+    #[serde(alias = "kb")]
+    Kilobyte,
+
+    #[serde(alias = "mb")]
+    Megabyte,
+
+    #[serde(alias = "gb")]
+    Gigabyte,
+}
+
+impl MemoryUnit {
+    const fn prefix(self) -> UnitPrefix {
+        match self {
+            Self::Byte => UnitPrefix::None,
+            Self::Kilobyte => UnitPrefix::Kilo,
+            Self::Megabyte => UnitPrefix::Mega,
+            Self::Gigabyte => UnitPrefix::Giga,
+        }
+    }
+
+    /// Returns `bytes` as whole bytes, or as fractional kilobytes, megabytes or gigabytes.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a memory size never reaches 2^52 bytes"
+    )]
+    pub fn value(self, bytes: u64) -> MetricValue {
+        match self {
+            Self::Byte => MetricValue::U64(bytes),
+            _ => MetricValue::F64(bytes as f64 / 10f64.powi(self.prefix().exponent().into())),
+        }
+    }
+}
+
+impl From<MemoryUnit> for MetricUnit {
+    fn from(unit: MemoryUnit) -> Self {
+        MetricUnit::new(unit.prefix(), Unit::Byte)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +265,12 @@ mod tests {
         assert_eq!(MetricUnit::BYTE.precision(), 0);
         assert_eq!(MetricUnit::new(UnitPrefix::Kilo, Unit::Byte).precision(), 3);
         assert_eq!(MetricUnit::PERCENT.precision(), 2);
+    }
+
+    #[test]
+    fn bytes_are_whole_and_their_multiples_are_fractional() {
+        assert_eq!(MemoryUnit::Byte.value(1_536), MetricValue::U64(1_536));
+        assert_eq!(MemoryUnit::Kilobyte.value(1_536), MetricValue::F64(1.536));
+        assert_eq!(MemoryUnit::Megabyte.value(2_500_000), MetricValue::F64(2.5));
     }
 }

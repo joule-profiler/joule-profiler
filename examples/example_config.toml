@@ -41,7 +41,7 @@ stdout_file = "stdout.txt"
 # Under `sudo`, runs the program as root instead of as the user who called sudo.
 use_root = false
 
-# The cgroup made for the run, which the program is moved into. Without this
+# The cgroup created for the run, which the program is moved into. Without this
 # table, one is made only for a `cgroup` source that names no cgroup.
 # Making it needs root or a delegated subtree, and its failure stops the run.
 #[cgroup]
@@ -75,19 +75,24 @@ events = ["cpu_cycles", "instructions", "cache_misses", "branch_misses"]
 # procfs
 [sources.procfs]
 ignore_on_failure = true
-poll_interval = "10ms"           # the memory of the machine, when `global`
-process_poll_interval = "20ms"   # the memory of the process tree
-hierarchy_poll_interval = "1s"   # how often the process tree is listed again
+process_poll_interval = "100ms"  # the memory of the process tree
+hierarchy_poll_interval = "500ms" # how often the process tree is listed again
 global = false                   # also reports the memory and CPU time of the machine
+global_poll_interval = "10ms"    # the memory of the machine, when `global`
+process_memory_unit = "byte"     # byte | kilobyte | megabyte | gigabyte
+global_memory_unit = "byte"
 
-# cgroup v2. It measures the cgroup made for the run unless it names one, so
+# cgroup v2. It measures the cgroup created for the run unless it names one, so
 # it needs the rights the `[cgroup]` table describes.
 #[sources.cgroup]
 #ignore_on_failure = true
-#name = "my.slice"              # omit to measure the cgroup made for the run
+#name = "my.slice"              # omit to measure the cgroup created for the run
 #root = "/sys/fs/cgroup"
-#poll_interval = "10ms"
+#process_poll_interval = "20ms"
 #global = false                 # also reports the whole hierarchy
+#global_poll_interval = "20ms"  # how often the whole hierarchy is read, when `global`
+#process_memory_unit = "byte"   # byte | kilobyte | megabyte | gigabyte
+#global_memory_unit = "byte"
 
 # NVML
 [sources.nvml]
