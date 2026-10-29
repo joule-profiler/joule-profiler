@@ -36,6 +36,20 @@ pub fn create_file_with_user_permissions(path: &str) -> std::io::Result<File> {
         .create(true)
         .truncate(true)
         .open(path)?;
+    set_user_permissions(path, &file)?;
+
+    Ok(file)
+}
+
+/// Creates a new file at `path`, failing if it already exists.
+pub fn create_new_file_with_user_permissions(path: &str) -> std::io::Result<File> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    set_user_permissions(path, &file)?;
+
+    Ok(file)
+}
+
+fn set_user_permissions(path: &str, file: &File) -> std::io::Result<()> {
     file.set_permissions(Permissions::from_mode(URW_GRW_OR_PERMS))?;
 
     if is_root() {
@@ -47,5 +61,5 @@ pub fn create_file_with_user_permissions(path: &str) -> std::io::Result<File> {
         chown(path, Some(meta.uid()), Some(meta.gid()))?;
     }
 
-    Ok(file)
+    Ok(())
 }

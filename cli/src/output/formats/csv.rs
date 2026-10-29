@@ -2,7 +2,7 @@ use std::fs::File;
 
 use csv::{QuoteStyle, Writer};
 use joule_profiler_core::fs::{
-    create_file_with_user_permissions, default_results_filename, get_absolute_path,
+    create_new_file_with_user_permissions, default_results_filename, get_absolute_path,
 };
 use joule_profiler_core::sensor::Sensor;
 use joule_profiler_core::types::{Phase, ProfilerResults};
@@ -14,7 +14,7 @@ type Result<T> = std::result::Result<T, DisplayerError>;
 /// CSV output writer to a file.
 pub struct CsvOutput {
     /// CSV writer wrapping the output file.
-    writer: Writer<File>,
+    writer: Option<Writer<File>>,
 
     /// Path to the output CSV file.
     filename: String,
@@ -26,17 +26,25 @@ impl CsvOutput {
         let filename = output_file.unwrap_or(default_results_filename("csv"));
 
         let absolute_path = get_absolute_path(&filename)?;
-        let file = create_file_with_user_permissions(&absolute_path)?;
-
-        let writer = csv::WriterBuilder::new()
-            .delimiter(b';')
-            .quote_style(QuoteStyle::Necessary)
-            .from_writer(file);
 
         Ok(Self {
-            writer,
+            writer: None,
             filename: absolute_path,
         })
+    }
+
+    fn writer(&mut self) -> Result<&mut Writer<File>> {
+        if self.writer.is_none() {
+            let file = create_new_file_with_user_permissions(&self.filename)?;
+            self.writer = Some(
+                csv::WriterBuilder::new()
+                    .delimiter(b';')
+                    .quote_style(QuoteStyle::Necessary)
+                    .from_writer(file),
+            );
+        }
+
+        Ok(self.writer.as_mut().expect("writer was initialized"))
     }
 
     /// Write CSV header row.
@@ -65,7 +73,7 @@ impl CsvOutput {
             "token_pattern",
         ]);
 
-        self.writer
+        self.writer()?
             .write_record(&record)
             .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
         Ok(())
@@ -97,7 +105,7 @@ impl CsvOutput {
         let exit_code = results.exit_code.to_string();
 
         for metric in &phase.metrics {
-            self.writer
+            self.writer()?
                 .write_record([
                     &phase_id,
                     &phase_name,
@@ -123,7 +131,7 @@ impl CsvOutput {
 
     /// Flush the writer and print a message indicating the CSV file has been written.
     fn finalize(&mut self) -> Result<()> {
-        self.writer.flush()?;
+        self.writer()?.flush()?;
         println!("CSV written to: {}", self.filename);
         Ok(())
     }
@@ -137,6 +145,7 @@ impl Displayer for CsvOutput {
         results: &ProfilerResults,
     ) -> Result<()> {
         if results.phases.is_empty() {
+            let _ = self.writer()?;
             return Ok(());
         }
         let command = cmd.join(" ");
@@ -151,12 +160,12 @@ impl Displayer for CsvOutput {
     }
 
     fn list_sensors(&mut self, sensors: &[Sensor]) -> Result<()> {
-        self.writer
+        self.writer()?
             .write_record(["sensor", "unit", "source"])
             .map_err(|err| DisplayerError::OutputFormatError(err.into()))?;
 
         for sensor in sensors {
-            self.writer
+            self.writer()?
                 .write_record([
                     sensor.name.as_str(),
                     sensor.unit.to_string().as_str(),
@@ -239,6 +248,7 @@ mod tests {
     fn csv_to_tempfile() -> (CsvOutput, NamedTempFile) {
         let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_str().unwrap().to_owned();
+        fs::remove_file(tmp.path()).unwrap();
         (CsvOutput::try_new(Some(path)).unwrap(), tmp)
     }
 
@@ -252,6 +262,24 @@ mod tests {
         csv.display_results(&["echo".into()], ".*", &results(0, vec![]))
             .unwrap();
         assert!(read(&tmp).is_empty());
+    }
+
+    #[test]
+    fn display_results_does_not_overwrite_existing_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("results.csv");
+        fs::write(&path, "keep this").unwrap();
+        let mut csv = CsvOutput::try_new(Some(path.to_str().unwrap().to_owned())).unwrap();
+
+        assert!(
+            csv.display_results(
+                &["echo".into()],
+                ".*",
+                &results(0, vec![simple_phase(vec![metric("PKG", 1)])])
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), "keep this");
     }
 
     #[test]
