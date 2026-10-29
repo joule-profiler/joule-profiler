@@ -11,29 +11,34 @@ use crate::error::{AmdSmiError, Result};
 use crate::hardware::{AmdSmiHardware, AmdSmiWrapperHardware};
 
 bitflags! {
-    /// What a GPU is asked for.
+    /// What is read from a GPU.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct DeviceSupport: u8 {
-        /// The GPU has an energy counter.
+    pub(crate) struct DeviceSupport: u8 {
+        /// The energy counter.
         const Energy = 1;
 
-        /// No energy counter: the polled power is integrated instead.
+        /// The power, polled and integrated, when the GPU has no energy counter.
         const Power = 1 << 1;
 
+        /// The VRAM used.
         const Vram = 1 << 2;
+
+        /// The utilization.
         const Utilization = 1 << 3;
     }
 }
 
 impl DeviceSupport {
+    /// Either way of reading the energy.
     pub(crate) const ENERGY: Self = Self::Energy.union(Self::Power);
 
-    /// What needs a polling thread.
+    /// What is read by the polling thread.
     pub(crate) const POLLED: Self = Self::Power.union(Self::Vram).union(Self::Utilization);
 }
 
+/// A GPU to measure.
 #[derive(Debug, Clone)]
-pub struct Device {
+pub(crate) struct Device {
     pub(crate) uuid: String,
 
     pub(crate) support: DeviceSupport,
@@ -41,50 +46,48 @@ pub struct Device {
 
 pub(crate) type Devices = Arc<[Device]>;
 
-/// Whether a GPU needs the polling thread. In minimal mode, a GPU with its own energy counter
-/// does not.
-pub(crate) fn polls(devices: &[Device]) -> bool {
+/// Returns whether a GPU needs the polling thread.
+pub(crate) fn needs_polling(devices: &[Device]) -> bool {
     devices
         .iter()
         .any(|device| device.support.intersects(DeviceSupport::POLLED))
 }
 
-/// One GPU at a boundary.
+/// What a GPU reported at a boundary.
 #[derive(Default, Clone, Copy)]
-pub struct DeviceSample {
-    /// The GPU energy counter, in microjoules.
+pub(crate) struct DeviceSample {
+    /// The energy counter, in microjoules.
     pub(crate) energy_uj: Option<u64>,
 
-    /// The integrated power since the last boundary, in nanojoules.
+    /// The power integrated since the previous boundary, in nanojoules.
     pub(crate) drawn_nj: u64,
 
     pub(crate) vram: MinMaxMean,
     pub(crate) utilization: MinMaxMean,
 }
 
-pub struct Snapshot {
+/// What the sensor reads at a boundary, one sample per GPU.
+pub(crate) struct Snapshot {
     pub(crate) devices: Vec<DeviceSample>,
 }
 
-/// What the polling thread read of one GPU since the last boundary.
+/// What the polling thread read of a GPU since the previous boundary.
 #[derive(Default, Clone)]
 struct PolledDevice {
-    /// In nanojoules.
     drawn_nj: u64,
-
     vram: MinMaxMean,
     utilization: MinMaxMean,
 }
 
-pub struct AmdSmiSensor<H: AmdSmiHardware = AmdSmiWrapperHardware> {
+/// Reads the energy counters at each boundary, and polls the power, VRAM and utilization.
+pub(crate) struct AmdSmiSensor<H: AmdSmiHardware = AmdSmiWrapperHardware> {
     hardware: Arc<H>,
     devices: Devices,
-
     poll_interval: Duration,
-    /// One per GPU.
+
     producers: Vec<Producer<PolledDevice>>,
     consumers: Vec<Consumer<PolledDevice>>,
-    poller: Option<Poller>,
+    poller: Option<Poller<AmdSmiError>>,
 }
 
 impl<H: AmdSmiHardware> AmdSmiSensor<H> {
@@ -111,26 +114,25 @@ impl<H: AmdSmiHardware> Sensor for AmdSmiSensor<H> {
         "amdsmi"
     }
 
-    /// Starts polling, if needed, before the target starts.
+    /// Starts polling, if a GPU needs it.
     fn init(&mut self) -> Result<()> {
-        if !polls(&self.devices) {
+        if !needs_polling(&self.devices) {
             return Ok(());
         }
 
         let hardware = Arc::clone(&self.hardware);
         let devices = Arc::clone(&self.devices);
         let mut producers = std::mem::take(&mut self.producers);
-
-        let mut last = vec![None; devices.len()];
+        let mut last_power = vec![None; devices.len()];
 
         log::debug!(
-            "amdsmi: looking at {} GPUs every {:?}",
+            "amdsmi: polling {} GPUs every {:?}",
             devices.len(),
             self.poll_interval
         );
 
         self.poller = Some(Poller::start(self.poll_interval, move || {
-            sample(hardware.as_ref(), &devices, &mut producers, &mut last)
+            poll_devices(hardware.as_ref(), &devices, &mut producers, &mut last_power)
         }));
 
         Ok(())
@@ -138,13 +140,14 @@ impl<H: AmdSmiHardware> Sensor for AmdSmiSensor<H> {
 
     fn measure(&mut self) -> Result<Snapshot> {
         let mut devices = Vec::with_capacity(self.devices.len());
+
         for (device, consumer) in self.devices.iter().zip(&mut self.consumers) {
             let polled = consumer.consume();
 
             let energy_uj = device
                 .support
                 .contains(DeviceSupport::Energy)
-                .then(|| self.hardware.get_energy(device))
+                .then(|| self.hardware.read_energy(device))
                 .transpose()?;
 
             devices.push(DeviceSample {
@@ -159,55 +162,60 @@ impl<H: AmdSmiHardware> Sensor for AmdSmiSensor<H> {
     }
 
     fn close(&mut self) -> Result<()> {
-        // Dropping the poller joins its thread.
-        self.poller = None;
+        if let Some(poller) = self.poller.take() {
+            poller.stop()?;
+        }
         Ok(())
     }
 }
 
-/// Polls the power, VRAM and utilization of every GPU.
-fn sample<H: AmdSmiHardware>(
+/// What one poll read of a GPU.
+struct Reading {
+    power: Option<u32>,
+    vram: Option<u64>,
+    utilization: Option<u64>,
+}
+
+/// Polls the power, VRAM and utilization of every GPU. A failed read drops the whole poll.
+fn poll_devices<H: AmdSmiHardware>(
     hardware: &H,
     devices: &[Device],
     producers: &mut [Producer<PolledDevice>],
-    last: &mut [Option<(Instant, u32)>],
+    last_power: &mut [Option<(Instant, u32)>],
 ) -> Result<()> {
     let at = Instant::now();
 
-    // Everything is read before anything is written, so a failed read drops the whole poll.
-    let mut looks = Vec::with_capacity(devices.len());
+    let readings = devices
+        .iter()
+        .map(|device| {
+            let read = |support| device.support.contains(support);
+            Ok(Reading {
+                power: read(DeviceSupport::Power)
+                    .then(|| hardware.read_power(device))
+                    .transpose()?,
+                vram: read(DeviceSupport::Vram)
+                    .then(|| hardware.read_vram_usage(device))
+                    .transpose()?,
+                utilization: read(DeviceSupport::Utilization)
+                    .then(|| hardware.read_utilization(device))
+                    .transpose()?
+                    .map(u64::from),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    for device in devices {
-        looks.push(Look {
-            power: device
-                .support
-                .contains(DeviceSupport::Power)
-                .then(|| hardware.get_power(device))
-                .transpose()?,
-            vram: device
-                .support
-                .contains(DeviceSupport::Vram)
-                .then(|| hardware.get_vram_usage(device))
-                .transpose()?,
-            load: device
-                .support
-                .contains(DeviceSupport::Utilization)
-                .then(|| hardware.get_utilization(device))
-                .transpose()?
-                .map(u64::from),
-        });
-    }
-
-    for ((producer, last), look) in producers.iter_mut().zip(last.iter_mut()).zip(looks) {
-        let drawn_nj = look.power.map_or(0, |power| integrate(last, at, power));
+    for ((producer, last_power), reading) in producers.iter_mut().zip(last_power).zip(readings) {
+        let drawn_nj = reading
+            .power
+            .map_or(0, |power| integrate_power(last_power, at, power));
 
         producer.write(|polled| {
             polled.drawn_nj += drawn_nj;
-            if let Some(vram) = look.vram {
+            if let Some(vram) = reading.vram {
                 polled.vram.add(vram);
             }
-            if let Some(load) = look.load {
-                polled.utilization.add(load);
+            if let Some(utilization) = reading.utilization {
+                polled.utilization.add(utilization);
             }
         });
     }
@@ -215,55 +223,49 @@ fn sample<H: AmdSmiHardware>(
     Ok(())
 }
 
-/// The energy since the last power sample, in nanojoules (trapezoid rule).
-fn integrate(last: &mut Option<(Instant, u32)>, at: Instant, milli_watts: u32) -> u64 {
-    let drawn = last.map_or(0, |(before, previous)| {
+/// Returns the energy drawn since the previous power reading, in nanojoules, with the
+/// trapezoidal rule.
+fn integrate_power(last_power: &mut Option<(Instant, u32)>, at: Instant, milliwatts: u32) -> u64 {
+    let drawn = last_power.map_or(0, |(before, previous)| {
         let micros = u64::try_from(at.duration_since(before).as_micros()).unwrap_or(u64::MAX);
-        u64::from(previous.midpoint(milli_watts)) * micros
+        u64::from(previous.midpoint(milliwatts)) * micros
     });
 
-    *last = Some((at, milli_watts));
+    *last_power = Some((at, milliwatts));
     drawn
-}
-
-struct Look {
-    power: Option<u32>,
-    vram: Option<u64>,
-    load: Option<u64>,
 }
 
 #[cfg(test)]
 mod tests {
     use std::thread::sleep;
 
-    use joule_profiler_core::sensor::Sensor;
-
     use super::*;
     use crate::hardware::MockAmdSmiHardware;
 
     fn device(support: DeviceSupport) -> Devices {
         vec![Device {
-            uuid: "5bff74bf-0000-1000-80ab-6aa8d0e43a2c".to_owned(),
+            uuid: "GPU-0".to_owned(),
             support,
         }]
         .into()
     }
 
     #[test]
-    fn a_gpu_with_its_own_counter_is_not_polled() {
-        let sensor = AmdSmiSensor::new(
-            Arc::new(MockAmdSmiHardware::default()),
-            device(DeviceSupport::Energy),
-            Duration::from_millis(10),
-        );
+    fn the_power_is_integrated_with_the_trapezoidal_rule() {
+        let start = Instant::now();
+        let mut last_power = None;
 
-        assert!(!polls(&sensor.devices));
+        assert_eq!(integrate_power(&mut last_power, start, 10_000), 0);
+        assert_eq!(
+            integrate_power(&mut last_power, start + Duration::from_millis(2), 30_000),
+            40_000_000
+        );
     }
 
     #[test]
     fn a_gpu_that_only_reports_its_power_is_polled_and_integrated() {
         let mut hardware = MockAmdSmiHardware::default();
-        hardware.expect_get_power().returning(|_| Ok(50_000));
+        hardware.expect_read_power().returning(|_| Ok(50_000));
 
         let mut sensor = AmdSmiSensor::new(
             Arc::new(hardware),
@@ -271,18 +273,13 @@ mod tests {
             Duration::from_millis(10),
         );
 
-        assert!(polls(&sensor.devices));
-
-        sensor.init().expect("opens");
-        let previous = sensor.measure().expect("measures");
+        sensor.init().unwrap();
+        let previous = sensor.measure().unwrap();
         sleep(Duration::from_millis(100));
-        let current = sensor.measure().expect("measures");
-        sensor.close().expect("closes");
-
-        // The exact value depends on how many polls ran.
-        let drawn = current.devices[0].drawn_nj;
+        let current = sensor.measure().unwrap();
+        sensor.close().unwrap();
 
         assert!(previous.devices[0].energy_uj.is_none());
-        assert!(drawn > 0, "nothing was integrated between the boundaries");
+        assert!(current.devices[0].drawn_nj > 0);
     }
 }

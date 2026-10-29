@@ -35,7 +35,7 @@ impl Socket {
     }
 }
 
-/// The sockets of the machine. Offline CPUs are left out.
+/// Returns the sockets of the machine, without the offline CPUs.
 pub fn socket_topology() -> io::Result<Vec<Socket>> {
     read_topology(Path::new(CPU_PATH))
 }
@@ -142,7 +142,7 @@ pub fn cpu_list(cpus: &[u32]) -> String {
     list
 }
 
-/// The model name of the first CPU in `/proc/cpuinfo`.
+/// Returns the model name of the first CPU.
 pub fn cpu_model() -> io::Result<String> {
     read_model(BufReader::new(File::open(CPUINFO_FILE_PATH)?))
 }

@@ -1,6 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 
+use joule_profiler_core::util::poller::PollerPanicked;
 use thiserror::Error;
 
 pub(crate) type Result<T> = std::result::Result<T, CgroupError>;
@@ -19,4 +20,7 @@ pub enum CgroupError {
 
     #[error("the source was never attached to a process")]
     NotAttached,
+
+    #[error(transparent)]
+    Poller(#[from] PollerPanicked),
 }

@@ -15,7 +15,7 @@ impl MinMaxMean {
         self.count += 1;
     }
 
-    /// `(min, max, mean)`, all 0 when nothing was polled.
+    /// Returns `(min, max, mean)`, all 0 when nothing was added.
     pub fn min_max_mean(self) -> (u64, u64, u64) {
         let mean = u64::try_from(self.sum / u128::from(self.count.max(1))).unwrap_or(u64::MAX);
 

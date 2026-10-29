@@ -100,6 +100,7 @@ ignore_on_failure = true
 gpus = [0]                       # device indices, omit for every GPU
 minimal = true                   # energy only, without VRAM and utilization
 poll_interval = "20ms"
+memory_unit = "byte"             # byte | kilobyte | megabyte | gigabyte
 
 # AMD SMI
 [sources.amdsmi]
@@ -107,3 +108,4 @@ ignore_on_failure = true
 gpus = ["GPU-00000000-0000-0000-0000-000000000000"] # device UUIDs, omit for every GPU
 minimal = true                   # energy only, without VRAM and utilization
 poll_interval = "20ms"
+memory_unit = "byte"             # byte | kilobyte | megabyte | gigabyte

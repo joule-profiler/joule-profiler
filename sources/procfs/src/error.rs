@@ -1,6 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 
+use joule_profiler_core::util::poller::PollerPanicked;
 use thiserror::Error;
 
 /// A [`Result`](std::result::Result) with a [`ProcfsError`].
@@ -17,4 +18,7 @@ pub enum ProcfsError {
 
     #[error("the source was never attached to a process")]
     NotAttached,
+
+    #[error(transparent)]
+    Poller(#[from] PollerPanicked),
 }

@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::error::{BoxError, Error, Result};
 use crate::phase::{PhaseBoundary, Summary};
 use crate::trigger::Trigger;
-use crate::util::time::{get_timestamp_micros, micros_between};
+use crate::util::time::{micros_between, timestamp_micros};
 
 /// The profiled process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub trait Injector: Send + 'static {
     fn start(&mut self) -> Result<Target, Self::Error>;
 
     /// Stops the injector during a profiling session, while blocking on [`Injector::next_phase`].
-    /// The default implementation is a stub doing nothing.
+    /// Does nothing by default.
     fn stop_handle(&self) -> StopHandle {
         Box::new(|| {
             log::debug!("using default implementation to stop the injector, doing nothing");
@@ -38,8 +38,7 @@ pub trait Injector: Send + 'static {
         })
     }
 
-    /// Resumes the target or implement custom logic just after the beginning of the profiling.
-    /// The default implementation is a stub doing nothing.
+    /// Resumes the target once every source is ready. Does nothing by default.
     fn resume(&mut self) -> Result<(), Self::Error> {
         log::debug!("using default implementation to resume the injector, doing nothing");
         Ok(())
@@ -48,8 +47,7 @@ pub trait Injector: Send + 'static {
     /// Blocks until the next boundary; `None` once the target is done.
     fn next_phase(&mut self) -> Result<Option<PhaseToken>, Self::Error>;
 
-    /// Waits for the target to end and returns its exit code.
-    /// The default implementation is a stub doing nothing and returning `None`.
+    /// Waits for the target to end and returns its exit code. Returns `None` by default.
     fn wait(&mut self) -> Result<Option<i32>, Self::Error> {
         log::debug!("using default implementation to wait for the injector, doing nothing");
         Ok(None)
@@ -108,7 +106,7 @@ fn run_with(
     mut send_fn: impl FnMut(PhaseBoundary) -> Result<()>,
 ) -> Result<Summary> {
     let start = Instant::now();
-    let start_timestamp = get_timestamp_micros();
+    let start_timestamp = timestamp_micros();
     let timestamp = || start_timestamp + start.elapsed().as_micros();
 
     trigger.trigger();

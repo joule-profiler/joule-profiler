@@ -140,7 +140,6 @@ impl PerfEvent {
     }
 }
 
-/// Builds the source for the given scope.
 fn build_perf_source<S: PerfScope>(events: Arc<Vec<Event>>, group: bool, scope: S) -> Source {
     let info = scope
         .info()

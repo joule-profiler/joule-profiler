@@ -7,7 +7,7 @@ use procfs::{Current, Meminfo, process::Process};
 
 use crate::{
     error::Result,
-    hierarchy::get_process_descendants,
+    hierarchy::process_descendants,
     sensor::{GLOBAL_MEMORY_METRICS, PROCESS_METRICS},
 };
 
@@ -20,9 +20,9 @@ pub(crate) fn poll_process_memory(
     writer.write(|stats| add_to_stats(stats, memory));
 }
 
-/// Lists the process tree and swap the pids arc.
+/// Lists the process tree again.
 pub(crate) fn poll_hierarchy(root_pid: i32, pids: &ArcSwap<Vec<i32>>) {
-    pids.store(Arc::new(get_process_descendants(root_pid)));
+    pids.store(Arc::new(process_descendants(root_pid)));
 }
 
 /// Reads the memory of the machine and adds it to the stats of the phase.
@@ -42,7 +42,7 @@ fn add_to_stats<const N: usize>(stats: &mut [MinMaxMean; N], values: [u64; N]) {
     }
 }
 
-/// Sums all `processes` memory together and returns the totals.
+/// Returns the total memory of `processes`.
 fn sum_process_memory(processes: &[i32]) -> [u64; PROCESS_METRICS.len()] {
     let mut total = [0u64; PROCESS_METRICS.len()];
 
@@ -57,7 +57,7 @@ fn sum_process_memory(processes: &[i32]) -> [u64; PROCESS_METRICS.len()] {
     total
 }
 
-/// Reads the provided process memory using `/proc/[pid]/stat` file.
+/// Reads the memory of a process, or `None` if it has ended.
 fn read_process_memory(pid: i32) -> Option<[u64; PROCESS_METRICS.len()]> {
     let process = Process::new(pid).ok()?;
 

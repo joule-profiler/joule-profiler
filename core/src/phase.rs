@@ -37,7 +37,7 @@ pub struct SourceMetrics<'a> {
 }
 
 impl<'a> SourceMetrics<'a> {
-    /// Blank metrics for every source, reused for every phase.
+    /// Returns blank metrics for every source, reused for every phase.
     pub(crate) fn from_schema(schema: &'a Schema) -> Vec<Self> {
         let metric = |info: &'a MetricInfo| Metric {
             name: &info.name,

@@ -24,7 +24,7 @@ impl Source {
         }
     }
 
-    /// The setup of the source and the hardware it found.
+    /// Sets the info of the source: its setup and the hardware it found.
     pub fn with_info(mut self, info: Info) -> Self {
         self.info = info;
         self

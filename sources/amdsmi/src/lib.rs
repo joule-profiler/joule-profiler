@@ -1,89 +1,119 @@
+//! `amdsmi` source for Joule Profiler.
+//!
+//! Reads the energy of AMD GPUs through AMD SMI, the library behind `amd-smi`, and optionally
+//! their VRAM and utilization. A GPU without an energy counter reports the integral of its power
+//! instead.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use joule_profiler_source_amdsmi::AmdSmi;
+//!
+//! let source = AmdSmi::new().minimal(false).build().unwrap();
+//! ```
+
+mod error;
+mod hardware;
+mod processor;
+mod sensor;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use joule_profiler_core::info::{Info, InfoValue};
 use joule_profiler_core::source::Source;
+use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
 use serde::Deserialize;
 
-pub mod error;
-pub mod processor;
-pub mod sensor;
+pub use error::AmdSmiError;
 
-mod hardware;
-
-pub use error::{AmdSmiError, Result};
-pub use processor::AmdSmiProcessor;
-pub use sensor::{AmdSmiSensor, Device, DeviceSupport, Snapshot};
-
+use crate::error::Result;
 use crate::hardware::{AmdSmiHardware, AmdSmiWrapperHardware};
-use crate::sensor::{Devices, polls};
+use crate::processor::AmdSmiProcessor;
+use crate::sensor::{AmdSmiSensor, Device, DeviceSupport, Devices, needs_polling};
 
-const POLL: Duration = Duration::from_millis(20);
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// GPU energy, and in normal mode VRAM and utilization too. Minimal mode needs no polling
-/// thread for a GPU with its own energy counter.
+/// Configuration of the amdsmi source.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AmdSmi {
-    /// The UUIDs of the GPUs to measure, every one found unless said otherwise.
-    #[serde(rename = "gpus")]
-    gpus_spec: Option<HashSet<String>>,
+    gpus: Option<HashSet<String>>,
 
-    /// Energy only.
     minimal: bool,
 
     #[serde(with = "humantime_serde")]
     poll_interval: Duration,
+
+    memory_unit: MemoryUnit,
 }
 
 impl Default for AmdSmi {
     fn default() -> Self {
         Self {
-            gpus_spec: None,
+            gpus: None,
             minimal: true,
-            poll_interval: POLL,
+            poll_interval: DEFAULT_POLL_INTERVAL,
+            memory_unit: MemoryUnit::default(),
         }
     }
 }
 
 impl AmdSmi {
+    /// Initializes a configuration that measures the energy of every GPU.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the GPUs to measure, by UUID. Defaults to every GPU.
     pub fn gpus(mut self, gpus: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.gpus_spec = Some(gpus.into_iter().map(Into::into).collect());
+        self.gpus = Some(gpus.into_iter().map(Into::into).collect());
         self
     }
 
+    /// Sets whether only the energy is reported, without the VRAM and the utilization. Defaults
+    /// to `true`.
     pub fn minimal(mut self, minimal: bool) -> Self {
         self.minimal = minimal;
         self
     }
 
     /// Sets how often the power, VRAM and utilization of the GPUs are read. Defaults to 20ms.
-    pub fn poll(mut self, interval: Duration) -> Self {
+    pub fn poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self
     }
 
+    /// Sets the unit of the VRAM. Defaults to bytes.
+    pub fn memory_unit(mut self, unit: MemoryUnit) -> Self {
+        self.memory_unit = unit;
+        self
+    }
+
+    /// Builds the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AmdSmiError::NoDriverLoaded`] or [`AmdSmiError::LibraryNotFound`] if AMD SMI
+    /// cannot be initialized, and [`AmdSmiError::NoDeviceDetected`] if no GPU reports what is
+    /// asked.
     pub fn build(self) -> Result<Source> {
         let mut hardware = AmdSmiWrapperHardware::new()?;
-        let devices = self.resolve(&mut hardware)?;
+        let devices = self.filter_devices(&mut hardware)?;
 
         let info = self.info(&hardware, &devices);
 
         Ok(Source::new(
             AmdSmiSensor::new(Arc::new(hardware), Arc::clone(&devices), self.poll_interval),
-            AmdSmiProcessor::new(devices),
+            AmdSmiProcessor::new(devices, self.memory_unit),
         )
         .with_info(info))
     }
 
-    /// The GPUs to measure, each limited to what the mode asks for.
-    fn resolve<H: AmdSmiHardware>(&self, hardware: &mut H) -> Result<Devices> {
-        let mut devices = hardware.init_devices(self.gpus_spec.as_ref())?;
+    /// Returns the GPUs to measure, each limited to what the mode asks for.
+    fn filter_devices<H: AmdSmiHardware>(&self, hardware: &mut H) -> Result<Devices> {
+        let mut devices = hardware.discover_devices(self.gpus.as_ref())?;
 
         if self.minimal {
             for device in &mut devices {
@@ -106,17 +136,21 @@ impl AmdSmi {
         Ok(devices.into())
     }
 
-    /// The poll interval, then the model of each GPU, or why it cannot be read.
+    /// Returns the info of the source: the configuration, then the model of each GPU, or why it
+    /// cannot be read.
     fn info<H: AmdSmiHardware>(&self, hardware: &H, devices: &[Device]) -> Info {
-        let polling = if polls(devices) {
+        let poll_interval = if needs_polling(devices) {
             InfoValue::from(self.poll_interval)
         } else {
             InfoValue::from("none")
         };
 
         devices.iter().fold(
-            Info::new().with("poll_interval", polling),
-            |info, device| info.with(&device.uuid, hardware.get_name(device)),
+            Info::new().with("poll_interval", poll_interval).with(
+                "memory_unit",
+                MetricUnit::from(self.memory_unit).to_string(),
+            ),
+            |info, device| info.with(&device.uuid, hardware.read_model(device)),
         )
     }
 }
@@ -126,10 +160,10 @@ mod tests {
     use super::*;
     use crate::hardware::MockAmdSmiHardware;
 
-    fn found(support: Vec<DeviceSupport>) -> MockAmdSmiHardware {
+    fn mock_hardware(support: Vec<DeviceSupport>) -> MockAmdSmiHardware {
         let mut hardware = MockAmdSmiHardware::default();
 
-        hardware.expect_init_devices().returning(move |_| {
+        hardware.expect_discover_devices().returning(move |_| {
             Ok(support
                 .iter()
                 .enumerate()
@@ -145,30 +179,30 @@ mod tests {
 
     #[test]
     fn minimal_keeps_both_ways_of_telling_the_energy() {
-        let mut hardware = found(vec![
+        let mut hardware = mock_hardware(vec![
             DeviceSupport::Energy | DeviceSupport::Vram,
             DeviceSupport::Power | DeviceSupport::Utilization,
         ]);
 
         let devices = AmdSmi::new()
             .minimal(true)
-            .resolve(&mut hardware)
-            .expect("resolves");
+            .filter_devices(&mut hardware)
+            .unwrap();
 
         assert_eq!(devices[0].support, DeviceSupport::Energy);
         assert_eq!(devices[1].support, DeviceSupport::Power);
     }
 
     #[test]
-    fn normal_keeps_the_vram_and_the_load_as_well() {
-        let mut hardware = found(vec![
+    fn normal_keeps_the_vram_and_the_utilization_as_well() {
+        let mut hardware = mock_hardware(vec![
             DeviceSupport::Energy | DeviceSupport::Vram | DeviceSupport::Utilization,
         ]);
 
         let devices = AmdSmi::new()
             .minimal(false)
-            .resolve(&mut hardware)
-            .expect("resolves");
+            .filter_devices(&mut hardware)
+            .unwrap();
 
         assert_eq!(
             devices[0].support,
@@ -178,71 +212,52 @@ mod tests {
 
     #[test]
     fn minimal_leaves_out_a_gpu_that_reports_no_energy_at_all() {
-        let mut hardware = found(vec![DeviceSupport::Vram | DeviceSupport::Utilization]);
+        let mut hardware = mock_hardware(vec![DeviceSupport::Vram | DeviceSupport::Utilization]);
 
         assert!(matches!(
-            AmdSmi::new().minimal(true).resolve(&mut hardware),
+            AmdSmi::new().minimal(true).filter_devices(&mut hardware),
             Err(AmdSmiError::NoDeviceDetected)
         ));
     }
 
     #[test]
     fn a_model_that_cannot_be_read_says_why() {
-        let mut hardware = found(vec![DeviceSupport::Energy, DeviceSupport::Energy]);
-        let mut first = true;
-        hardware.expect_get_name().returning(move |_| {
-            if std::mem::take(&mut first) {
+        let mut hardware = mock_hardware(vec![DeviceSupport::Energy, DeviceSupport::Energy]);
+        hardware.expect_read_model().returning(|device| {
+            if device.uuid == "GPU-0" {
                 Ok("Some GPU".to_owned())
             } else {
                 Err(AmdSmiError::NoDeviceDetected)
             }
         });
-        let devices = hardware.init_devices(None).unwrap();
+        let devices = hardware.discover_devices(None).unwrap();
 
         let info = AmdSmi::new().info(&hardware, &devices);
 
-        let models: Vec<&InfoValue> = info
-            .entries()
-            .iter()
-            .skip(1)
-            .map(|(_, model)| model)
-            .collect();
+        assert_eq!(info.get("GPU-0"), Some(&"Some GPU".into()));
         assert_eq!(
-            models,
-            [
-                &InfoValue::from("Some GPU"),
-                &InfoValue::from("unavailable (no GPU device detected)")
-            ]
+            info.get("GPU-1"),
+            Some(&"unavailable (no GPU device detected)".into())
         );
     }
 
     #[test]
-    fn the_poll_interval_is_none_when_no_gpu_is_polled() {
-        let mut hardware = found(vec![DeviceSupport::Energy]);
-        hardware
-            .expect_get_name()
-            .returning(|_| Ok("Some GPU".to_owned()));
-        let devices = hardware.init_devices(None).unwrap();
+    fn the_poll_interval_is_given_only_when_a_gpu_is_polled() {
+        for (support, poll_interval) in [
+            (DeviceSupport::Energy, "none"),
+            (DeviceSupport::Power | DeviceSupport::Vram, "10ms"),
+        ] {
+            let mut hardware = mock_hardware(vec![support]);
+            hardware
+                .expect_read_model()
+                .returning(|_| Ok("Some GPU".to_owned()));
+            let devices = hardware.discover_devices(None).unwrap();
 
-        let info = AmdSmi::new()
-            .poll(Duration::from_millis(10))
-            .info(&hardware, &devices);
+            let info = AmdSmi::new()
+                .poll_interval(Duration::from_millis(10))
+                .info(&hardware, &devices);
 
-        assert_eq!(info.get("poll_interval"), Some(&"none".into()));
-    }
-
-    #[test]
-    fn the_poll_interval_is_given_when_a_gpu_is_polled() {
-        let mut hardware = found(vec![DeviceSupport::Power | DeviceSupport::Vram]);
-        hardware
-            .expect_get_name()
-            .returning(|_| Ok("Some GPU".to_owned()));
-        let devices = hardware.init_devices(None).unwrap();
-
-        let info = AmdSmi::new()
-            .poll(Duration::from_millis(10))
-            .info(&hardware, &devices);
-
-        assert_eq!(info.get("poll_interval"), Some(&"10ms".into()));
+            assert_eq!(info.get("poll_interval"), Some(&poll_interval.into()));
+        }
     }
 }

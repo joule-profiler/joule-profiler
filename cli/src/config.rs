@@ -69,7 +69,7 @@ impl ConfigTable {
             Command::ListSensors | Command::Info => (None, false),
         };
 
-        let sources = get_configured_sources(cli, &config_file)?;
+        let sources = configured_sources(cli, &config_file)?;
 
         let cgroup = config_file.cgroup.or_else(|| {
             needs_run_cgroup(&sources, &config_file.sources).then(CgroupConfig::default)
@@ -95,12 +95,12 @@ impl ConfigTable {
         })
     }
 
-    pub fn get_source_table(&self, name: SourceName) -> Option<&Value> {
+    pub fn source_table(&self, name: SourceName) -> Option<&Value> {
         self.tables.get(name.key())
     }
 }
 
-/// The configuration file, with the `--define` overrides then the flags applied.
+/// Reads the configuration file, then applies the `--define` overrides and the flags.
 fn read_file_and_override(cli: &Cli) -> Result<ConfigFile> {
     let mut document = match &cli.config_file {
         Some(path) => {
@@ -133,7 +133,7 @@ fn set_assignment(document: &mut Table, assignment: &str) -> Result<()> {
 
     while let Some(key) = keys.next() {
         if keys.peek().is_none() {
-            table.insert(key.to_owned(), set_toml_value(raw));
+            table.insert(key.to_owned(), parse_toml_value(raw));
             return Ok(());
         }
 
@@ -147,7 +147,7 @@ fn set_assignment(document: &mut Table, assignment: &str) -> Result<()> {
     bail!("expected a key to the left of `=`")
 }
 
-/// `--output-format` and `--output-file` over the `[exporter]` table.
+/// Applies `--output-format` and `--output-file` over the `[exporter]` table.
 fn set_exporter_flags(document: &mut Table, cli: &Cli) -> Result<()> {
     if cli.output_format.is_none() && cli.output_file.is_none() {
         return Ok(());
@@ -187,16 +187,16 @@ fn set_exporter_flags(document: &mut Table, cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// The value as TOML, or as a string if it is not valid TOML.
-fn set_toml_value(raw: &str) -> Value {
+/// Parses the value as TOML, or as a string if it is not valid TOML.
+fn parse_toml_value(raw: &str) -> Value {
     toml::from_str::<Table>(&format!("value = {raw}"))
         .ok()
         .and_then(|mut table| table.remove("value"))
         .unwrap_or_else(|| Value::String(raw.to_owned()))
 }
 
-/// The sources named by `--sources`, then those with a table in the file.
-fn get_configured_sources(cli: &Cli, file: &ConfigFile) -> Result<Vec<SourceName>> {
+/// Returns the sources named by `--sources`, then those with a table in the file.
+fn configured_sources(cli: &Cli, file: &ConfigFile) -> Result<Vec<SourceName>> {
     let mut sources = cli.sources.clone();
 
     for key in file.sources.keys() {

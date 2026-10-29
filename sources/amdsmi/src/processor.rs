@@ -1,18 +1,23 @@
 use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
 
 use crate::error::Result;
 use crate::hardware::AmdSmiHardware;
 use crate::sensor::{AmdSmiSensor, DeviceSample, DeviceSupport, Devices, Snapshot};
 
-pub struct AmdSmiProcessor {
+/// Computes the metrics of each phase from two snapshots of the sensor.
+pub(crate) struct AmdSmiProcessor {
     devices: Devices,
+    memory_unit: MemoryUnit,
 }
 
 impl AmdSmiProcessor {
-    pub(crate) fn new(devices: Devices) -> Self {
-        Self { devices }
+    pub(crate) fn new(devices: Devices, memory_unit: MemoryUnit) -> Self {
+        Self {
+            devices,
+            memory_unit,
+        }
     }
 }
 
@@ -31,21 +36,18 @@ impl<H: AmdSmiHardware> Processor<AmdSmiSensor<H>> for AmdSmiProcessor {
             }
 
             if device.support.contains(DeviceSupport::Vram) {
-                for end in ["min", "max", "avg"] {
-                    metrics.push(MetricInfo::new(
+                metrics.extend(["min", "max", "avg"].map(|end| {
+                    MetricInfo::new(
                         format!("GPU-{uuid}-vram_{end}"),
-                        MetricUnit::BYTE,
-                    ));
-                }
+                        MetricUnit::from(self.memory_unit),
+                    )
+                }));
             }
 
             if device.support.contains(DeviceSupport::Utilization) {
-                for end in ["min", "max", "avg"] {
-                    metrics.push(MetricInfo::new(
-                        format!("GPU-{uuid}-utilization_{end}"),
-                        MetricUnit::PERCENT,
-                    ));
-                }
+                metrics.extend(["min", "max", "avg"].map(|end| {
+                    MetricInfo::new(format!("GPU-{uuid}-utilization_{end}"), MetricUnit::PERCENT)
+                }));
             }
         }
 
@@ -58,8 +60,6 @@ impl<H: AmdSmiHardware> Processor<AmdSmiSensor<H>> for AmdSmiProcessor {
         current: &Snapshot,
         values: &mut Vec<MetricValue>,
     ) -> Result<()> {
-        let mut next = |value: u64| values.push(MetricValue::U64(value));
-
         let samples = self
             .devices
             .iter()
@@ -68,23 +68,17 @@ impl<H: AmdSmiHardware> Processor<AmdSmiSensor<H>> for AmdSmiProcessor {
 
         for ((device, current), previous) in samples {
             if device.support.intersects(DeviceSupport::ENERGY) {
-                next(energy(previous, current));
+                values.push(MetricValue::U64(energy(previous, current)));
             }
 
             if device.support.contains(DeviceSupport::Vram) {
-                let (low, high, mean) = current.vram.min_max_mean();
-
-                next(low);
-                next(high);
-                next(mean);
+                let (min, max, mean) = current.vram.min_max_mean();
+                values.extend([min, max, mean].map(|bytes| self.memory_unit.value(bytes)));
             }
 
             if device.support.contains(DeviceSupport::Utilization) {
-                let (low, high, mean) = current.utilization.min_max_mean();
-
-                next(low);
-                next(high);
-                next(mean);
+                let (min, max, mean) = current.utilization.min_max_mean();
+                values.extend([min, max, mean].map(MetricValue::U64));
             }
         }
 
@@ -92,11 +86,34 @@ impl<H: AmdSmiHardware> Processor<AmdSmiSensor<H>> for AmdSmiProcessor {
     }
 }
 
-/// The energy of the phase in microjoules, from the GPU counter or else from the integrated power.
+/// Returns the energy of the phase in microjoules, from the energy counter or else from the
+/// integrated power.
 fn energy(previous: &DeviceSample, current: &DeviceSample) -> u64 {
     if let Some((current, previous)) = current.energy_uj.zip(previous.energy_uj) {
         return current.saturating_sub(previous);
     }
 
     current.drawn_nj / 1_000
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(energy_uj: Option<u64>, drawn_nj: u64) -> DeviceSample {
+        DeviceSample {
+            energy_uj,
+            drawn_nj,
+            ..DeviceSample::default()
+        }
+    }
+
+    #[test]
+    fn the_energy_comes_from_the_counter_or_else_from_the_integrated_power() {
+        assert_eq!(
+            energy(&sample(Some(1_000), 0), &sample(Some(1_250), 0)),
+            250
+        );
+        assert_eq!(energy(&sample(None, 0), &sample(None, 3_000)), 3);
+    }
 }

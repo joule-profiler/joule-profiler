@@ -30,14 +30,14 @@ pub fn add(
     cgroup: Option<&Path>,
 ) -> Result<()> {
     for name in config_table.sources.iter().copied() {
-        let mut table = config_table.get_source_table(name).cloned();
-        let ignore = take_ignore(&mut table);
+        let mut table = config_table.source_table(name).cloned();
+        let ignore = take_ignore_on_failure(&mut table);
 
         #[cfg(feature = "cgroup")]
         if name == SourceName::Cgroup
             && let Some(cgroup) = cgroup
         {
-            name_unless_named(&mut table, cgroup);
+            set_default_cgroup_name(&mut table, cgroup);
         }
 
         #[cfg(feature = "perf_event")]
@@ -49,7 +49,7 @@ pub fn add(
                 .and_then(Value::as_str)
                 == Some("cgroup")
         {
-            name_unless_named(&mut table, cgroup);
+            set_default_cgroup_name(&mut table, cgroup);
         }
 
         log::debug!("building source {name}");
@@ -83,7 +83,7 @@ fn build(profiler: &mut JouleProfiler, name: SourceName, table: Option<&Value>) 
 }
 
 #[cfg(any(feature = "cgroup", feature = "perf_event"))]
-fn name_unless_named(table: &mut Option<Value>, cgroup: &Path) {
+fn set_default_cgroup_name(table: &mut Option<Value>, cgroup: &Path) {
     if let Some(table) = table
         .get_or_insert_with(|| Value::Table(toml::Table::new()))
         .as_table_mut()
@@ -95,7 +95,7 @@ fn name_unless_named(table: &mut Option<Value>, cgroup: &Path) {
 }
 
 /// Removes `ignore_on_failure` from the table and returns it.
-fn take_ignore(table: &mut Option<Value>) -> bool {
+fn take_ignore_on_failure(table: &mut Option<Value>) -> bool {
     table
         .as_mut()
         .and_then(Value::as_table_mut)

@@ -16,7 +16,6 @@ pub(crate) mod pid;
 #[cfg_attr(test, mockall::automock)]
 #[allow(clippy::used_underscore_binding)]
 pub(crate) trait PerfScope: Send + 'static {
-    /// Returns the info of the scope.
     fn info(&self) -> Info;
 
     /// Opens a counter for every event, before the target is known. Used by the `cgroup` scope.
@@ -37,7 +36,7 @@ pub(crate) trait PerfScope: Send + 'static {
     }
 }
 
-/// Returns a builder for the provided event with the options common to all scopes.
+/// Returns a builder with the options common to all scopes.
 fn counter_builder<'a>(event: Event) -> Builder<'a> {
     let mut builder = event.builder();
     builder

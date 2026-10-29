@@ -17,9 +17,9 @@ When a device supports direct energy accumulation registers, the source reads th
 | Metric | Unit | Description |
 |---|---|---|
 | `GPU-{uuid}-energy` | µJ | Energy consumed between two measurements |
-| `GPU-{uuid}-vram_min` | Bytes | Minimum VRAM usage observed during the interval |
-| `GPU-{uuid}-vram_max` | Bytes | Maximum VRAM usage observed during the interval |
-| `GPU-{uuid}-vram_avg` | Bytes | Average VRAM usage observed during the interval |
+| `GPU-{uuid}-vram_min` | `memory_unit` | Minimum VRAM usage observed during the interval |
+| `GPU-{uuid}-vram_max` | `memory_unit` | Maximum VRAM usage observed during the interval |
+| `GPU-{uuid}-vram_avg` | `memory_unit` | Average VRAM usage observed during the interval |
 | `GPU-{uuid}-utilization_min` | % | Minimum GPU utilization observed during the interval |
 | `GPU-{uuid}-utilization_max` | % | Maximum GPU utilization observed during the interval |
 | `GPU-{uuid}-utilization_avg` | % | Average GPU utilization observed during the interval |
@@ -33,6 +33,7 @@ When a device supports direct energy accumulation registers, the source reads th
 gpus = ["GPU-00000000-0000-0000-0000-000000000000"] # device UUIDs, omit for every GPU
 minimal = true         # the default, energy only, without VRAM and utilization
 poll_interval = "20ms" # the default
+memory_unit = "byte"   # the default, byte | kilobyte | megabyte | gigabyte, decimal multiples
 ```
 
 ## Requirements

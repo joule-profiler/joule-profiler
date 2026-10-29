@@ -59,7 +59,7 @@ impl EnergyCounter {
         }
     }
 
-    /// Adds the energy since the last reading to the total, wraps it if an overflow occured.
+    /// Adds the energy since the last reading to the total, across a wrap of the counter.
     fn update(&mut self, reading: u64) {
         let energy = if reading >= self.last_reading {
             reading - self.last_reading
@@ -78,7 +78,7 @@ pub(crate) struct PowercapBackend {
     zones: Arc<[PowercapZone]>,
     poll_interval: Duration,
     counters: Arc<Mutex<Vec<EnergyCounter>>>,
-    poller: Option<Poller>,
+    poller: Option<Poller<RaplError>>,
 }
 
 impl PowercapBackend {
@@ -130,7 +130,9 @@ impl RaplBackend for PowercapBackend {
     }
 
     fn close(&mut self) -> Result<()> {
-        self.poller = None;
+        if let Some(poller) = self.poller.take() {
+            poller.stop()?;
+        }
         Ok(())
     }
 }
@@ -214,7 +216,6 @@ fn domain_type(name: &str) -> Option<RaplDomainType> {
     }
 }
 
-/// Reads the domain name of the zone.
 fn read_domain_name(zone_dir: &Path) -> Option<String> {
     let name = fs::read_to_string(zone_dir.join("name")).ok()?;
     Some(name.trim().to_owned())

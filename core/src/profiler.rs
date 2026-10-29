@@ -41,12 +41,12 @@ impl JouleProfiler {
         self.exporter = Some(Box::new(exporter));
     }
 
-    /// Processes and exports the phases only once the run is over.
+    /// Sets whether the phases are processed and exported only once the run is over.
     pub fn set_defer(&mut self, defer: bool) {
         self.defer = defer;
     }
 
-    /// Moves the profiled program into `cgroup` once it is started.
+    /// Sets the cgroup the profiled program is moved into once it is started.
     pub fn set_cgroup(&mut self, cgroup: RunCgroup) {
         self.cgroup = Some(cgroup);
     }
@@ -64,7 +64,7 @@ impl JouleProfiler {
         }
     }
 
-    /// The info of the machine, then of each source, by name.
+    /// Returns the info of the machine, then of each source, by name.
     pub fn info(&self) -> Vec<(String, Info)> {
         std::iter::once(("machine".to_owned(), info::machine()))
             .chain(
@@ -93,12 +93,17 @@ impl JouleProfiler {
                 run_target(sources, injector, exporter, cgroup, &schema, self.defer)
             });
 
-        sources
+        let closed = sources
             .iter_mut()
             .map(Source::close)
-            .fold(Ok(()), Result::and)?;
+            .fold(Ok(()), Result::and);
+
+        if let (Err(_), Err(error)) = (&summary, &closed) {
+            log::warn!("closing the sources failed: {}", ErrorChain(error));
+        }
 
         let summary = summary?;
+        closed?;
         exporter.finish(&summary)?;
 
         Ok(summary)

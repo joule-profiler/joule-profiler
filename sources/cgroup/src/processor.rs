@@ -73,17 +73,17 @@ fn write(
     }
 
     for (_, index) in available_values.cpu_counters() {
-        values.push(compute_delta(previous.cpu[index], current.cpu[index]));
+        values.push(counter_delta(previous.cpu[index], current.cpu[index]));
     }
 
     for (_, index) in available_values.io_counters() {
-        values.push(compute_delta(previous.io[index], current.io[index]));
+        values.push(counter_delta(previous.io[index], current.io[index]));
     }
 
     values.push(cpu_usage(previous, current, elapsed));
 }
 
-fn compute_delta(previous: Option<u64>, current: Option<u64>) -> MetricValue {
+fn counter_delta(previous: Option<u64>, current: Option<u64>) -> MetricValue {
     MetricValue::U64(current.unwrap_or(0).saturating_sub(previous.unwrap_or(0)))
 }
 

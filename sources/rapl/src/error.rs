@@ -1,6 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 
+use joule_profiler_core::util::poller::PollerPanicked;
 use thiserror::Error;
 
 pub(crate) type Result<T> = std::result::Result<T, RaplError>;
@@ -38,4 +39,7 @@ pub enum RaplError {
 
     #[error("reading the {0} counter")]
     ReadCounter(String, #[source] io::Error),
+
+    #[error(transparent)]
+    Poller(#[from] PollerPanicked),
 }

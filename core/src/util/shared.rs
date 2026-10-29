@@ -1,17 +1,16 @@
-//! A value written by a polling thread and consumed by a sensor through a lock-free triple
-//! buffer. Each `consume` resets the value for the producer.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use triple_buffer::{Input, Output, triple_buffer};
 
+/// A value, with the phase it was written in.
 #[derive(Clone)]
 struct Published<T> {
     phase: u64,
     value: T,
 }
 
+/// Creates a value shared between a producer and a consumer, starting from its default.
 pub fn shared<T: Default + Clone + Send>() -> (Producer<T>, Consumer<T>) {
     let (input, output) = triple_buffer(&Published {
         phase: 0,
@@ -34,15 +33,21 @@ pub fn shared<T: Default + Clone + Send>() -> (Producer<T>, Consumer<T>) {
     )
 }
 
+/// The writing side of a [`shared`] value, owned by the polling thread.
 pub struct Producer<T: Send> {
     input: Input<Published<T>>,
+
+    /// The current phase, started by the consumer.
     phase: Arc<AtomicU64>,
+
+    /// The phase `value` belongs to.
     open: u64,
+
     value: T,
 }
 
 impl<T: Default + Clone + Send> Producer<T> {
-    /// Updates the value and publishes it.
+    /// Updates the value of the current phase and publishes it.
     pub fn write(&mut self, f: impl FnOnce(&mut T)) {
         let phase = self.phase.load(Ordering::Acquire);
         if phase != self.open {
@@ -58,15 +63,20 @@ impl<T: Default + Clone + Send> Producer<T> {
     }
 }
 
+/// The reading side of a [`shared`] value, owned by the sensor.
 pub struct Consumer<T: Send> {
     output: Output<Published<T>>,
+
+    /// The current phase, shared with the producer.
     phase: Arc<AtomicU64>,
+
+    /// The current phase.
     open: u64,
 }
 
 impl<T: Default + Clone + Send> Consumer<T> {
-    /// Takes what was written since the last call. A write racing with this call is dropped,
-    /// never counted twice.
+    /// Returns the value written since the previous call, and starts a new phase. A write
+    /// racing with this call is dropped, never counted twice.
     pub fn consume(&mut self) -> T {
         let published = self.output.read();
         let value = if published.phase == self.open {

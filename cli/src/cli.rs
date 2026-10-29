@@ -103,7 +103,7 @@ pub enum SourceName {
 }
 
 impl SourceName {
-    /// The name of its `[sources.<key>]` table.
+    /// Returns the name of its `[sources.<key>]` table.
     pub fn key(self) -> &'static str {
         match self {
             #[cfg(feature = "perf_event")]

@@ -75,7 +75,7 @@ impl Rapl {
         Self::default()
     }
 
-    /// Sets the backend to use to read RAPL counters. Either `perf_event` or `Powercap`.
+    /// Sets the backend that reads the counters.
     pub fn backend(mut self, backend: impl Into<BackendType>) -> Self {
         self.backend = backend.into();
         self
@@ -87,8 +87,8 @@ impl Rapl {
         self
     }
 
-    /// Sets the sockets to measure. Defaults to every socket. PSYS, which has no socket, is
-    /// always measured if in the domains list and supported.
+    /// Sets the sockets to measure. Defaults to every socket. PSYS, which has no socket, is not
+    /// affected.
     pub fn sockets(mut self, sockets: impl IntoIterator<Item = u32>) -> Self {
         self.sockets = Some(sockets.into_iter().collect());
         self
@@ -133,7 +133,6 @@ impl Rapl {
     }
 }
 
-/// Builds the source that with the provided configuration.
 fn build_source<B: RaplBackend>(
     backend: B,
     joules_per_count: Vec<f64>,

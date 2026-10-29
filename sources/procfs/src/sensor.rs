@@ -10,7 +10,7 @@ use joule_profiler_core::util::shared::{Consumer, shared};
 use joule_profiler_core::util::stats::MinMaxMean;
 
 use crate::error::{ProcfsError, Result};
-use crate::hierarchy::get_process_descendants;
+use crate::hierarchy::process_descendants;
 use crate::poller::{poll_hierarchy, poll_machine_memory, poll_process_memory};
 
 /// The metrics related to the memory of the process tree.
@@ -75,7 +75,7 @@ pub struct ProcfsSensor {
 
     process_memory: Option<Consumer<[MinMaxMean; PROCESS_METRICS.len()]>>,
     machine_memory: Option<Consumer<[MinMaxMean; GLOBAL_MEMORY_METRICS.len()]>>,
-    pollers: Vec<Poller>,
+    pollers: Vec<Poller<ProcfsError>>,
 }
 
 impl ProcfsSensor {
@@ -112,7 +112,7 @@ impl Sensor for ProcfsSensor {
     fn attach(&mut self, target: Target) -> Result<()> {
         let root_pid = target.pid;
         self.root_pid = root_pid;
-        self.pids.store(Arc::new(get_process_descendants(root_pid)));
+        self.pids.store(Arc::new(process_descendants(root_pid)));
 
         let (mut process_writer, process_reader) = shared();
         self.process_memory = Some(process_reader);
@@ -120,14 +120,14 @@ impl Sensor for ProcfsSensor {
         self.pollers
             .push(Poller::start(self.process_poll_interval, move || {
                 poll_process_memory(&pids, &mut process_writer);
-                Ok::<(), ProcfsError>(())
+                Ok(())
             }));
 
         let pids = Arc::clone(&self.pids);
         self.pollers
             .push(Poller::start(self.hierarchy_poll_interval, move || {
                 poll_hierarchy(root_pid, &pids);
-                Ok::<(), ProcfsError>(())
+                Ok(())
             }));
 
         if self.global {
@@ -173,7 +173,9 @@ impl Sensor for ProcfsSensor {
     }
 
     fn close(&mut self) -> Result<()> {
-        self.pollers.clear();
+        for poller in self.pollers.drain(..) {
+            poller.stop()?;
+        }
         Ok(())
     }
 }
@@ -257,7 +259,7 @@ fn read_proc_file(pid: i32, file: &str) -> Option<String> {
     fs::read_to_string(format!("/proc/{pid}/{file}")).ok()
 }
 
-/// The bytes a process read and wrote, from `/proc/<pid>/io`.
+/// Returns the bytes a process read and wrote, from `/proc/<pid>/io`.
 fn read_io(text: &str) -> [u64; IO_METRICS.len()] {
     let mut io = [0u64; IO_METRICS.len()];
 

@@ -42,6 +42,7 @@ impl Cgroup {
         self.path.is_dir()
     }
 
+    /// Returns whether it is a cgroup v2.
     pub fn is_cgroup(&self) -> bool {
         self.path.join(CONTROLLERS).is_file()
     }
@@ -65,6 +66,7 @@ impl Cgroup {
             .collect())
     }
 
+    /// Moves every process in it to `other`. A failure is logged.
     pub fn move_processes_to(&self, other: &Self) {
         let processes = match self.processes() {
             Ok(processes) => processes,
@@ -88,7 +90,7 @@ impl Cgroup {
         Ok(split_words(&self.path.join(CONTROLLERS))?.unwrap_or_default())
     }
 
-    /// The controllers enabled for its children.
+    /// Returns the controllers enabled for its children.
     pub fn handed_down(&self) -> io::Result<Vec<String>> {
         Ok(split_words(&self.path.join(SUBTREE))?.unwrap_or_default())
     }
@@ -113,14 +115,16 @@ impl Cgroup {
         fs::write(self.path.join(FREEZE), if frozen { "1" } else { "0" })
     }
 
-    /// A file holding a single number, such as `memory.current`. `None` if it does not exist.
+    /// Reads a file holding a single number, such as `memory.current`. Returns `None` if it
+    /// does not exist.
     pub fn read_u64(&self, file: &str) -> io::Result<Option<u64>> {
         Ok(self
             .read(file)?
             .and_then(|content| content.trim().parse().ok()))
     }
 
-    /// A `key value` file, such as `cpu.stat`. Empty if it does not exist.
+    /// Reads a file of `key value` lines, such as `cpu.stat`. Returns an empty map if it does
+    /// not exist.
     pub fn read_keyed(&self, file: &str) -> io::Result<HashMap<String, u64>> {
         let Some(content) = self.read(file)? else {
             return Ok(HashMap::new());
@@ -135,7 +139,8 @@ impl Cgroup {
             .collect())
     }
 
-    /// A missing file is `None`: that is how a disabled controller looks.
+    /// Reads one of its files. Returns `None` if it does not exist, as for a disabled
+    /// controller.
     pub fn read(&self, file: &str) -> io::Result<Option<String>> {
         match fs::read_to_string(self.path.join(file)) {
             Ok(content) => Ok(Some(content)),
@@ -219,30 +224,33 @@ impl CgroupConfig {
         Self::default()
     }
 
+    /// Sets the cgroup the run cgroup is created in. Defaults to `/sys/fs/cgroup`.
     pub fn parent(mut self, parent: impl Into<PathBuf>) -> Self {
         self.parent = parent.into();
         self
     }
 
+    /// Sets the name of the run cgroup. Defaults to `joule-profiler-<pid>`.
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
     }
 
-    /// Controllers that must be enabled..
+    /// Sets the controllers that must be enabled: one that cannot be fails the creation.
+    /// Defaults to `cpu`, `memory` and `io`, each left out with a warning if it cannot be.
     pub fn controllers(mut self, controllers: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.controllers = Some(controllers.into_iter().map(Into::into).collect());
         self
     }
 
-    /// Whether the profiled program is moved into the cgroup.
+    /// Sets whether the profiled program is moved into the cgroup. Defaults to `true`.
     pub fn attach(mut self, attach: bool) -> Self {
         self.attach = attach;
         self
     }
 
-    /// Whether it is frozen before the program is started, and thawed once every source is
-    /// ready.
+    /// Sets whether the cgroup is frozen before the program starts, and thawed once every
+    /// source is ready. Defaults to `false`.
     pub fn freeze(mut self, freeze: bool) -> Self {
         self.freeze = freeze;
         self
@@ -254,6 +262,12 @@ impl CgroupConfig {
 
     /// Enables the controllers on the parent, then creates the cgroup. An existing one is used
     /// as is and kept afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CgroupError::NotACgroup`] if the parent is not a cgroup v2,
+    /// [`CgroupError::Unavailable`] or [`CgroupError::HandDown`] if a required controller cannot
+    /// be enabled, and [`CgroupError::Create`] if the cgroup cannot be created.
     pub fn create(self) -> Result<RunCgroup, CgroupError> {
         let parent = Cgroup::at(&self.parent);
         if !parent.is_cgroup() {
@@ -370,6 +384,7 @@ impl RunCgroup {
             })
     }
 
+    /// Enables `controller` on the parent, if it is among the `available` ones.
     fn enable_controller(&self, controller: &str, available: &[String]) -> Result<(), CgroupError> {
         if !available.iter().any(|name| name == controller) {
             return Err(CgroupError::Unavailable {
@@ -415,6 +430,7 @@ impl Drop for RunCgroup {
     }
 }
 
+/// Reads the words of a file. Returns `None` if it does not exist.
 fn split_words(path: &Path) -> io::Result<Option<Vec<String>>> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(Some(

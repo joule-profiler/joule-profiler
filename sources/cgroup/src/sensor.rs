@@ -50,7 +50,7 @@ pub(crate) struct CgroupSensor {
     global_poll_interval: Duration,
 
     memory_reader: Option<Consumer<PolledMemory>>,
-    poller: Option<Poller>,
+    poller: Option<Poller<CgroupError>>,
 }
 
 impl CgroupSensor {
@@ -152,7 +152,9 @@ impl Sensor for CgroupSensor {
     }
 
     fn close(&mut self) -> Result<()> {
-        self.poller = None;
+        if let Some(poller) = self.poller.take() {
+            poller.stop()?;
+        }
         Ok(())
     }
 }
@@ -171,12 +173,12 @@ struct MemoryPoller {
 impl MemoryPoller {
     /// Reads the memory that is due, adds it to the stats of the phase, and returns how long to
     /// wait for the next poll.
-    fn poll(&mut self) -> Duration {
+    fn poll(&mut self) -> Result<Duration> {
         let now = Instant::now();
 
         let proc_memory = if now >= self.next_process_poll {
             self.next_process_poll = now + self.process_poll_interval;
-            self.proc.read_memory_usage().ok()
+            Some(self.proc.read_memory_usage()?)
         } else {
             None
         };
@@ -184,7 +186,7 @@ impl MemoryPoller {
         let global_memory = match &self.global {
             Some(global) if now >= self.next_global_poll => {
                 self.next_global_poll = now + self.global_poll_interval;
-                global.read_memory_usage().ok()
+                Some(global.read_memory_usage()?)
             }
             _ => None,
         };
@@ -200,7 +202,7 @@ impl MemoryPoller {
             });
         }
 
-        self.next_poll().saturating_duration_since(Instant::now())
+        Ok(self.next_poll().saturating_duration_since(Instant::now()))
     }
 
     /// Returns the nearest deadline among the polls.
@@ -271,7 +273,7 @@ mod tests {
             memory_writer,
         };
 
-        let wait = memory_poller.poll();
+        let wait = memory_poller.poll().unwrap();
 
         assert!(
             wait > Duration::from_millis(900) && wait <= Duration::from_secs(1),

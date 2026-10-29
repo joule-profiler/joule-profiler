@@ -1,18 +1,23 @@
 use joule_profiler_core::metric::{MetricInfo, MetricValue};
 use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
 
 use crate::error::Result;
 use crate::hardware::NvmlHardware;
 use crate::sensor::{DeviceSample, DeviceSupport, Devices, NvmlSensor, Snapshot};
 
-pub struct NvmlProcessor {
+/// Computes the metrics of each phase from two snapshots of the sensor.
+pub(crate) struct NvmlProcessor {
     devices: Devices,
+    memory_unit: MemoryUnit,
 }
 
 impl NvmlProcessor {
-    pub(crate) fn new(devices: Devices) -> Self {
-        Self { devices }
+    pub(crate) fn new(devices: Devices, memory_unit: MemoryUnit) -> Self {
+        Self {
+            devices,
+            memory_unit,
+        }
     }
 }
 
@@ -31,21 +36,21 @@ impl<H: NvmlHardware> Processor<NvmlSensor<H>> for NvmlProcessor {
             }
 
             if device.support.contains(DeviceSupport::Vram) {
-                for end in ["min", "max", "avg"] {
-                    metrics.push(MetricInfo::new(
+                metrics.extend(["min", "max", "avg"].map(|end| {
+                    MetricInfo::new(
                         format!("GPU-{index}-vram_{end}"),
-                        MetricUnit::BYTE,
-                    ));
-                }
+                        MetricUnit::from(self.memory_unit),
+                    )
+                }));
             }
 
             if device.support.contains(DeviceSupport::Utilization) {
-                for end in ["min", "max", "avg"] {
-                    metrics.push(MetricInfo::new(
+                metrics.extend(["min", "max", "avg"].map(|end| {
+                    MetricInfo::new(
                         format!("GPU-{index}-utilization_{end}"),
                         MetricUnit::PERCENT,
-                    ));
-                }
+                    )
+                }));
             }
         }
 
@@ -58,8 +63,6 @@ impl<H: NvmlHardware> Processor<NvmlSensor<H>> for NvmlProcessor {
         current: &Snapshot,
         values: &mut Vec<MetricValue>,
     ) -> Result<()> {
-        let mut push = |value: u64| values.push(MetricValue::U64(value));
-
         let samples = self
             .devices
             .iter()
@@ -68,23 +71,17 @@ impl<H: NvmlHardware> Processor<NvmlSensor<H>> for NvmlProcessor {
 
         for ((device, current), previous) in samples {
             if device.support.intersects(DeviceSupport::ENERGY) {
-                push(energy(previous, current));
+                values.push(MetricValue::U64(energy(previous, current)));
             }
 
             if device.support.contains(DeviceSupport::Vram) {
-                let (low, high, mean) = current.vram.min_max_mean();
-
-                push(low);
-                push(high);
-                push(mean);
+                let (min, max, mean) = current.vram.min_max_mean();
+                values.extend([min, max, mean].map(|bytes| self.memory_unit.value(bytes)));
             }
 
             if device.support.contains(DeviceSupport::Utilization) {
-                let (low, high, mean) = current.utilization.min_max_mean();
-
-                push(low);
-                push(high);
-                push(mean);
+                let (min, max, mean) = current.utilization.min_max_mean();
+                values.extend([min, max, mean].map(MetricValue::U64));
             }
         }
 
@@ -92,11 +89,34 @@ impl<H: NvmlHardware> Processor<NvmlSensor<H>> for NvmlProcessor {
     }
 }
 
-/// The energy of the phase in millijoules, from the GPU counter or else from the integrated power.
+/// Returns the energy of the phase in millijoules, from the energy counter or else from the
+/// integrated power.
 fn energy(previous: &DeviceSample, current: &DeviceSample) -> u64 {
     if let Some((current, previous)) = current.energy_mj.zip(previous.energy_mj) {
         return current.saturating_sub(previous);
     }
 
     current.drawn_nj / 1_000_000
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(energy_mj: Option<u64>, drawn_nj: u64) -> DeviceSample {
+        DeviceSample {
+            energy_mj,
+            drawn_nj,
+            ..DeviceSample::default()
+        }
+    }
+
+    #[test]
+    fn the_energy_comes_from_the_counter_or_else_from_the_integrated_power() {
+        assert_eq!(
+            energy(&sample(Some(1_000), 0), &sample(Some(1_250), 0)),
+            250
+        );
+        assert_eq!(energy(&sample(None, 0), &sample(None, 3_000_000)), 3);
+    }
 }

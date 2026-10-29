@@ -11,7 +11,6 @@ pub(crate) struct RawCount {
 }
 
 impl RawCount {
-    /// Creates a snapshot.
     pub(crate) fn new(value: u64, enabled: Option<Duration>, running: Option<Duration>) -> Self {
         let nanos = |time: Option<Duration>| {
             time.map_or(0, |time| u64::try_from(time.as_nanos()).unwrap_or(u64::MAX))

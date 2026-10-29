@@ -112,7 +112,7 @@ impl<T: Into<InfoValue>, E: Display> From<Result<T, E>> for InfoValue {
     }
 }
 
-/// The CPU model and the CPUs of each socket.
+/// Returns the CPU model and the CPUs of each socket.
 pub(crate) fn machine() -> Info {
     let sockets = sys::socket_topology().map(|sockets| {
         InfoValue::list(

@@ -120,7 +120,6 @@ impl Event {
         }
     }
 
-    /// Returns a builder for a counter of this event.
     pub(crate) fn builder(self) -> Builder<'static> {
         macro_rules! event_builder {
             ($event:expr) => {

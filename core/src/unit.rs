@@ -87,7 +87,7 @@ impl Unit {
         }
     }
 
-    /// Counts and percentages are never scaled by a prefix.
+    /// Returns whether the unit takes a prefix, which counts and percentages never do.
     const fn takes_prefix(self) -> bool {
         !matches!(self, Self::Count | Self::Percent)
     }

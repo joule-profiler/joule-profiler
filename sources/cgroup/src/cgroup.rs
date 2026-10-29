@@ -98,7 +98,7 @@ impl Usage for Cgroup {
     }
 }
 
-/// The controllers of the cgroup, or those of its parent if it does not exist yet.
+/// Returns the controllers of the cgroup, or those of its parent if it does not exist yet.
 pub(crate) fn controllers(cgroup: &Cgroup) -> Result<Vec<String>> {
     match cgroup.path().parent() {
         Some(parent) if !cgroup.exists() => {

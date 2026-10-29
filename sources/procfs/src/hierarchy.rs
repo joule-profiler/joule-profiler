@@ -2,13 +2,13 @@ use std::collections::{HashSet, VecDeque};
 
 use procfs::process::Process;
 
-/// The process and its descendants, without threads.
-pub fn get_process_descendants(root: i32) -> Vec<i32> {
+/// Returns the process and its descendants, without threads.
+pub fn process_descendants(root: i32) -> Vec<i32> {
     let mut found = HashSet::from([root]);
     let mut queue = VecDeque::from([root]);
 
     while let Some(pid) = queue.pop_front() {
-        for child in get_process_children(pid) {
+        for child in process_children(pid) {
             if found.insert(child) {
                 queue.push_back(child);
             }
@@ -21,8 +21,8 @@ pub fn get_process_descendants(root: i32) -> Vec<i32> {
     found
 }
 
-/// The children of a process, from the `children` file of each of its threads.
-fn get_process_children(pid: i32) -> Vec<i32> {
+/// Returns the children of a process.
+fn process_children(pid: i32) -> Vec<i32> {
     let Ok(process) = Process::new(pid) else {
         return Vec::new();
     };
