@@ -11,7 +11,7 @@ The implementation relies on the `/proc` filesystem to read runtime information 
 Three polling threads run during the profile, each at its own interval:
 * one reads the memory of the process tree every `process_poll_interval`;
 * one lists the process tree again from the profiled program PID every `hierarchy_poll_interval`, since that is the costly part;
-* one reads the memory of the machine every `poll_interval`, only when `global` is set.
+* one reads the memory of the machine every `global_poll_interval`, only when `global` is set.
 
 At each phase boundary, the I/O and CPU time of the process tree are read directly, and the memory is reported as the minimum, maximum and average of what was polled during the phase.
 
@@ -20,8 +20,8 @@ At each phase boundary, the I/O and CPU time of the process tree are read direct
 ```toml
 [sources.procfs]
 poll_interval = "10ms"           # the memory of the machine, when `global`
-process_poll_interval = "20ms"   # the memory of the process tree
-hierarchy_poll_interval = "1s"   # how often the process tree is listed again
+process_poll_interval = "100ms"   # the memory of the process tree
+hierarchy_poll_interval = "500ms"   # how often the process tree is listed again
 global = false                   # also reports the memory of the machine
 ```
 

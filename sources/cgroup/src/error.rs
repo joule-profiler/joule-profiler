@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, CgroupError>;
 #[derive(Debug, Error)]
 pub enum CgroupError {
     #[error(
-        "the cgroup {0} does not exist: make it beforehand, or let the profiler make one with a `[cgroup]` table"
+        "the cgroup {0} does not exist: create it, or configure Joule Profiler to create one using the `[cgroup]` config table"
     )]
     NotFound(PathBuf),
 

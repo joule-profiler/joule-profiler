@@ -42,6 +42,7 @@ fn add_to_stats<const N: usize>(stats: &mut [MinMaxMean; N], values: [u64; N]) {
     }
 }
 
+/// Sums all `processes` memory together and returns the totals.
 fn sum_process_memory(processes: &[i32]) -> [u64; PROCESS_METRICS.len()] {
     let mut total = [0u64; PROCESS_METRICS.len()];
 
@@ -56,6 +57,7 @@ fn sum_process_memory(processes: &[i32]) -> [u64; PROCESS_METRICS.len()] {
     total
 }
 
+/// Reads the provided process memory using `/proc/[pid]/stat` file.
 fn read_process_memory(pid: i32) -> Option<[u64; PROCESS_METRICS.len()]> {
     let process = Process::new(pid).ok()?;
 
@@ -81,6 +83,7 @@ fn read_process_memory(pid: i32) -> Option<[u64; PROCESS_METRICS.len()]> {
     Some(memory)
 }
 
+/// Reads the global memory from `/proc/meminfo`.
 fn read_global_memory(mem_total: u64) -> Result<[u64; GLOBAL_MEMORY_METRICS.len()]> {
     let meminfo = Meminfo::current()?;
 

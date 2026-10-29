@@ -1,6 +1,6 @@
 //! `procfs` source for Joule Profiler.
 //!
-//! Reads the memory, I/O and CPU time of the profiled program and of every process it starts,
+//! Reads the memory, I/O and CPU time of the profiled program and of every child processes,
 //! from the `/proc` files of Linux, and optionally the memory of the whole machine.
 //!
 //! # Example
@@ -40,8 +40,6 @@ const DEFAULT_PROCESS_POLL: Duration = Duration::from_millis(100);
 const DEFAULT_HIERARCHY_POLL: Duration = Duration::from_millis(500);
 
 /// Configuration of the procfs source.
-///
-/// Can be deserialized from a `[sources.procfs]` table.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Procfs {
@@ -73,7 +71,7 @@ impl Procfs {
         Self::default()
     }
 
-    /// Sets how often the memory of the machine is read, when `global` is set..
+    /// Sets how often the memory of the machine is read, when `global` is set.
     pub fn global_poll_interval(mut self, interval: Duration) -> Self {
         self.global_poll_interval = interval;
         self

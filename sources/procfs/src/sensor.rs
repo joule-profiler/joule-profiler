@@ -36,14 +36,14 @@ pub(crate) const IO_METRICS: [&str; 2] = ["proc_io_read_bytes", "proc_io_write_b
 /// The metrics related to the CPU time of the process tree, read in clock ticks.
 pub(crate) const CPU_METRICS: [&str; 2] = ["proc_cpu_user", "proc_cpu_system"];
 
-/// What the polling threads read since the last boundary.
+/// A memory snapshot containing process and global metrics.
 #[derive(Default, Clone)]
 pub(crate) struct MemorySnapshot {
     pub(crate) proc: [MinMaxMean; PROCESS_METRICS.len()],
     pub(crate) global: [MinMaxMean; GLOBAL_MEMORY_METRICS.len()],
 }
 
-/// What the sensor reads at a phase boundary.
+/// A memory, I/O and CPU snapshot.
 pub struct Snapshot {
     pub(crate) memory: MemorySnapshot,
     pub(crate) io: [u64; IO_METRICS.len()],

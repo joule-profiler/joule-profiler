@@ -62,8 +62,6 @@ use crate::processor::RaplProcessor;
 use crate::sensor::RaplSensor;
 
 /// Configuration of the RAPL source.
-///
-/// Can be deserialized from a `[sources.rapl]` table.
 #[derive(Debug, Clone, Default)]
 pub struct Rapl {
     backend: BackendType,

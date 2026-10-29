@@ -62,9 +62,7 @@ pub use config::{Cgroup, ScopeType};
 pub use error::{PerfEventError, Result};
 pub use event::Event;
 
-/// Configuration of the `perf_event` source.
-///
-/// Can be deserialized from a `[sources.perf_event]` table.
+/// Configuration of the `perf_event` source..
 #[derive(Debug, Clone)]
 pub struct PerfEvent {
     events: Option<BTreeSet<Event>>,

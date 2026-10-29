@@ -5,11 +5,10 @@ use joule_profiler_core::util::cgroup::Cgroup;
 use crate::cgroup::{COUNTERS, MEMORY, Usage};
 use crate::error::Result;
 
-/// The values the cgroup reports, which depend on its controllers.
+/// The metrics the cgroup reports.
 pub(crate) struct Layout {
     pub(crate) memory: [bool; MEMORY.len()],
     pub(crate) counters: [bool; COUNTERS.len()],
-
     pub(crate) global: bool,
 }
 
