@@ -22,15 +22,19 @@ pub const DEFAULT_PATTERN: &str = "__[A-Z0-9_]+__";
 #[serde(default, deny_unknown_fields)]
 pub struct StdoutInjectorConfig {
     /// The regular expression of the tokens the command prints.
+    #[serde(rename = "token-pattern")]
     pub token_pattern: String,
 
     /// Where the output of the command goes, instead of the terminal.
+    #[serde(rename = "stdout-file")]
     pub stdout_file: Option<PathBuf>,
 
     /// Whether the output of the command is discarded, even with `stdout_file`.
+    #[serde(rename = "no-stdout")]
     pub no_stdout: bool,
 
-    /// Under `sudo`, whether the command keeps root.
+    /// Under `sudo`, whether the command keeps root privileges.
+    #[serde(rename = "use-root")]
     pub use_root: bool,
 }
 
@@ -46,8 +50,8 @@ impl Default for StdoutInjectorConfig {
 }
 
 impl StdoutInjectorConfig {
-    /// Builds the injector that runs `command`.
     pub fn build(self, command: Vec<String>) -> Result<StdoutInjector, StdoutError> {
+        println!("{}", self.use_root);
         Ok(StdoutInjector::new(command, &self.token_pattern)?
             .use_root(self.use_root)
             .output_file(self.stdout_file)
@@ -240,6 +244,9 @@ impl Injector for StdoutInjector {
         let mut child = self.child.take().ok_or(StdoutError::NotStarted)?;
         let status = child.wait().map_err(StdoutError::Wait)?;
         self.output.flush().map_err(StdoutError::WriteOutput)?;
+        if let Some(output_file) = &self.output_file {
+            println!("Program's output written to: {}", output_file.display());
+        }
 
         Ok(status
             .code()

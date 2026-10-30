@@ -106,8 +106,6 @@ impl JouleProfiler {
     /// Every source is closed at the end, even if the run failed. With [`set_defer`], the phases
     /// are processed and exported only once the target has ended.
     ///
-    /// [`set_defer`]: Self::set_defer
-    ///
     /// # Errors
     ///
     /// Returns [`Error::NoSource`], [`Error::NoInjector`] or [`Error::NoExporter`] if one is

@@ -35,13 +35,13 @@ lines = true             # one object per line as the run goes, instead of one d
 
 [injector]
 # Detects the phase tokens on the standard output of the program.
-token_pattern = "__[A-Z0-9_]+__"
+token-pattern = "__[A-Z0-9_]+__"
 # Where the output of the program goes, instead of the terminal.
-stdout_file = "stdout.txt"
-# Discards the output of the program, even with `stdout_file`.
-no_stdout = false
+stdout-file = "stdout.txt"
+# Discards the output of the program, even with `stdout-file`.
+no-stdout = false
 # Under `sudo`, runs the program as root instead of as the user who called sudo.
-use_root = false
+use-root = false
 
 # The cgroup created for the run, which the program is moved into. Without this
 # table, one is made only for a `cgroup` source that names no cgroup.

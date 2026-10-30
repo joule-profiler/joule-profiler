@@ -8,10 +8,10 @@
     "lines": true
   },
   "injector": {
-    "token_pattern": "__[A-Z0-9_]+__",
-    "stdout_file": "stdout.txt",
-    "no_stdout": false,
-    "use_root": false
+    "token-pattern": "__[A-Z0-9_]+__",
+    "stdout-file": "stdout.txt",
+    "no-stdout": false,
+    "use-root": false
   },
   "sources": {
     "rapl": {

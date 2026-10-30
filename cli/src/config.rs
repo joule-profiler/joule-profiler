@@ -46,17 +46,10 @@ impl Config {
             Some(path) => ConfigTable::read(path)?,
             None => ConfigTable::default(),
         };
-        for definition in &cli.set {
+        for definition in &cli.definitions {
             table.define(definition)?;
         }
         let mut config_file: ConfigFile = table.deserialize()?;
-
-        if let Some(output_format) = cli.output_format {
-            config_file.exporter.set_format(output_format);
-        }
-        if let Some(output_file) = &cli.output_file {
-            config_file.exporter.set_file(output_file.clone())?;
-        }
 
         let mut defer = config_file.profiler.defer;
         if let Command::Profile(args) = &cli.command {
@@ -64,6 +57,16 @@ impl Config {
             if let Some(pattern) = &args.token_pattern {
                 config_file.injector.token_pattern.clone_from(pattern);
             }
+            if let Some(output_format) = args.output_format {
+                config_file.exporter.set_format(output_format);
+            }
+            if let Some(output_file) = &args.output_file {
+                config_file.exporter.set_file(output_file.clone())?;
+            }
+            if let Some(stdout_file) = &args.stdout_file {
+                config_file.injector.stdout_file = Some(stdout_file.clone());
+            }
+            config_file.injector.use_root |= args.use_root;
             config_file.injector.no_stdout |= args.no_stdout;
         }
 

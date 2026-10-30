@@ -12,8 +12,8 @@ use serde::Deserialize;
     about = "Measure program metrics from various sources like RAPL, perf_event or NVML"
 )]
 pub struct Cli {
-    /// Sources to activate, comma separated. (e.g., "rapl,perf,procfs") Without any, and without
-    /// a `[sources.<name>]` table, RAPL is measured.
+    /// Sources to activate, comma separated. (e.g., "rapl,perf,procfs")
+    /// Only RAPL is activated by default if nothing is configured.
     #[arg(long, value_delimiter = ',')]
     pub sources: Vec<SourceName>,
 
@@ -24,15 +24,7 @@ pub struct Cli {
     /// Overrides one value of the configuration, as `section.key=value`. Repeatable.
     /// (e.g., `-D sources.perf_event.scope=cgroup`)
     #[arg(short = 'D', long = "define", value_name = "KEY=VALUE")]
-    pub set: Vec<String>,
-
-    /// What the results are written as. (default: terminal)
-    #[arg(long = "output-format", value_enum)]
-    pub output_format: Option<OutputFormat>,
-
-    /// Writes the results to this file instead of the terminal.
-    #[arg(short = 'o', long = "output-file", value_name = "FILE")]
-    pub output_file: Option<PathBuf>,
+    pub definitions: Vec<String>,
 
     /// Verbosity (-v, -vv, -vvv).
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
@@ -66,7 +58,7 @@ pub enum Command {
     /// Lists the metrics each source reports.
     ListSensors,
 
-    /// Prints the machine and the setup of each source.
+    /// Prints the information of the machine and each source.
     Info,
 }
 
@@ -77,6 +69,22 @@ pub struct ProfileArgs {
     #[arg(long = "token-pattern", value_name = "REGEX")]
     pub token_pattern: Option<String>,
 
+    /// What the results are written as. (default: terminal)
+    #[arg(long = "output-format", value_enum)]
+    pub output_format: Option<OutputFormat>,
+
+    /// Writes the results to this file instead of the terminal.
+    #[arg(short = 'o', long = "output-file", value_name = "FILE")]
+    pub output_file: Option<PathBuf>,
+
+    /// The file in which to write the program's output.
+    #[arg(
+        long = "stdout-file",
+        conflicts_with = "no_stdout",
+        value_name = "FILE"
+    )]
+    pub stdout_file: Option<PathBuf>,
+
     /// Processes and exports the phases only once the command has ended.
     #[arg(long = "defer")]
     pub defer: bool,
@@ -84,6 +92,10 @@ pub struct ProfileArgs {
     /// Discards what the command prints.
     #[arg(long = "no-stdout")]
     pub no_stdout: bool,
+
+    /// Under `sudo`, whether the command keeps root privileges.
+    #[arg(long = "use-root")]
+    pub use_root: bool,
 
     /// The command to run, everything after `--`.
     #[arg(last = true, required = true)]
@@ -93,10 +105,10 @@ pub struct ProfileArgs {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
-    /// Human-readable, as the run goes.
+    /// Easily readable format.
     Terminal,
 
-    /// JSON, one table for the run or one object per line. (see `lines` in `[exporter]`)
+    /// JSON, one table for the entire run on lines (jsonl).
     Json,
 
     /// One row per metric.
