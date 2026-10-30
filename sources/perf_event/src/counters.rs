@@ -69,21 +69,21 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_counter_that_always_ran_is_not_scaled() {
+    fn not_scaled_when_always_running() {
         let delta = raw_count(350, 3000, 3000).scaled_delta(&raw_count(100, 1000, 1000));
 
         assert_eq!(delta, Some(250));
     }
 
     #[test]
-    fn a_counter_that_ran_half_the_phase_is_doubled() {
+    fn scaled_when_multiplexed() {
         let delta = raw_count(600, 3000, 2000).scaled_delta(&raw_count(100, 1000, 1000));
 
         assert_eq!(delta, Some(1000));
     }
 
     #[test]
-    fn the_counts_of_every_cpu_are_summed_before_being_scaled() {
+    fn cpus_summed_before_scaling() {
         let mut total = RawCount::default();
         total += raw_count(100, 1000, 1000);
         total += raw_count(100, 1000, 500);

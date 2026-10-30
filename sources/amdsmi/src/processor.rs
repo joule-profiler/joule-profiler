@@ -1,10 +1,10 @@
-use joule_profiler_core::metric::{MetricInfo, MetricValue};
-use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
+use joule_profiler_core::{MemoryUnit, MetricInfo, MetricUnit, MetricValue, Processor};
 
-use crate::error::Result;
-use crate::hardware::AmdSmiHardware;
-use crate::sensor::{AmdSmiSensor, DeviceSample, DeviceSupport, Devices, Snapshot};
+use crate::{
+    error::Result,
+    hardware::AmdSmiHardware,
+    sensor::{AmdSmiSensor, DeviceSample, DeviceSupport, Devices, Snapshot},
+};
 
 /// Computes the metrics of each phase from two snapshots of the sensor.
 pub(crate) struct AmdSmiProcessor {
@@ -109,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn the_energy_comes_from_the_counter_or_else_from_the_integrated_power() {
+    fn energy_from_counter_or_power() {
         assert_eq!(
             energy(&sample(Some(1_000), 0), &sample(Some(1_250), 0)),
             250

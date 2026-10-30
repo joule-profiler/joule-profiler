@@ -1,6 +1,8 @@
-use crate::error::{Error, Result};
-use crate::phase::{PhaseInfo, SourceMetrics, Summary};
-use crate::schema::Schema;
+use crate::{
+    error::{Error, Result},
+    phase::{PhaseInfo, SourceMetrics, Summary},
+    schema::Schema,
+};
 
 /// Writes out the phases of a run.
 pub trait Exporter: Send + 'static {

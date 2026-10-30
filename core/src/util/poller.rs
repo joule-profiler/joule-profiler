@@ -1,8 +1,10 @@
-use std::any::Any;
-use std::error::Error;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::{
+    any::Any,
+    error::Error,
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
 use thiserror::Error;
 
@@ -112,8 +114,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Instant,
+    };
 
     #[derive(Debug, Error)]
     enum TickError {
@@ -125,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn a_poller_that_is_stopped_does_not_wait_for_its_next_look() {
+    fn stop_does_not_wait() {
         let poller = Poller::start(Duration::from_secs(30), || Ok::<(), TickError>(()));
 
         let at = Instant::now();
@@ -133,13 +137,13 @@ mod tests {
 
         assert!(
             at.elapsed() < Duration::from_millis(500),
-            "stopping it waited {:?} for a look that was never going to happen",
+            "stopping it waited {:?}",
             at.elapsed()
         );
     }
 
     #[test]
-    fn a_poller_looks_every_interval() {
+    fn polls_every_interval() {
         let looks = Arc::new(AtomicUsize::new(0));
 
         let counted = Arc::clone(&looks);
@@ -156,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn a_poller_stopped_while_it_is_looking_does_not_sleep_again() {
+    fn stop_while_ticking() {
         let poller = Poller::start(Duration::from_millis(5), || {
             thread::sleep(Duration::from_millis(200));
             Ok::<(), TickError>(())
@@ -175,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scheduled_poller_waits_what_its_tick_returns() {
+    fn scheduled_wait() {
         let looks = Arc::new(AtomicUsize::new(0));
 
         let counted = Arc::clone(&looks);
@@ -191,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tick_that_fails_ends_the_poller_with_its_error() {
+    fn failing_tick_stops() {
         let looks = Arc::new(AtomicUsize::new(0));
 
         let counted = Arc::clone(&looks);
@@ -207,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tick_that_panics_is_reported_when_the_poller_stops() {
+    fn panicking_tick_is_reported() {
         let poller = Poller::start_scheduled(
             Duration::from_millis(1),
             || -> Result<Duration, TickError> { panic!("no counter") },

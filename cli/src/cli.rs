@@ -1,19 +1,9 @@
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::{Result, bail};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use joule_profiler_config::SourceName;
 use serde::Deserialize;
-
-#[cfg(not(any(
-    feature = "_rapl",
-    feature = "perf_event",
-    feature = "procfs",
-    feature = "cgroup",
-    feature = "nvml",
-    feature = "amdsmi",
-)))]
-compile_error!("at least one source feature must be enabled");
 
 #[derive(Parser, Debug)]
 #[command(
@@ -22,21 +12,17 @@ compile_error!("at least one source feature must be enabled");
     about = "Measure program metrics from various sources like RAPL, perf_event or NVML"
 )]
 pub struct Cli {
-    /// Sources to activate, comma separated. (e.g., "rapl,perf,procfs")
-    #[cfg_attr(
-        feature = "_rapl",
-        arg(long, value_delimiter = ',', default_value = "rapl")
-    )]
-    #[cfg_attr(not(feature = "_rapl"), arg(long, value_delimiter = ','))]
+    /// Sources to activate, comma separated. (e.g., "rapl,perf,procfs") Without any, and without
+    /// a `[sources.<name>]` table, RAPL is measured.
+    #[arg(long, value_delimiter = ',')]
     pub sources: Vec<SourceName>,
 
-    /// Configuration file. A `[sources.<name>]` table turns that source on.
-    #[arg(long = "config", value_name = "FILE")]
+    /// Configuration file.
+    #[arg(long = "config", visible_alias = "config-file", value_name = "FILE")]
     pub config_file: Option<PathBuf>,
 
-    #[allow(clippy::doc_markdown, reason = "this is the help clap prints")]
     /// Overrides one value of the configuration, as `section.key=value`. Repeatable.
-    /// (e.g., -D sources.perf_event.scope=cgroup)
+    /// (e.g., `-D sources.perf_event.scope=cgroup`)
     #[arg(short = 'D', long = "define", value_name = "KEY=VALUE")]
     pub set: Vec<String>,
 
@@ -72,81 +58,6 @@ impl Cli {
     }
 }
 
-/// The sources this build can measure with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, ValueEnum)]
-pub enum SourceName {
-    /// Energy per socket and domain, through the `power` PMU or powercap.
-    #[cfg(feature = "_rapl")]
-    Rapl,
-
-    /// Hardware counters, on the profiled process or on a cgroup.
-    #[cfg(feature = "perf_event")]
-    #[value(alias = "perf_event")]
-    Perf,
-
-    /// Memory, CPU time and I/O of the process tree, from `/proc`.
-    #[cfg(feature = "procfs")]
-    Procfs,
-
-    /// Memory, CPU time and I/O of the cgroup the profiled process runs in.
-    #[cfg(feature = "cgroup")]
-    Cgroup,
-
-    /// Energy, VRAM and utilization of the NVIDIA GPUs.
-    #[cfg(feature = "nvml")]
-    Nvml,
-
-    /// Energy, VRAM and utilization of the AMD GPUs.
-    #[cfg(feature = "amdsmi")]
-    #[value(name = "amdsmi")]
-    AmdSmi,
-}
-
-impl SourceName {
-    /// Returns the name of its `[sources.<key>]` table.
-    pub fn key(self) -> &'static str {
-        match self {
-            #[cfg(feature = "perf_event")]
-            SourceName::Perf => "perf_event",
-            #[allow(
-                unreachable_patterns,
-                reason = "perf_event may be the only source built"
-            )]
-            other => other.as_str(),
-        }
-    }
-
-    pub fn from_key(key: &str) -> Option<Self> {
-        Self::value_variants()
-            .iter()
-            .copied()
-            .find(|name| name.key() == key || name.as_str() == key)
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            #[cfg(feature = "_rapl")]
-            SourceName::Rapl => "rapl",
-            #[cfg(feature = "perf_event")]
-            SourceName::Perf => "perf",
-            #[cfg(feature = "procfs")]
-            SourceName::Procfs => "procfs",
-            #[cfg(feature = "cgroup")]
-            SourceName::Cgroup => "cgroup",
-            #[cfg(feature = "nvml")]
-            SourceName::Nvml => "nvml",
-            #[cfg(feature = "amdsmi")]
-            SourceName::AmdSmi => "amdsmi",
-        }
-    }
-}
-
-impl std::fmt::Display for SourceName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Runs a command and measures it.
@@ -170,6 +81,10 @@ pub struct ProfileArgs {
     #[arg(long = "defer")]
     pub defer: bool,
 
+    /// Discards what the command prints.
+    #[arg(long = "no-stdout")]
+    pub no_stdout: bool,
+
     /// The command to run, everything after `--`.
     #[arg(last = true, required = true)]
     pub cmd: Vec<String>,
@@ -181,43 +96,9 @@ pub enum OutputFormat {
     /// Human-readable, as the run goes.
     Terminal,
 
-    /// JSON, one document for the run or one object per line. (see `lines` in `[exporter]`)
+    /// JSON, one table for the run or one object per line. (see `lines` in `[exporter]`)
     Json,
 
     /// One row per metric.
     Csv,
-}
-
-impl std::fmt::Display for OutputFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            OutputFormat::Terminal => "terminal",
-            OutputFormat::Json => "json",
-            OutputFormat::Csv => "csv",
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_source_is_found_from_its_name_and_its_table() {
-        for source in SourceName::value_variants() {
-            let parsed = SourceName::from_str(&source.to_string(), false).unwrap();
-
-            assert_eq!(&parsed, source);
-            assert_eq!(SourceName::from_key(source.key()), Some(*source));
-        }
-    }
-
-    #[cfg(feature = "perf_event")]
-    #[test]
-    fn perf_is_also_called_perf_event() {
-        assert_eq!(
-            SourceName::from_str("perf_event", false).unwrap(),
-            SourceName::Perf
-        );
-    }
 }

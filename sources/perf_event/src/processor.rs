@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use joule_profiler_core::{
-    metric::{MetricInfo, MetricValue},
-    processor::Processor,
-};
+use joule_profiler_core::{MetricInfo, MetricValue, Processor};
 
 use crate::{
     counters::RawCount, error::Result, event::Event, scope::PerfScope, sensor::PerfSensor,
@@ -68,11 +65,10 @@ impl<S: PerfScope> Processor<PerfSensor<S>> for PerfProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::counters::tests::raw_count;
-    use crate::scope::pid::PidScope;
+    use crate::{counters::tests::raw_count, scope::pid::PidScope};
 
     #[test]
-    fn a_phase_reports_each_counter_scaled_and_0_for_one_that_never_ran() {
+    fn scaled_counts() {
         let events = Arc::new(vec![Event::CpuCycles, Event::Instructions]);
         let mut processor = PerfProcessor::new(events, true);
         let previous = [raw_count(0, 0, 0), raw_count(0, 0, 0)].to_vec();

@@ -1,15 +1,16 @@
 //! The results of a run as JSON: one document, or one object per line.
 
-use std::fs::File;
-use std::io::{self, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io::{self, BufWriter, Write},
+    path::{Path, PathBuf},
+};
 
-use joule_profiler_core::exporter::Exporter;
-use joule_profiler_core::metric::{Metric, MetricValue};
-use joule_profiler_core::phase::{PhaseInfo, SourceMetrics, Summary};
-use joule_profiler_core::unit::MetricUnit;
-use joule_profiler_core::util::fs::{create_file, default_results_filename};
-use serde::Serialize;
+use joule_profiler_core::{
+    Exporter, Metric, MetricUnit, MetricValue, PhaseInfo, SourceMetrics, Summary,
+    util::fs::{create_file, default_results_filename},
+};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -25,6 +26,34 @@ pub enum JsonError {
 }
 
 type Result<T> = std::result::Result<T, JsonError>;
+
+/// Configuration of the JSON exporter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JsonExporterConfig {
+    /// The file the results are written to. Defaults to `data<timestamp>.json`, or `.jsonl`
+    /// with `lines`.
+    pub file: Option<PathBuf>,
+
+    /// Whether one object is written per line as the run goes, instead of one document at the
+    /// end.
+    pub lines: bool,
+}
+
+impl JsonExporterConfig {
+    pub fn build(self) -> Result<JsonExporter> {
+        let shape = if self.lines {
+            Shape::Lines
+        } else {
+            Shape::Document
+        };
+
+        match self.file {
+            Some(path) => JsonExporter::to_file(path, shape),
+            None => JsonExporter::new(shape),
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
@@ -232,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn lines_are_one_object_per_phase_then_the_summary() {
+    fn lines_shape() {
         let written = run(Shape::Lines);
         let lines: Vec<serde_json::Value> = written
             .lines()
@@ -247,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn a_document_is_written_once_the_run_is_over() {
+    fn document_shape() {
         let document: serde_json::Value = serde_json::from_str(&run(Shape::Document)).unwrap();
 
         assert_eq!(document["phases"].as_array().unwrap().len(), 2);

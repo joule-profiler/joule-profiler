@@ -1,16 +1,23 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use joule_profiler_core::injector::Target;
-use joule_profiler_core::sensor::Sensor;
-use joule_profiler_core::util::cgroup::Cgroup;
-use joule_profiler_core::util::poller::Poller;
-use joule_profiler_core::util::shared::{Consumer, Producer, shared};
-use joule_profiler_core::util::stats::MinMaxMean;
+use joule_profiler_core::{
+    Sensor, Target,
+    util::{
+        cgroup::Cgroup,
+        poller::Poller,
+        shared::{Consumer, Producer, shared},
+        stats::MinMaxMean,
+    },
+};
 
-use crate::cgroup::{CPU_COUNTERS, IO_COUNTERS, MEMORY, Usage};
-use crate::error::{CgroupError, Result};
-use crate::layout::Layout;
+use crate::{
+    cgroup::{CPU_COUNTERS, IO_COUNTERS, MEMORY, Usage},
+    error::{CgroupError, Result},
+    layout::Layout,
+};
 
 /// What one cgroup reported at a boundary.
 pub(crate) struct Reading {
@@ -227,7 +234,7 @@ fn add_to_stats(stats: &mut [MinMaxMean; MEMORY.len()], values: [Option<u64>; ME
 mod tests {
     use std::process;
 
-    use joule_profiler_core::unit::MemoryUnit;
+    use joule_profiler_core::MemoryUnit;
 
     use super::*;
 
@@ -249,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cgroup_that_does_not_exist_fails_at_init() {
+    fn missing_cgroup_fails_init() {
         let path = std::env::temp_dir().join(format!("joule-cgroup-absent-{}", process::id()));
 
         assert!(matches!(
@@ -259,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn the_poller_waits_for_the_nearest_deadline() {
+    fn waits_nearest_deadline() {
         let absent = Arc::new(Cgroup::at(std::env::temp_dir().join("joule-cgroup-none")));
         let (memory_writer, _memory_reader) = shared();
         let now = Instant::now();

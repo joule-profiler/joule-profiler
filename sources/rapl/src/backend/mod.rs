@@ -1,7 +1,6 @@
-use joule_profiler_core::info::Info;
+use joule_profiler_core::Info;
 
-use crate::domain::RaplDomain;
-use crate::error::Result;
+use crate::{domain::RaplDomain, error::Result};
 
 #[cfg(feature = "backend-perf")]
 pub(crate) mod perf;

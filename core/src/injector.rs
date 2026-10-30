@@ -1,10 +1,11 @@
-use std::sync::mpsc::Sender;
-use std::time::Instant;
+use std::{sync::mpsc::Sender, time::Instant};
 
-use crate::error::{BoxError, Error, Result};
-use crate::phase::{PhaseBoundary, Summary};
-use crate::trigger::Trigger;
-use crate::util::time::{micros_between, timestamp_micros};
+use crate::{
+    error::{BoxError, Error, Result},
+    phase::{PhaseBoundary, Summary},
+    trigger::Trigger,
+    util::time::{micros_between, timestamp_micros},
+};
 
 /// The profiled process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

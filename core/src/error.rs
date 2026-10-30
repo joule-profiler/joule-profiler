@@ -73,7 +73,7 @@ impl Error {
 
 /// Writes an error followed by its causes, as `error: cause: cause`, where nothing can return it
 /// and it has to be logged.
-pub struct ErrorChain<'a>(pub &'a (dyn std::error::Error + 'static));
+pub(crate) struct ErrorChain<'a>(pub(crate) &'a (dyn std::error::Error + 'static));
 
 impl Display for ErrorChain<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -94,7 +94,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_chain_writes_the_error_then_each_of_its_causes() {
+    fn chain_includes_causes() {
         let error = Error::source_failed("rapl", io::Error::other("no such file"));
 
         assert_eq!(

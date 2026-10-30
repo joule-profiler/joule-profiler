@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use joule_profiler_core::{injector::Target, sensor::Sensor};
+use joule_profiler_core::{Sensor, Target};
 
 use crate::{
     counters::RawCount,
@@ -59,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn init_opens_the_counters_of_every_event_in_order() {
+    fn init_opens_counters() {
         let mut scope = MockPerfScope::new();
         scope
             .expect_open()
@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_hands_the_target_and_the_events_to_the_scope() {
+    fn attach_forwards_target() {
         let mut scope = MockPerfScope::new();
         scope
             .expect_attach()

@@ -2,23 +2,20 @@
 //! target is a script of tokens, and every step of the run is written down where the tests can
 //! read it back.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, mpsc};
-use std::thread;
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    thread,
+    time::Duration,
+};
 
-use joule_profiler_core::error::{Error, Result};
-use joule_profiler_core::exporter::Exporter;
-use joule_profiler_core::info::Info;
-use joule_profiler_core::injector::{Injector, PhaseToken, StopHandle, Target};
-use joule_profiler_core::metric::{MetricInfo, MetricValue};
-use joule_profiler_core::phase::{PhaseInfo, SourceMetrics, Summary};
-use joule_profiler_core::processor::Processor;
-use joule_profiler_core::profiler::JouleProfiler;
-use joule_profiler_core::schema::Schema;
-use joule_profiler_core::sensor::Sensor;
-use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::{
+    Error, Exporter, Info, Injector, JouleProfiler, MetricInfo, MetricUnit, MetricValue, PhaseInfo,
+    PhaseToken, Processor, Schema, Sensor, Source, SourceMetrics, StopHandle, Summary, Target,
+};
 
 #[derive(Debug, thiserror::Error)]
 #[error("fake")]
@@ -76,7 +73,7 @@ struct ScriptInjector {
 impl Injector for ScriptInjector {
     type Error = Fake;
 
-    fn start(&mut self) -> std::result::Result<Target, Fake> {
+    fn start(&mut self) -> Result<Target, Fake> {
         self.events.push("started");
         Ok(Target { pid: 1 })
     }
@@ -91,12 +88,12 @@ impl Injector for ScriptInjector {
         })
     }
 
-    fn resume(&mut self) -> std::result::Result<(), Fake> {
+    fn resume(&mut self) -> Result<(), Fake> {
         self.events.push("resumed");
         Ok(())
     }
 
-    fn next_phase(&mut self) -> std::result::Result<Option<PhaseToken>, Fake> {
+    fn next_phase(&mut self) -> Result<Option<PhaseToken>, Fake> {
         thread::sleep(Duration::from_millis(2));
 
         if self.fail == Fail::NextPhase {
@@ -112,7 +109,7 @@ impl Injector for ScriptInjector {
         }))
     }
 
-    fn wait(&mut self) -> std::result::Result<Option<i32>, Fake> {
+    fn wait(&mut self) -> Result<Option<i32>, Fake> {
         self.events.push("waited");
         Ok(Some(self.exit_code))
     }
@@ -132,7 +129,7 @@ impl Sensor for CountingSensor {
         "counting"
     }
 
-    fn init(&mut self) -> std::result::Result<(), Fake> {
+    fn init(&mut self) -> Result<(), Fake> {
         self.events.push("init");
         if self.fail == Fail::Init {
             Err(Fake)
@@ -141,7 +138,7 @@ impl Sensor for CountingSensor {
         }
     }
 
-    fn attach(&mut self, _target: Target) -> std::result::Result<(), Fake> {
+    fn attach(&mut self, _target: Target) -> Result<(), Fake> {
         self.events.push("attach");
         if self.fail == Fail::Attach {
             Err(Fake)
@@ -150,7 +147,7 @@ impl Sensor for CountingSensor {
         }
     }
 
-    fn measure(&mut self) -> std::result::Result<usize, Fake> {
+    fn measure(&mut self) -> Result<usize, Fake> {
         self.measures += 1;
 
         match self.fail {
@@ -160,7 +157,7 @@ impl Sensor for CountingSensor {
         }
     }
 
-    fn close(&mut self) -> std::result::Result<(), Fake> {
+    fn close(&mut self) -> Result<(), Fake> {
         self.events.push("close");
         Ok(())
     }
@@ -178,7 +175,7 @@ impl Processor<CountingSensor> for CountingProcessor {
         previous: &usize,
         current: &usize,
         values: &mut Vec<MetricValue>,
-    ) -> std::result::Result<(), Fake> {
+    ) -> Result<(), Fake> {
         values.push(MetricValue::U64((current - previous) as u64));
         Ok(())
     }
@@ -219,7 +216,7 @@ struct CollectingExporter {
 impl Exporter for CollectingExporter {
     type Error = Fake;
 
-    fn begin(&mut self, _schema: &Schema) -> std::result::Result<(), Fake> {
+    fn begin(&mut self, _schema: &Schema) -> Result<(), Fake> {
         if self.fail == Fail::Begin {
             Err(Fake)
         } else {
@@ -227,11 +224,7 @@ impl Exporter for CollectingExporter {
         }
     }
 
-    fn export(
-        &mut self,
-        phase: &PhaseInfo,
-        sources: &[SourceMetrics<'_>],
-    ) -> std::result::Result<(), Fake> {
+    fn export(&mut self, phase: &PhaseInfo, sources: &[SourceMetrics<'_>]) -> Result<(), Fake> {
         self.collected.phases.lock().unwrap().push(Exported {
             index: phase.index,
             start: phase.start_token.clone(),
@@ -244,7 +237,7 @@ impl Exporter for CollectingExporter {
         Ok(())
     }
 
-    fn finish(&mut self, summary: &Summary) -> std::result::Result<(), Fake> {
+    fn finish(&mut self, summary: &Summary) -> Result<(), Fake> {
         *self.collected.summary.lock().unwrap() = Some(*summary);
         Ok(())
     }
@@ -275,7 +268,7 @@ impl Run {
     }
 
     /// Runs on its own thread so that a hung run fails the test instead of blocking it.
-    fn profile(self) -> (Result<Summary>, Events, Collected) {
+    fn profile(self) -> (Result<Summary, Error>, Events, Collected) {
         let events = Events::default();
         let collected = Collected::default();
 
@@ -305,16 +298,14 @@ impl Run {
 
         let (done, outcome) = mpsc::channel();
         thread::spawn(move || done.send(profiler.profile()));
-        let summary = outcome
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the run never ended");
+        let summary = outcome.recv_timeout(Duration::from_secs(10)).unwrap();
 
         (summary, events, collected)
     }
 }
 
 #[test]
-fn the_info_is_the_machine_then_every_source_without_starting_any() {
+fn info_lists_machine_then_sources() {
     let events = Events::default();
     let mut profiler = JouleProfiler::new();
     for _ in 0..2 {
@@ -336,31 +327,28 @@ fn the_info_is_the_machine_then_every_source_without_starting_any() {
     let names: Vec<&str> = info.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(names, ["machine", "counting", "counting"]);
     assert_eq!(info[1].1, Info::new().with("counts", "measures"));
-    assert!(!events.has("init"), "the info initialized a source");
+    assert!(!events.has("init"));
 }
 
 fn assert_cleaned_up(events: &Events, sources: usize) {
-    assert!(events.has("waited"), "the target was not waited for");
-    assert_eq!(events.count("close"), sources, "a source was not closed");
+    assert!(events.has("waited"));
+    assert_eq!(events.count("close"), sources);
 }
 
 #[test]
-fn a_run_without_tokens_is_one_phase() {
+fn no_tokens_one_phase() {
     let (summary, events, collected) = Run::printing(&[]).profile();
     let summary = summary.unwrap();
 
     assert_eq!(collected.tokens(), [("START".into(), "END".into())]);
     assert_eq!(summary.phases, 1);
     assert_eq!(summary.exit_code, Some(0));
-    assert!(
-        !events.has("stopped"),
-        "a run that went well is not stopped"
-    );
+    assert!(!events.has("stopped"));
     assert_cleaned_up(&events, 2);
 }
 
 #[test]
-fn each_token_closes_a_phase_and_opens_the_next() {
+fn tokens_split_phases() {
     let (summary, _, collected) = Run::printing(&["__A__", "__B__", "__C__"]).profile();
     summary.unwrap();
 
@@ -376,7 +364,7 @@ fn each_token_closes_a_phase_and_opens_the_next() {
 }
 
 #[test]
-fn phases_are_numbered_in_order_and_measured_once_per_source() {
+fn phases_in_order() {
     let (summary, _, collected) = Run::printing(&["__A__", "__B__"]).profile();
     summary.unwrap();
 
@@ -387,7 +375,7 @@ fn phases_are_numbered_in_order_and_measured_once_per_source() {
 }
 
 #[test]
-fn the_exit_code_of_the_target_is_reported() {
+fn exit_code() {
     let mut run = Run::printing(&[]);
     run.exit_code = 42;
 
@@ -396,13 +384,12 @@ fn the_exit_code_of_the_target_is_reported() {
     assert_eq!(summary.unwrap().exit_code, Some(42));
     assert_eq!(
         collected.summary.lock().unwrap().unwrap().exit_code,
-        Some(42),
-        "the exporter is told how the run ended"
+        Some(42)
     );
 }
 
 #[test]
-fn a_deferred_run_exports_the_same_phases_once_it_is_over() {
+fn deferred_run() {
     let mut run = Run::printing(&["__A__", "__B__"]);
     run.defer = true;
 
@@ -419,26 +406,26 @@ fn a_deferred_run_exports_the_same_phases_once_it_is_over() {
 }
 
 #[test]
-fn a_source_that_cannot_init_stops_the_run_before_the_target_starts() {
+fn init_failure_stops_before_start() {
     let (summary, events, _) = Run::printing(&["__A__"]).failing(Fail::Init).profile();
 
     assert!(matches!(summary, Err(Error::Source { .. })));
-    assert!(!events.has("started"), "the target was started anyway");
-    assert_eq!(events.count("close"), 2, "a source was not closed");
+    assert!(!events.has("started"));
+    assert_eq!(events.count("close"), 2);
 }
 
 #[test]
-fn a_source_that_cannot_attach_stops_the_target() {
+fn attach_failure_stops_target() {
     let (summary, events, _) = Run::printing(&["__A__"]).failing(Fail::Attach).profile();
 
     assert!(matches!(summary, Err(Error::Source { .. })));
     assert!(events.has("stopped"));
-    assert!(!events.has("resumed"), "the target was resumed anyway");
+    assert!(!events.has("resumed"));
     assert_cleaned_up(&events, 2);
 }
 
 #[test]
-fn a_measure_that_fails_stops_the_target_from_the_start_of_the_run_on() {
+fn measure_failure_stops_target() {
     for at in [1, 3] {
         let (summary, events, _) = Run::printing(&["__A__", "__B__", "__C__"])
             .failing(Fail::Measure(at))
@@ -451,7 +438,7 @@ fn a_measure_that_fails_stops_the_target_from_the_start_of_the_run_on() {
 }
 
 #[test]
-fn a_sensor_that_panics_is_reported_rather_than_taking_the_run_down() {
+fn sensor_panic_is_reported() {
     let (summary, events, _) = Run::printing(&["__A__", "__B__"])
         .failing(Fail::Panic(2))
         .profile();
@@ -462,16 +449,16 @@ fn a_sensor_that_panics_is_reported_rather_than_taking_the_run_down() {
 }
 
 #[test]
-fn an_exporter_that_cannot_begin_never_resumes_the_target() {
+fn exporter_failure_never_resumes_target() {
     let (summary, events, _) = Run::printing(&["__A__"]).failing(Fail::Begin).profile();
 
     assert!(matches!(summary, Err(Error::Exporter(_))));
-    assert!(!events.has("resumed"), "the target was resumed anyway");
+    assert!(!events.has("resumed"));
     assert_cleaned_up(&events, 2);
 }
 
 #[test]
-fn an_injector_that_fails_stops_the_target() {
+fn injector_failure_stops_target() {
     let (summary, events, _) = Run::printing(&["__A__"]).failing(Fail::NextPhase).profile();
 
     assert!(matches!(summary, Err(Error::Injector(_))));
@@ -480,18 +467,18 @@ fn an_injector_that_fails_stops_the_target() {
 }
 
 #[test]
-fn a_run_without_any_source_is_refused() {
+fn no_source_refused() {
     let mut run = Run::printing(&["__A__"]);
     run.sources = 0;
 
     let (summary, events, _) = run.profile();
 
     assert!(matches!(summary, Err(Error::NoSource)));
-    assert!(!events.has("started"), "the target was started anyway");
+    assert!(!events.has("started"));
 }
 
 #[test]
-fn a_profiler_needs_an_injector_and_an_exporter() {
+fn injector_and_exporter_required() {
     let mut profiler = JouleProfiler::new();
     profiler.add_source(Source::new(
         CountingSensor {

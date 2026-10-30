@@ -7,7 +7,7 @@ use std::{
 };
 
 use joule_profiler_core::{
-    info::Info,
+    Info,
     util::sys::{cpu_list, read_cpu_list},
 };
 use perf_event::{Builder, Counter, ReadFormat};
@@ -191,7 +191,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cpu_that_is_not_online_is_refused() {
+    fn offline_cpu() {
         let result = resolve_cpus(Some(&HashSet::from([u32::MAX])));
 
         assert!(matches!(
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn the_requested_cpus_come_out_sorted() {
+    fn cpus_sorted() {
         let online = resolve_cpus(None).unwrap();
         let requested: HashSet<u32> = online.iter().copied().collect();
 

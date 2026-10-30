@@ -1,0 +1,53 @@
+{
+  "profiler": {
+    "defer": false
+  },
+  "exporter": {
+    "format": "json",
+    "file": "results.jsonl",
+    "lines": true
+  },
+  "injector": {
+    "token_pattern": "__[A-Z0-9_]+__",
+    "stdout_file": "stdout.txt",
+    "no_stdout": false,
+    "use_root": false
+  },
+  "sources": {
+    "rapl": {
+      "ignore_on_failure": true,
+      "backend": "perf",
+      "unit": "microjoule",
+      "sockets": [0],
+      "domains": ["package", "core", "uncore", "dram", "psys"]
+    },
+    "perf_event": {
+      "ignore_on_failure": true,
+      "scope": "pid",
+      "events": ["cpu_cycles", "instructions", "cache_misses", "branch_misses"]
+    },
+    "procfs": {
+      "ignore_on_failure": true,
+      "process_poll_interval": "100ms",
+      "hierarchy_poll_interval": "500ms",
+      "global": false,
+      "global_poll_interval": "10ms",
+      "process_memory_unit": "byte",
+      "global_memory_unit": "byte"
+    },
+    "nvml": {
+      "ignore_on_failure": true,
+      "gpus": [0],
+      "minimal": true,
+      "poll_interval": "20ms",
+      "memory_unit": "byte"
+    },
+    "amdsmi": {
+      "ignore_on_failure": true,
+      "gpus": ["GPU-00000000-0000-0000-0000-000000000000"],
+      "minimal": true,
+      "poll_interval": "20ms",
+      "memory_unit": "byte"
+    }
+  }
+}

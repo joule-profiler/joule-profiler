@@ -1,12 +1,12 @@
-use std::fmt::Write as _;
-use std::io::{self, BufWriter, Write};
+use std::{
+    fmt::Write as _,
+    io::{self, BufWriter, Write},
+};
 
-use joule_profiler_core::exporter::Exporter;
-use joule_profiler_core::info::Info;
-use joule_profiler_core::metric::MetricValue;
-use joule_profiler_core::phase::{PhaseInfo, SourceMetrics, Summary};
-use joule_profiler_core::schema::Schema;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::{
+    Exporter, Info, MetricUnit, MetricValue, PhaseInfo, Schema, SourceMetrics, Summary,
+};
+use serde::{Deserialize, Serialize};
 
 const WIDTH: usize = 56;
 const LABEL: usize = 24;
@@ -68,6 +68,17 @@ impl Line {
 struct Reported {
     heading: Box<str>,
     lines: Box<[Line]>,
+}
+
+/// Configuration of the terminal exporter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalExporterConfig {}
+
+impl TerminalExporterConfig {
+    pub fn build(self) -> TerminalExporter {
+        TerminalExporter::default()
+    }
 }
 
 pub struct TerminalExporter {
@@ -300,7 +311,7 @@ fn pad_to(out: &mut String, width: usize, written: &str) {
 
 #[cfg(test)]
 mod tests {
-    use joule_profiler_core::info::InfoValue;
+    use joule_profiler_core::InfoValue;
 
     use super::*;
 
@@ -311,14 +322,13 @@ mod tests {
     fn written(name: &str, value: MetricValue, unit: MetricUnit) -> String {
         let mut out = Vec::new();
         let mut scratch = String::new();
-        write_metric(&mut out, &mut scratch, &Line::new(name, unit), value)
-            .expect("a vec cannot fail");
+        write_metric(&mut out, &mut scratch, &Line::new(name, unit), value).unwrap();
 
-        String::from_utf8(out).expect("a metric writes utf-8")
+        String::from_utf8(out).unwrap()
     }
 
     #[test]
-    fn a_value_stops_growing_the_buffer_it_is_written_through() {
+    fn write_metric_does_not_allocate() {
         let mut out = Vec::new();
         let mut scratch = String::new();
         let line = Line::new("core", J);
@@ -332,15 +342,11 @@ mod tests {
             write_metric(&mut out, &mut scratch, &line, MetricValue::U64(value)).unwrap();
         }
 
-        assert_eq!(
-            scratch.capacity(),
-            settled,
-            "the buffer grew, so it allocated"
-        );
+        assert_eq!(scratch.capacity(), settled);
     }
 
     #[test]
-    fn a_value_is_right_aligned_in_its_column() {
+    fn value_right_aligned() {
         assert_eq!(
             written("core", MetricValue::F64(1.5), J),
             "  core                    :     1.500000 J\n"
@@ -352,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn values_of_different_lengths_end_at_the_same_column() {
+    fn values_aligned() {
         let short = written("a", MetricValue::U64(1), B);
         let long = written("b", MetricValue::U64(123_456_789), B);
 
@@ -360,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_that_prints_as_nothing_leaves_no_space_behind() {
+    fn empty_unit_leaves_no_space() {
         let line = written("nr_periods", MetricValue::U64(17), COUNT);
 
         assert!(!line.trim_end_matches('\n').ends_with(' '), "{line:?}");
@@ -368,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_past_its_column_takes_the_room_it_needs() {
+    fn long_name_overflows() {
         let name = "a_metric_name_far_longer_than_the_column_allows_for";
         let line = written(name, MetricValue::U64(1), B);
 
@@ -377,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_is_shown_to_as_many_places_as_its_unit_asks() {
+    fn decimals_follow_unit() {
         let micro = MetricUnit::MICROSECOND;
 
         assert!(written("core", MetricValue::F64(1.5), J).contains("1.500000"));
@@ -385,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn an_integer_is_not_given_decimals_it_does_not_have() {
+    fn integer_has_no_decimals() {
         assert_eq!(
             written("nr_periods", MetricValue::U64(17), COUNT).trim_end(),
             "  nr_periods              :           17"
@@ -393,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn a_label_written_now_sits_where_a_laid_out_one_does() {
+    fn label_alignment() {
         let mut now = Vec::new();
         label(&mut now, "proc_rss").unwrap();
 
@@ -404,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn info_is_a_box_per_section_and_a_line_per_value() {
+    fn info_layout() {
         let sections = [(
             "rapl".to_owned(),
             Info::new()
@@ -431,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn a_box_is_drawn_to_the_width_it_says() {
+    fn box_width() {
         let rules = Rules::default();
         let mut out = Vec::new();
 
@@ -447,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn a_title_past_its_box_is_not_padded_into_nonsense() {
+    fn long_title_not_padded() {
         let rules = Rules::default();
         let long = "a phase name far longer than the box was ever drawn to hold";
         let mut out = Vec::new();

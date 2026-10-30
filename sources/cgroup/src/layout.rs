@@ -1,9 +1,9 @@
-use joule_profiler_core::metric::MetricInfo;
-use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
-use joule_profiler_core::util::cgroup::Cgroup;
+use joule_profiler_core::{MemoryUnit, MetricInfo, MetricUnit, util::cgroup::Cgroup};
 
-use crate::cgroup::{CPU_COUNTERS, IO_COUNTERS, MEMORY, Usage};
-use crate::error::Result;
+use crate::{
+    cgroup::{CPU_COUNTERS, IO_COUNTERS, MEMORY, Usage},
+    error::Result,
+};
 
 /// The values a cgroup reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cgroup_without_controllers_is_expected_to_report_its_cpu_time_only() {
+    fn no_controllers_reports_cpu_time() {
         let layout = Layout {
             proc: AvailableValues::expected(&[]),
             global: None,
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn each_controller_brings_its_values() {
+    fn controllers_bring_values() {
         let values = AvailableValues::expected(&controllers(&["cpu", "memory", "io"]));
 
         assert!(values.memory.iter().all(|available| *available));
@@ -164,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn the_root_cgroup_only_declares_the_values_it_has() {
+    fn root_declares_available_values() {
         let mut root = AvailableValues::expected(&controllers(&["cpu", "memory", "io"]));
         root.memory[0] = false;
 

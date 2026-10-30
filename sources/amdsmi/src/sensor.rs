@@ -1,14 +1,22 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bitflags::bitflags;
-use joule_profiler_core::sensor::Sensor;
-use joule_profiler_core::util::poller::Poller;
-use joule_profiler_core::util::shared::{Consumer, Producer, shared};
-use joule_profiler_core::util::stats::MinMaxMean;
+use joule_profiler_core::{
+    Sensor,
+    util::{
+        poller::Poller,
+        shared::{Consumer, Producer, shared},
+        stats::MinMaxMean,
+    },
+};
 
-use crate::error::{AmdSmiError, Result};
-use crate::hardware::{AmdSmiHardware, AmdSmiWrapperHardware};
+use crate::{
+    error::{AmdSmiError, Result},
+    hardware::{AmdSmiHardware, AmdSmiWrapperHardware},
+};
 
 bitflags! {
     /// What is read from a GPU.
@@ -251,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn the_power_is_integrated_with_the_trapezoidal_rule() {
+    fn trapezoidal_integration() {
         let start = Instant::now();
         let mut last_power = None;
 
@@ -263,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gpu_that_only_reports_its_power_is_polled_and_integrated() {
+    fn power_only_gpu_is_polled() {
         let mut hardware = MockAmdSmiHardware::default();
         hardware.expect_read_power().returning(|_| Ok(50_000));
 

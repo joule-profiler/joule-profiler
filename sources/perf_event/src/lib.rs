@@ -38,9 +38,8 @@ use std::{
     sync::Arc,
 };
 
-use joule_profiler_core::{info::InfoValue, source::Source, util::cgroup::ROOT_PATH};
-use serde::de::Error as _;
-use serde::{Deserialize, Deserializer};
+use joule_profiler_core::{InfoValue, Source, util::cgroup::ROOT_PATH};
+use serde::{Deserialize, Deserializer, de::Error as _};
 
 use crate::{
     processor::PerfProcessor,
@@ -213,7 +212,7 @@ impl<'de> Deserialize<'de> for PerfEvent {
 mod tests {
     use std::path::Path;
 
-    use joule_profiler_core::unit::MetricUnit;
+    use joule_profiler_core::MetricUnit;
     use serde_json::json;
 
     use super::*;
@@ -232,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn the_counters_are_grouped_unless_told_otherwise() {
+    fn grouped_by_default() {
         let grouped = read(json!({})).unwrap();
         let ungrouped = read(json!({ "group": false })).unwrap();
 
@@ -241,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cgroup_scope_reads_its_own_keys() {
+    fn cgroup_scope_keys() {
         let perf = read(json!({
             "scope": "cgroup",
             "name": "my-run",
@@ -259,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn the_keys_of_a_cgroup_need_a_cgroup_scope() {
+    fn cgroup_keys_need_cgroup_scope() {
         let error = read(json!({ "cpus": [0] })).unwrap_err();
 
         assert!(
@@ -271,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cgroup_scope_names_its_cgroup() {
+    fn cgroup_scope_needs_name() {
         let error = read(json!({ "scope": "cgroup" })).unwrap_err();
 
         assert!(
@@ -281,21 +280,21 @@ mod tests {
     }
 
     #[test]
-    fn a_hardware_event_leads_whenever_there_is_one() {
+    fn hardware_event_leads() {
         let perf = read(json!({ "events": ["task_clock", "branch_misses"] })).unwrap();
 
         assert_eq!(metric_names(perf), ["BRANCH_MISSES", "TASK_CLOCK"]);
     }
 
     #[test]
-    fn an_empty_list_of_events_is_refused() {
+    fn no_events() {
         let perf = read(json!({ "events": [] })).unwrap();
 
         assert!(matches!(perf.build(), Err(PerfEventError::NoEvent)));
     }
 
     #[test]
-    fn the_clocks_are_reported_in_nanoseconds_and_the_other_events_as_counts() {
+    fn event_units() {
         let source = PerfEvent::new()
             .events([Event::CpuCycles, Event::CpuClock, Event::TaskClock])
             .build()

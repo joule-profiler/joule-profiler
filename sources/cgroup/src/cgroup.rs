@@ -1,5 +1,4 @@
-use joule_profiler_core::unit::MetricUnit;
-use joule_profiler_core::util::cgroup::Cgroup;
+use joule_profiler_core::{MetricUnit, util::cgroup::Cgroup};
 
 use crate::error::{CgroupError, Result};
 

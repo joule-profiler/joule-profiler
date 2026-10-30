@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{
+    Condvar, Mutex, MutexGuard, PoisonError,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// Wakes every sensor thread at each phase boundary using a condvar.
 pub(crate) struct Trigger {
@@ -79,14 +81,12 @@ impl Waiter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::thread;
-    use std::time::Duration;
+    use std::{sync::Arc, thread, time::Duration};
 
     use super::*;
 
     #[test]
-    fn a_late_waiter_is_handed_every_boundary() {
+    fn late_waiter_gets_every_boundary() {
         let trigger = Trigger::default();
         for _ in 0..3 {
             trigger.trigger();
@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn a_waiter_is_told_when_the_run_is_over() {
+    fn waiter_sees_end_of_run() {
         let trigger = Trigger::default();
         trigger.stop();
 
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sleeping_waiter_is_woken_by_the_stop() {
+    fn stop_wakes_waiter() {
         let trigger = Arc::new(Trigger::default());
         let waited = Arc::clone(&trigger);
         let source = thread::spawn(move || waited.waiter().wait());
@@ -124,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sleeping_waiter_is_woken_by_a_boundary() {
+    fn boundary_wakes_waiter() {
         let trigger = Arc::new(Trigger::default());
         let waited = Arc::clone(&trigger);
         let source = thread::spawn(move || waited.waiter().wait());

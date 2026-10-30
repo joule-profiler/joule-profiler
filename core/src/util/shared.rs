@@ -1,5 +1,7 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use triple_buffer::{Input, Output, triple_buffer};
 
@@ -99,7 +101,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn consuming_the_value_starts_it_over_for_the_producer() {
+    fn consume_resets() {
         let (mut producer, mut consumer) = shared::<Vec<i32>>();
 
         producer.write(|values| values.push(1));
@@ -111,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn a_phase_the_producer_never_wrote_in_comes_back_empty() {
+    fn unwritten_phase_is_empty() {
         let (mut producer, mut consumer) = shared::<Vec<i32>>();
 
         producer.write(|values| values.push(1));
@@ -120,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_counted_twice_between_the_producer_and_the_consumer() {
+    fn nothing_counted_twice() {
         const WRITES: u64 = 100_000;
         let (mut producer, mut consumer) = shared::<u64>();
 

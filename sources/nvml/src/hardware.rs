@@ -2,8 +2,11 @@ use std::collections::HashSet;
 
 use log::{debug, trace};
 
-use crate::sensor::{Device, DeviceSupport};
-use crate::{Result, error::NvmlError};
+use crate::{
+    Result,
+    error::NvmlError,
+    sensor::{Device, DeviceSupport},
+};
 
 /// The NVML calls of the source.
 #[cfg_attr(test, mockall::automock)]

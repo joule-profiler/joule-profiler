@@ -1,16 +1,59 @@
 //! Runs a command and turns the tokens it prints into phase boundaries.
 
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::{
+    io::{self, BufRead, BufReader, BufWriter, Write},
+    os::unix::process::{CommandExt, ExitStatusExt},
+    path::PathBuf,
+    process::{Child, ChildStdout, Command, Stdio},
+};
 
-use joule_profiler_core::injector::{Injector, PhaseToken, StopHandle, Target};
-use joule_profiler_core::util::{fs::create_file, sys::is_root};
+use joule_profiler_core::{
+    Injector, PhaseToken, StopHandle, Target,
+    util::{fs::create_file, sys::is_root},
+};
 use regex::bytes::Regex;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const DEFAULT_PATTERN: &str = "__[A-Z0-9_]+__";
+
+/// Configuration of the stdout injector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StdoutInjectorConfig {
+    /// The regular expression of the tokens the command prints.
+    pub token_pattern: String,
+
+    /// Where the output of the command goes, instead of the terminal.
+    pub stdout_file: Option<PathBuf>,
+
+    /// Whether the output of the command is discarded, even with `stdout_file`.
+    pub no_stdout: bool,
+
+    /// Under `sudo`, whether the command keeps root.
+    pub use_root: bool,
+}
+
+impl Default for StdoutInjectorConfig {
+    fn default() -> Self {
+        Self {
+            token_pattern: DEFAULT_PATTERN.to_owned(),
+            stdout_file: None,
+            no_stdout: false,
+            use_root: false,
+        }
+    }
+}
+
+impl StdoutInjectorConfig {
+    /// Builds the injector that runs `command`.
+    pub fn build(self, command: Vec<String>) -> Result<StdoutInjector, StdoutError> {
+        Ok(StdoutInjector::new(command, &self.token_pattern)?
+            .use_root(self.use_root)
+            .output_file(self.stdout_file)
+            .no_stdout(self.no_stdout))
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum StdoutError {
@@ -59,6 +102,7 @@ pub struct StdoutInjector {
     pattern: Regex,
     use_root: bool,
     output_file: Option<PathBuf>,
+    no_stdout: bool,
     child: Option<Child>,
     stdout: Option<BufReader<ChildStdout>>,
     output: Box<dyn Write + Send>,
@@ -77,6 +121,7 @@ impl StdoutInjector {
             pattern: Regex::new(pattern).map_err(StdoutError::Pattern)?,
             use_root: false,
             output_file: None,
+            no_stdout: false,
             child: None,
             stdout: None,
             output: Box::new(io::sink()),
@@ -96,6 +141,12 @@ impl StdoutInjector {
         self.output_file = path;
         self
     }
+
+    /// Discards what the command prints, even with an output file.
+    pub fn no_stdout(mut self, no_stdout: bool) -> Self {
+        self.no_stdout = no_stdout;
+        self
+    }
 }
 
 impl Injector for StdoutInjector {
@@ -103,6 +154,7 @@ impl Injector for StdoutInjector {
 
     fn start(&mut self) -> Result<Target, StdoutError> {
         self.output = match &self.output_file {
+            _ if self.no_stdout => Box::new(io::sink()),
             Some(path) => Box::new(BufWriter::new(
                 create_file(path).map_err(|error| StdoutError::OutputFile(path.clone(), error))?,
             )),
@@ -250,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn tokens_are_reported_with_their_line_and_every_line_is_passed_on() {
+    fn tokens_and_output() {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("stdout.txt");
         let mut injector = shell("echo hello; echo 'step __A__ done'; printf 'x\\n__B__'")
@@ -268,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn a_line_that_is_not_utf8_is_passed_on_and_still_matched() {
+    fn non_utf8_line() {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("stdout.txt");
         let mut injector = shell(r"printf '\377 __A__\n'").output_file(Some(output.clone()));
@@ -279,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn the_exit_code_is_reported_and_a_signal_reads_as_128_plus_its_number() {
+    fn exit_code_and_signal() {
         let mut exited = shell("exit 3");
         tokens(&mut exited);
         assert_eq!(exited.wait().unwrap(), Some(3));
@@ -290,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn the_stop_handle_kills_the_command() {
+    fn stop_handle_kills() {
         let mut injector = shell("echo __A__; exec sleep 60");
         injector.start().unwrap();
         injector.resume().unwrap();
@@ -303,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_command_is_named() {
+    fn missing_command() {
         let mut injector =
             StdoutInjector::new(vec!["no-such-command".into()], DEFAULT_PATTERN).unwrap();
 
@@ -314,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_command_is_refused() {
+    fn empty_command() {
         assert!(matches!(
             StdoutInjector::new(Vec::new(), DEFAULT_PATTERN),
             Err(StdoutError::EmptyCommand)

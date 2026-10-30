@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use joule_profiler_core::metric::{MetricInfo, MetricValue};
-use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::MemoryUnit;
+use joule_profiler_core::{MemoryUnit, MetricInfo, MetricValue, Processor};
 
-use crate::cgroup::USAGE_USEC_INDEX;
-use crate::error::Result;
-use crate::layout::{AvailableValues, Layout};
-use crate::sensor::{CgroupSensor, Reading, Snapshot};
+use crate::{
+    cgroup::USAGE_USEC_INDEX,
+    error::Result,
+    layout::{AvailableValues, Layout},
+    sensor::{CgroupSensor, Reading, Snapshot},
+};
 
 /// Computes the metrics of each phase from two snapshots of the sensor.
 pub(crate) struct CgroupProcessor {
@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_is_written_for_every_metric_with_or_without_the_hierarchy() {
+    fn one_value_per_metric() {
         for global in [false, true] {
             let controllers = ["cpu", "memory", "io"].map(String::from);
             let available_values = AvailableValues::expected(&controllers);

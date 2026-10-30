@@ -1,7 +1,6 @@
 use std::fmt::{self, Display};
 
-use joule_profiler_core::metric::MetricValue;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::{MetricUnit, MetricValue};
 use serde::Deserialize;
 
 /// The unit the energy is reported in.
@@ -104,7 +103,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn millijoules_and_microjoules_are_rounded_and_joules_are_not() {
+    fn unit_rounding() {
         assert_eq!(
             EnergyUnit::Microjoule.value(706_726.4),
             MetricValue::U64(706_726)
@@ -117,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn a_metric_is_named_after_its_socket_and_die_except_for_psys() {
+    fn metric_names() {
         let domain = |domain_type, die| RaplDomain {
             domain_type,
             socket: 1,

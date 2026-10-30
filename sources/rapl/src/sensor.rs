@@ -1,7 +1,9 @@
-use joule_profiler_core::sensor::Sensor;
+use joule_profiler_core::Sensor;
 
-use crate::backend::RaplBackend;
-use crate::error::{RaplError, Result};
+use crate::{
+    backend::RaplBackend,
+    error::{RaplError, Result},
+};
 
 /// Façade for the backends implementing [`Sensor`].
 pub(crate) struct RaplSensor<B: RaplBackend> {

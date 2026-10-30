@@ -1,5 +1,4 @@
-use std::io;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use joule_profiler_core::util::poller::PollerPanicked;
 use thiserror::Error;

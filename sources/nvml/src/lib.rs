@@ -17,21 +17,19 @@ mod hardware;
 mod processor;
 mod sensor;
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use joule_profiler_core::info::{Info, InfoValue};
-use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
+use joule_profiler_core::{Info, InfoValue, MemoryUnit, MetricUnit, Source};
 use serde::Deserialize;
 
 pub use error::NvmlError;
 
-use crate::error::Result;
-use crate::hardware::{NvmlHardware, NvmlWrapperHardware};
-use crate::processor::NvmlProcessor;
-use crate::sensor::{Device, DeviceSupport, Devices, NvmlSensor, needs_polling};
+use crate::{
+    error::Result,
+    hardware::{NvmlHardware, NvmlWrapperHardware},
+    processor::NvmlProcessor,
+    sensor::{Device, DeviceSupport, Devices, NvmlSensor, needs_polling},
+};
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -182,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn minimal_keeps_both_ways_of_telling_the_energy() {
+    fn minimal_keeps_energy() {
         let mut hardware = mock_hardware(vec![
             DeviceSupport::Energy | DeviceSupport::Vram,
             DeviceSupport::Power | DeviceSupport::Utilization,
@@ -198,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_keeps_the_vram_and_the_utilization_as_well() {
+    fn normal_keeps_everything() {
         let mut hardware = mock_hardware(vec![
             DeviceSupport::Energy | DeviceSupport::Vram | DeviceSupport::Utilization,
         ]);
@@ -215,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn minimal_leaves_out_a_gpu_that_reports_no_energy_at_all() {
+    fn minimal_drops_gpu_without_energy() {
         let mut hardware = mock_hardware(vec![DeviceSupport::Vram | DeviceSupport::Utilization]);
 
         assert!(matches!(
@@ -225,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn a_model_that_cannot_be_read_says_why() {
+    fn unreadable_model() {
         let mut hardware = mock_hardware(vec![DeviceSupport::Energy, DeviceSupport::Energy]);
         hardware.expect_read_model().returning(|device| {
             if device.index == 0 {
@@ -246,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn the_poll_interval_is_given_only_when_a_gpu_is_polled() {
+    fn poll_interval_only_when_polled() {
         for (support, poll_interval) in [
             (DeviceSupport::Energy, "none"),
             (DeviceSupport::Power | DeviceSupport::Vram, "10ms"),

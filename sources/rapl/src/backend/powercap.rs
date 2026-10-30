@@ -1,17 +1,20 @@
 //! Energy read from `/sys/class/powercap`.
 
-use std::fs;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
 
-use joule_profiler_core::info::Info;
-use joule_profiler_core::util::poller::Poller;
+use joule_profiler_core::{Info, util::poller::Poller};
 
-use crate::backend::RaplBackend;
-use crate::domain::{RaplDomain, RaplDomainType};
-use crate::error::{RaplError, Result};
+use crate::{
+    backend::RaplBackend,
+    domain::{RaplDomain, RaplDomainType},
+    error::{RaplError, Result},
+};
 
 pub(crate) const POWERCAP_PATH: &str = "/sys/class/powercap";
 
@@ -275,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn every_package_zone_and_its_subzones_are_discovered() {
+    fn discover_zones() {
         let root = fake_root("discover");
         fake_zone(&root.join("intel-rapl:0"), "package-0", 0);
         fake_zone(&root.join("intel-rapl:0/intel-rapl:0:0"), "core", 0);
@@ -290,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn the_die_of_a_package_comes_from_its_zone_name() {
+    fn die_from_zone_name() {
         let root = fake_root("dies");
         fake_zone(&root.join("intel-rapl:0"), "package-0-die-0", 0);
         fake_zone(&root.join("intel-rapl:1"), "package-0-die-1", 0);
@@ -306,21 +309,21 @@ mod tests {
     }
 
     #[test]
-    fn a_top_level_zone_names_its_socket_and_die() {
+    fn socket_and_die_from_name() {
         assert_eq!(parse_socket_and_die("package-1"), Some((1, None)));
         assert_eq!(parse_socket_and_die("package-0-die-1"), Some((0, Some(1))));
         assert_eq!(parse_socket_and_die("psys"), Some((0, None)));
     }
 
     #[test]
-    fn a_malformed_zone_name_is_ignored() {
+    fn malformed_zone_ignored() {
         for name in ["package-x", "package-0-die-", "package-", "core", ""] {
             assert_eq!(parse_socket_and_die(name), None, "{name}");
         }
     }
 
     #[test]
-    fn the_energy_keeps_growing_when_the_counter_wraps() {
+    fn counter_wrap() {
         let mut counter = EnergyCounter::new(1000, 900);
 
         counter.update(950);

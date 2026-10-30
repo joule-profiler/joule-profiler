@@ -12,6 +12,7 @@ keywords = ["energy", "profiling"]
 joule-profiler-core.workspace = true
 libc.workspace = true
 log.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 regex = "1.12.3"
 

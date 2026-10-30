@@ -1,13 +1,16 @@
 //! Energy read from the `power` PMU.
 
-use joule_profiler_core::info::Info;
-use joule_profiler_core::util::sys::{Socket, socket_topology};
-use perf_event::events::Dynamic;
-use perf_event::{Builder, Counter};
+use joule_profiler_core::{
+    Info,
+    util::sys::{Socket, socket_topology},
+};
+use perf_event::{Builder, Counter, events::Dynamic};
 
-use crate::backend::RaplBackend;
-use crate::domain::{RaplDomain, RaplDomainType};
-use crate::error::{RaplError, Result};
+use crate::{
+    backend::RaplBackend,
+    domain::{RaplDomain, RaplDomainType},
+    error::{RaplError, Result},
+};
 
 const PMU_NAME: &str = "power";
 
@@ -184,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn a_domain_is_counted_on_the_first_cpu_of_each_die() {
+    fn first_cpu_of_each_die() {
         let topology = [
             Socket {
                 id: 0,

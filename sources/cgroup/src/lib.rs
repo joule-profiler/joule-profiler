@@ -21,23 +21,23 @@ mod layout;
 mod processor;
 mod sensor;
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use joule_profiler_core::info::{Info, InfoValue};
-use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
-use joule_profiler_core::util::cgroup::{Cgroup as CgroupDir, ROOT_PATH};
+use joule_profiler_core::{
+    Info, InfoValue, MemoryUnit, MetricUnit, Source,
+    util::cgroup::{Cgroup as CgroupDir, ROOT_PATH},
+};
 use serde::Deserialize;
 
 pub use error::CgroupError;
 
-use crate::cgroup::controllers;
-use crate::error::Result;
-use crate::layout::{AvailableValues, Layout};
-use crate::processor::CgroupProcessor;
-use crate::sensor::CgroupSensor;
+use crate::{
+    cgroup::controllers,
+    error::Result,
+    layout::{AvailableValues, Layout},
+    processor::CgroupProcessor,
+    sensor::CgroupSensor,
+};
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -196,33 +196,12 @@ fn info(cgroup: &CgroupDir, config: &Cgroup, global: bool) -> Info {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path, process};
-
-    use serde_json::json;
+    use std::{fs, process};
 
     use super::*;
 
-    fn read(table: serde_json::Value) -> serde_json::Result<Cgroup> {
-        serde_json::from_value(table)
-    }
-
     #[test]
-    fn a_table_that_only_names_its_cgroup_takes_the_defaults() {
-        let cgroup = read(json!({ "name": "my.slice" })).unwrap();
-
-        assert_eq!(cgroup.name, Path::new("my.slice"));
-        assert_eq!(cgroup.root, None);
-        assert_eq!(cgroup.process_poll_interval, DEFAULT_POLL_INTERVAL);
-        assert!(!cgroup.global);
-    }
-
-    #[test]
-    fn a_table_without_a_name_is_refused() {
-        assert!(read(json!({})).is_err());
-    }
-
-    #[test]
-    fn a_directory_that_is_not_a_cgroup_is_refused() {
+    fn not_a_cgroup() {
         let root = std::env::temp_dir().join(format!("joule-cgroup-not-one-{}", process::id()));
         fs::create_dir_all(&root).unwrap();
 

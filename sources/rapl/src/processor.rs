@@ -1,11 +1,11 @@
-use joule_profiler_core::metric::{MetricInfo, MetricValue};
-use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::{MetricInfo, MetricUnit, MetricValue, Processor};
 
-use crate::backend::RaplBackend;
-use crate::domain::{EnergyUnit, RaplDomain};
-use crate::error::Result;
-use crate::sensor::RaplSensor;
+use crate::{
+    backend::RaplBackend,
+    domain::{EnergyUnit, RaplDomain},
+    error::Result,
+    sensor::RaplSensor,
+};
 
 /// Computes the energy of each domain over a phase.
 pub(crate) struct RaplProcessor {
@@ -69,7 +69,7 @@ impl<B: RaplBackend> Processor<RaplSensor<B>> for RaplProcessor {
 
 #[cfg(test)]
 mod tests {
-    use joule_profiler_core::info::Info;
+    use joule_profiler_core::Info;
 
     use super::*;
     use crate::domain::RaplDomainType;
@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn the_energy_of_a_phase_is_in_the_configured_unit() {
+    fn energy_unit() {
         assert_eq!(
             energy(EnergyUnit::Microjoule, 1_000, 9_545),
             MetricValue::U64(8_545)

@@ -1,7 +1,7 @@
 //! This file provides a simple example of the Joule Profiler library usage.
 
 use anyhow::Result;
-use joule_profiler_core::profiler::JouleProfiler;
+use joule_profiler_core::JouleProfiler;
 use joule_profiler_exporter_terminal::TerminalExporter;
 use joule_profiler_injector_stdout::StdoutInjector;
 use joule_profiler_source_rapl::Rapl;

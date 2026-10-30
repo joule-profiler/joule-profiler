@@ -28,7 +28,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_lowest_the_highest_and_the_mean_of_the_values_are_kept() {
+    fn min_max_mean() {
         let mut stats = MinMaxMean::default();
         for value in [200, 100, 600] {
             stats.add(value);
@@ -38,7 +38,7 @@ mod tests {
     }
 
     #[test]
-    fn no_value_comes_to_zeros() {
+    fn empty_is_zero() {
         assert_eq!(MinMaxMean::default().min_max_mean(), (0, 0, 0));
     }
 }

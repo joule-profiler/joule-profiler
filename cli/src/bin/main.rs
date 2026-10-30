@@ -1,29 +1,29 @@
 use anyhow::Result;
-use joule_profiler_cli::cli::{Cli, Command};
-use joule_profiler_cli::config::ConfigTable;
-use joule_profiler_cli::{exporter, init_logging, sources};
-use joule_profiler_core::profiler::JouleProfiler;
-use joule_profiler_core::util::cgroup::CgroupConfig;
+use joule_profiler_cli::{
+    cli::{Cli, Command},
+    config::Config,
+    exporter, init_logging, sources,
+};
+use joule_profiler_core::{JouleProfiler, util::cgroup::CgroupConfig};
 use joule_profiler_exporter_terminal::{print_info, print_schema};
-use joule_profiler_injector_stdout::StdoutInjector;
 
 fn main() -> Result<()> {
     let cli = Cli::parsed()?;
     init_logging(cli.verbose);
 
-    let config_table = ConfigTable::load_from_cli(&cli)?;
+    let config = Config::load_from_cli(&cli)?;
     let profiling = matches!(cli.command, Command::Profile(_));
 
-    let cgroup = config_table
+    let cgroup = config
         .cgroup
         .clone()
         .filter(|_| profiling)
         .map(CgroupConfig::create)
         .transpose()?;
-    let cgroup_path = config_table.cgroup.as_ref().map(CgroupConfig::path);
+    let cgroup_path = config.cgroup.as_ref().map(CgroupConfig::path);
 
     let mut joule_profiler = JouleProfiler::new();
-    sources::add(&mut joule_profiler, &config_table, cgroup_path.as_deref())?;
+    sources::add(&mut joule_profiler, config.sources, cgroup_path.as_deref())?;
     if let Some(cgroup) = cgroup {
         joule_profiler.set_cgroup(cgroup);
     }
@@ -36,13 +36,11 @@ fn main() -> Result<()> {
             print_info("Information", &joule_profiler.info())?;
         }
         Command::Profile(profile_args) => {
-            let injector = StdoutInjector::new(profile_args.cmd, &config_table.token_pattern)?
-                .use_root(config_table.use_root)
-                .output_file(config_table.stdout_file.clone());
+            let injector = config.injector.build(profile_args.cmd)?;
 
-            exporter::set_exporter(&mut joule_profiler, &config_table.exporter)?;
+            exporter::set_exporter(&mut joule_profiler, config.exporter)?;
             joule_profiler.set_injector(injector);
-            joule_profiler.set_defer(config_table.defer);
+            joule_profiler.set_defer(config.defer);
 
             print_info("Information", &joule_profiler.info())?;
             joule_profiler.profile()?;

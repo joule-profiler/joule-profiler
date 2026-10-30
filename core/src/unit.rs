@@ -1,5 +1,7 @@
-use std::fmt::{self, Display};
-use std::str::FromStr;
+use std::{
+    fmt::{self, Display},
+    str::FromStr,
+};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -227,11 +229,11 @@ mod tests {
     use super::*;
 
     fn parsed(s: &str) -> MetricUnit {
-        s.parse().expect("a valid unit")
+        s.parse().unwrap()
     }
 
     #[test]
-    fn units_are_read_with_their_prefix() {
+    fn parse() {
         assert_eq!(parsed("J"), MetricUnit::JOULE);
         assert_eq!(parsed("mJ"), MetricUnit::MILLIJOULE);
         assert_eq!(parsed("µJ"), MetricUnit::MICROJOULE);
@@ -244,21 +246,21 @@ mod tests {
     }
 
     #[test]
-    fn what_is_not_a_unit_is_refused() {
+    fn parse_invalid() {
         for invalid in ["", "k", "Hz", "kcount", "m%", "JJ", "mmJ"] {
             assert!(invalid.parse::<MetricUnit>().is_err(), "{invalid:?}");
         }
     }
 
     #[test]
-    fn a_unit_reads_back_as_it_is_written() {
+    fn display_round_trip() {
         for unit in ["J", "mW", "ns", "kB", "GJ", "µs", "count", "%"] {
             assert_eq!(parsed(unit).to_string(), unit);
         }
     }
 
     #[test]
-    fn precision_goes_down_to_the_micro_base_unit_for_energy() {
+    fn precision() {
         assert_eq!(MetricUnit::JOULE.precision(), 6);
         assert_eq!(MetricUnit::MILLIJOULE.precision(), 3);
         assert_eq!(MetricUnit::MICROJOULE.precision(), 0);
@@ -268,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn bytes_are_whole_and_their_multiples_are_fractional() {
+    fn memory_unit_value() {
         assert_eq!(MemoryUnit::Byte.value(1_536), MetricValue::U64(1_536));
         assert_eq!(MemoryUnit::Kilobyte.value(1_536), MetricValue::F64(1.536));
         assert_eq!(MemoryUnit::Megabyte.value(2_500_000), MetricValue::F64(2.5));

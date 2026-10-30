@@ -9,6 +9,7 @@ description = "Terminal exporter for Joule Profiler"
 
 [dependencies]
 joule-profiler-core.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

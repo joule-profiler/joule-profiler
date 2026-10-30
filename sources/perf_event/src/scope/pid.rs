@@ -1,6 +1,6 @@
 use std::{io::ErrorKind, iter};
 
-use joule_profiler_core::{info::Info, injector::Target};
+use joule_profiler_core::{Info, Target};
 use perf_event::{Builder, Counter, ReadFormat};
 
 use crate::{

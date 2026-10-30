@@ -38,9 +38,7 @@ use std::collections::HashSet;
 #[cfg(feature = "backend-powercap")]
 use std::{path::PathBuf, time::Duration};
 
-use joule_profiler_core::info::InfoValue;
-use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::MetricUnit;
+use joule_profiler_core::{InfoValue, MetricUnit, Source};
 #[cfg(all(feature = "backend-perf", feature = "backend-powercap"))]
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
@@ -51,15 +49,14 @@ pub use config::Powercap;
 pub use domain::{EnergyUnit, RaplDomainType};
 pub use error::RaplError;
 
-use crate::backend::RaplBackend;
 #[cfg(feature = "backend-perf")]
 use crate::backend::perf::{self, PerfBackend};
 #[cfg(feature = "backend-powercap")]
 use crate::backend::powercap::{self, JOULES_PER_COUNT, POWERCAP_PATH, PowercapBackend};
-use crate::domain::RaplDomain;
-use crate::error::Result;
-use crate::processor::RaplProcessor;
-use crate::sensor::RaplSensor;
+use crate::{
+    backend::RaplBackend, domain::RaplDomain, error::Result, processor::RaplProcessor,
+    sensor::RaplSensor,
+};
 
 /// Configuration of the RAPL source.
 #[derive(Debug, Clone, Default)]
@@ -281,7 +278,7 @@ mod tests {
 
     #[cfg(feature = "backend-perf")]
     #[test]
-    fn a_table_that_names_no_backend_reads_through_perf() {
+    fn perf_by_default() {
         assert!(matches!(
             read(json!({})).unwrap().backend,
             BackendType::Perf
@@ -291,7 +288,7 @@ mod tests {
     #[cfg(feature = "backend-powercap")]
     #[cfg_attr(not(feature = "backend-perf"), allow(irrefutable_let_patterns))]
     #[test]
-    fn the_backend_field_names_the_one_to_read() {
+    fn backend_field() {
         let rapl = read(json!({
             "backend": "powercap",
             "unit": "millijoule",
@@ -310,7 +307,7 @@ mod tests {
 
     #[cfg(all(feature = "backend-perf", feature = "backend-powercap"))]
     #[test]
-    fn the_keys_of_powercap_need_the_powercap_backend() {
+    fn powercap_keys_need_powercap() {
         for key in ["root", "poll_interval"] {
             let value = if key == "root" { "/elsewhere" } else { "500ms" };
             let error = read(json!({ key: value })).unwrap_err();
@@ -338,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn psys_is_kept_once_whatever_the_sockets() {
+    fn psys_once() {
         let available_domains = vec![
             domain(RaplDomainType::Package, 0),
             domain(RaplDomainType::Psys, 0),
@@ -352,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_requested_domain_types_are_kept() {
+    fn filter_domain_types() {
         let available_domains = vec![
             domain(RaplDomainType::Package, 0),
             domain(RaplDomainType::Dram, 0),
@@ -369,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn a_socket_that_does_not_exist_is_refused() {
+    fn unknown_socket() {
         let available_domains = vec![domain(RaplDomainType::Package, 0)];
 
         assert!(matches!(

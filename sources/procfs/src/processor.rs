@@ -1,14 +1,14 @@
-use joule_profiler_core::info::Info;
-use joule_profiler_core::metric::{MetricInfo, MetricValue};
-use joule_profiler_core::processor::Processor;
-use joule_profiler_core::unit::{MemoryUnit, MetricUnit};
-use joule_profiler_core::util::stats::MinMaxMean;
+use joule_profiler_core::{
+    Info, MemoryUnit, MetricInfo, MetricUnit, MetricValue, Processor, util::stats::MinMaxMean,
+};
 
-use crate::Procfs;
-use crate::error::Result;
-use crate::sensor::{
-    CPU_METRICS, GLOBAL_CPU_METRICS, GLOBAL_MEMORY_METRICS, IO_METRICS, PROCESS_METRICS,
-    ProcfsSensor, Snapshot,
+use crate::{
+    Procfs,
+    error::Result,
+    sensor::{
+        CPU_METRICS, GLOBAL_CPU_METRICS, GLOBAL_MEMORY_METRICS, IO_METRICS, PROCESS_METRICS,
+        ProcfsSensor, Snapshot,
+    },
 };
 
 /// Computes the metrics of each phase from two snapshots of the sensor.

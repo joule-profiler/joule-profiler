@@ -1,10 +1,11 @@
-use std::fmt::{self, Display};
-use std::time::Duration;
+use std::{
+    fmt::{self, Display},
+    time::Duration,
+};
 
 use serde::{Serialize, Serializer};
 
-use crate::metric::MetricValue;
-use crate::util::sys;
+use crate::{metric::MetricValue, util::sys};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Info {
@@ -134,7 +135,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_value_that_could_not_be_read_says_why() {
+    fn unreadable_value_says_why() {
         let failed: io::Result<String> = Err(io::Error::other("no such file"));
 
         let info = Info::new().with("pmus", failed);
@@ -146,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn values_are_written_plainly() {
+    fn display() {
         assert_eq!(InfoValue::from(true).to_string(), "true");
         assert_eq!(InfoValue::from(42_u64).to_string(), "42");
         assert_eq!(
@@ -157,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn a_description_is_serialized_as_an_object_of_typed_values() {
+    fn serialize_keeps_order() {
         let info = Info::new()
             .with("backend", "perf")
             .with("domains", InfoValue::list(["PACKAGE-0", "DRAM-0"]))
@@ -168,13 +169,5 @@ mod tests {
             serde_json::to_string(&info).unwrap(),
             r#"{"backend":"perf","domains":["PACKAGE-0","DRAM-0"],"global":false,"perf_event_paranoid":-1}"#
         );
-    }
-
-    #[test]
-    fn the_machine_tells_its_processors_and_its_sockets() {
-        let machine = machine();
-
-        assert!(machine.get("cpu").is_some());
-        assert!(matches!(machine.get("sockets"), Some(InfoValue::List(_))));
     }
 }

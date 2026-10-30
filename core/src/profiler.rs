@@ -1,20 +1,44 @@
-use std::panic::{self, AssertUnwindSafe};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::thread::{self, Scope, ScopedJoinHandle};
+use std::{
+    panic::{self, AssertUnwindSafe},
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    thread::{self, Scope, ScopedJoinHandle},
+};
 
-use crate::error::{Error, ErrorChain, Result};
-use crate::exporter::{AnyExporter, Exporter};
-use crate::info::{self, Info};
-use crate::injector::{AnyInjector, Injector, StopHandle};
-use crate::metric::MetricValue;
-use crate::phase::{PhaseBoundary, PhaseInfo, SourceMetrics, Summary};
-use crate::schema::{Schema, SourceInfo};
-use crate::source::{Process, Source};
-use crate::trigger::Trigger;
-use crate::util::cgroup::RunCgroup;
-use crate::util::time::micros_between;
+use crate::{
+    error::{Error, ErrorChain, Result},
+    exporter::{AnyExporter, Exporter},
+    info::{self, Info},
+    injector::{AnyInjector, Injector, StopHandle},
+    metric::MetricValue,
+    phase::{PhaseBoundary, PhaseInfo, SourceMetrics, Summary},
+    schema::{Schema, SourceInfo},
+    source::{Process, Source},
+    trigger::Trigger,
+    util::{cgroup::RunCgroup, time::micros_between},
+};
 
-/// The sources measure what the injector runs, and the exporter receives each phase.
+/// Profiles a program: the injector runs it, the sources measure it, and the exporter receives
+/// each phase.
+///
+/// # Example
+///
+/// ```no_run
+/// use joule_profiler_core::JouleProfiler;
+/// use joule_profiler_exporter_terminal::TerminalExporterConfig;
+/// use joule_profiler_injector_stdout::StdoutInjectorConfig;
+/// use joule_profiler_source_rapl::Rapl;
+///
+/// let mut profiler = JouleProfiler::new();
+/// profiler.add_source(Rapl::new().build().unwrap());
+/// profiler.set_injector(
+///     StdoutInjectorConfig::default()
+///         .build(vec!["./my-program".into()])
+///         .unwrap(),
+/// );
+/// profiler.set_exporter(TerminalExporterConfig::default().build());
+///
+/// let summary = profiler.profile().unwrap();
+/// ```
 #[derive(Default)]
 pub struct JouleProfiler {
     sources: Vec<Source>,
@@ -51,6 +75,7 @@ impl JouleProfiler {
         self.cgroup = Some(cgroup);
     }
 
+    /// Returns the metrics of each source.
     pub fn schema(&self) -> Schema {
         Schema {
             sources: self
@@ -75,6 +100,19 @@ impl JouleProfiler {
             .collect()
     }
 
+    /// Runs the target and measures it, phase by phase, until it ends.
+    ///
+    /// The target is started stopped, and resumed once every source and the exporter are ready.
+    /// Every source is closed at the end, even if the run failed. With [`set_defer`], the phases
+    /// are processed and exported only once the target has ended.
+    ///
+    /// [`set_defer`]: Self::set_defer
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSource`], [`Error::NoInjector`] or [`Error::NoExporter`] if one is
+    /// missing. Otherwise, returns the first error of the run, before an error of a source while
+    /// it is closed.
     pub fn profile(&mut self) -> Result<Summary> {
         if self.sources.is_empty() {
             return Err(Error::NoSource);
@@ -280,6 +318,7 @@ pub(crate) struct AbortHandle<'a> {
 }
 
 impl AbortHandle<'_> {
+    /// Wakes the sensor threads and stops the target.
     fn abort(&self) {
         self.trigger.stop();
         if let Err(error) = (self.stop)() {
@@ -314,7 +353,7 @@ impl AbortHandle<'_> {
     }
 }
 
-/// A thread spawned by [`AbortHandle::spawn`], not ready .
+/// A thread spawned by [`AbortHandle::spawn`], not ready yet.
 pub(crate) struct Starting<'scope, T> {
     handle: ScopedJoinHandle<'scope, Result<T>>,
     wait_rx: Receiver<()>,
@@ -331,6 +370,7 @@ impl<'scope, T> Starting<'scope, T> {
     }
 }
 
+/// Joins a thread, turning its panic into an error.
 fn join<T>(handle: ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
     let name = handle.thread().name().unwrap_or_default().to_owned();
     handle.join().map_err(|_| Error::Panicked(name))?

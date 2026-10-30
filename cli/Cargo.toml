@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CLI tool to measure program energy consumption"
-keywords = ["energy", "profiling", "rapl", "nvml", "cli"]
+keywords = ["energy", "profiling", "cli"]
 readme = "../README.md"
 
 [[bin]]
@@ -14,13 +14,7 @@ name = "joule-profiler"
 path = "src/bin/main.rs"
 
 [dependencies]
-joule-profiler-source-rapl = { path = "../sources/rapl", version = "1.0.4", default-features = false, optional = true }
-joule-profiler-source-perf_event = { path = "../sources/perf_event", version = "1.0.2", optional = true }
-joule-profiler-source-nvml = { path = "../sources/nvml", version = "1.0.2", optional = true }
-joule-profiler-source-amdsmi = { path = "../sources/amdsmi", version = "0.1.0", optional = true }
-joule-profiler-source-procfs = { path = "../sources/procfs", version = "0.1.0", optional = true }
-joule-profiler-source-cgroup = { path = "../sources/cgroup", version = "0.1.0", optional = true }
-
+joule-profiler-config = { path = "../config", version = "0.1.0", default-features = false, features = ["clap"] }
 joule-profiler-core.workspace = true
 joule-profiler-injector-stdout = { path = "../injectors/stdout", version = "0.1.0" }
 joule-profiler-exporter-terminal = { path = "../exporters/terminal", version = "0.1.0" }
@@ -32,22 +26,26 @@ serde.workspace = true
 anyhow = "1.0.100"
 env_logger = "0.11.8"
 clap = { version = "4.5.53", features = ["derive"] }
-toml = "1.1.2"
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [features]
-default = ["rapl-perf", "rapl-powercap", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
+default = ["config-toml", "config-json", "rapl-perf", "rapl-powercap", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
 
-_rapl = ["dep:joule-profiler-source-rapl"]
-rapl-perf = ["_rapl", "joule-profiler-source-rapl/backend-perf"]
-rapl-powercap = ["_rapl", "joule-profiler-source-rapl/backend-powercap"]
+config-toml = ["joule-profiler-config/toml"]
+config-json = ["joule-profiler-config/json"]
 
-perf_event = ["dep:joule-profiler-source-perf_event"]
+rapl-perf = ["joule-profiler-config/rapl-perf"]
+rapl-powercap = ["joule-profiler-config/rapl-powercap"]
+
+perf_event = ["joule-profiler-config/perf_event"]
 perf = ["perf_event"]
 
-nvml = ["dep:joule-profiler-source-nvml"]
-amdsmi = ["dep:joule-profiler-source-amdsmi"]
-procfs = ["dep:joule-profiler-source-procfs"]
-cgroup = ["dep:joule-profiler-source-cgroup"]
+nvml = ["joule-profiler-config/nvml"]
+amdsmi = ["joule-profiler-config/amdsmi"]
+procfs = ["joule-profiler-config/procfs"]
+cgroup = ["joule-profiler-config/cgroup"]
 
 [lints]
 workspace = true

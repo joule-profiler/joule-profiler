@@ -1,13 +1,17 @@
 //! The results of a run as one table, a row per metric.
 
-use std::fs::File;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io,
+    path::{Path, PathBuf},
+};
 
 use csv::{QuoteStyle, Writer, WriterBuilder};
-use joule_profiler_core::exporter::Exporter;
-use joule_profiler_core::phase::{PhaseInfo, SourceMetrics, Summary};
-use joule_profiler_core::util::fs::{create_file, default_results_filename};
+use joule_profiler_core::{
+    Exporter, PhaseInfo, SourceMetrics, Summary,
+    util::fs::{create_file, default_results_filename},
+};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,6 +27,23 @@ pub enum CsvError {
 }
 
 type Result<T> = std::result::Result<T, CsvError>;
+
+/// Configuration of the CSV exporter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CsvExporterConfig {
+    /// The file the results are written to. Defaults to `data<timestamp>.csv`.
+    pub file: Option<PathBuf>,
+}
+
+impl CsvExporterConfig {
+    pub fn build(self) -> Result<CsvExporter> {
+        match self.file {
+            Some(path) => CsvExporter::to_file(path),
+            None => CsvExporter::new(),
+        }
+    }
+}
 
 const DELIMITER: u8 = b';';
 

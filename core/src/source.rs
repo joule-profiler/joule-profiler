@@ -1,14 +1,18 @@
-use std::sync::mpsc::{self, Sender};
-use std::thread::Scope;
+use std::{
+    sync::mpsc::{self, Sender},
+    thread::Scope,
+};
 
-use crate::error::{Error, Result};
-use crate::info::Info;
-use crate::injector::Target;
-use crate::metric::{MetricInfo, MetricValue};
-use crate::processor::Processor;
-use crate::profiler::{AbortHandle, Starting};
-use crate::sensor::Sensor;
-use crate::trigger::Trigger;
+use crate::{
+    error::{Error, Result},
+    info::Info,
+    injector::Target,
+    metric::{MetricInfo, MetricValue},
+    processor::Processor,
+    profiler::{AbortHandle, Starting},
+    sensor::Sensor,
+    trigger::Trigger,
+};
 
 /// A sensor and its processor, type-erased, with the info of the source.
 pub struct Source {

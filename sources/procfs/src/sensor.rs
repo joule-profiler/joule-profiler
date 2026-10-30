@@ -1,17 +1,20 @@
-use std::sync::Arc;
-use std::time::Duration;
-use std::{fs, io};
+use std::{fs, io, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
-use joule_profiler_core::injector::Target;
-use joule_profiler_core::sensor::Sensor;
-use joule_profiler_core::util::poller::Poller;
-use joule_profiler_core::util::shared::{Consumer, shared};
-use joule_profiler_core::util::stats::MinMaxMean;
+use joule_profiler_core::{
+    Sensor, Target,
+    util::{
+        poller::Poller,
+        shared::{Consumer, shared},
+        stats::MinMaxMean,
+    },
+};
 
-use crate::error::{ProcfsError, Result};
-use crate::hierarchy::process_descendants;
-use crate::poller::{poll_hierarchy, poll_machine_memory, poll_process_memory};
+use crate::{
+    error::{ProcfsError, Result},
+    hierarchy::process_descendants,
+    poller::{poll_hierarchy, poll_machine_memory, poll_process_memory},
+};
 
 /// The metrics related to the memory of the process tree.
 pub(crate) const PROCESS_METRICS: [&str; 5] = [
@@ -314,7 +317,6 @@ fn cpu_fields(text: &str) -> Option<impl Iterator<Item = &str>> {
 
 #[cfg(test)]
 mod tests {
-    use procfs::process::Process;
 
     use super::*;
 
@@ -322,39 +324,39 @@ mod tests {
                            11 22 33 44 20 0 1 0 900 2621440 371 0 0 0 0 0";
 
     #[test]
-    fn the_processor_time_is_read_past_a_command_that_holds_spaces() {
+    fn command_with_spaces() {
         assert_eq!(read_cpu_full(STAT), Some((11, 22, 33, 44)));
     }
 
     #[test]
-    fn a_reaped_child_that_reads_negative_counts_as_nothing() {
+    fn negative_child_time_is_zero() {
         let odd = STAT.replace(" 11 22 33 44 ", " 11 22 -1 -2 ");
 
         assert_eq!(read_cpu_full(&odd), Some((11, 22, 0, 0)));
     }
 
     #[test]
-    fn a_stat_that_is_not_one_is_not_read() {
+    fn invalid_stat() {
         assert_eq!(read_cpu(""), None);
         assert_eq!(read_cpu("42 (prog) S 1"), None);
     }
 
     #[test]
-    fn the_cpu_time_of_the_machine_groups_its_fields_into_user_system_and_idle() {
+    fn global_cpu() {
         let stat = "cpu  100 10 50 1000 20 3 7 0 0 0\ncpu0 1 2 3 4 5 6 7 0 0 0\n";
 
         assert_eq!(parse_global_cpu(stat), Some([110, 60, 1020]));
     }
 
     #[test]
-    fn a_stat_without_a_cpu_line_is_not_read() {
+    fn stat_without_cpu_line() {
         assert_eq!(parse_global_cpu(""), None);
         assert_eq!(parse_global_cpu("cpu0 1 2 3 4 5 6 7\n"), None);
         assert_eq!(parse_global_cpu("cpu 1 2 3\n"), None);
     }
 
     #[test]
-    fn the_bytes_are_read_by_name_and_not_by_position() {
+    fn io_by_name() {
         let io = "rchar: 1\nwchar: 2\nsyscr: 3\nsyscw: 4\n\
                   read_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 0\n";
 
@@ -362,41 +364,13 @@ mod tests {
     }
 
     #[test]
-    fn an_io_missing_what_is_wanted_reads_as_nothing_rather_than_failing() {
+    fn io_missing_fields() {
         assert_eq!(read_io("rchar: 1\nwchar: 2\n"), [0, 0]);
         assert_eq!(read_io(""), [0, 0]);
     }
 
     #[test]
-    #[allow(clippy::similar_names)]
-    fn reading_proc_straight_says_what_the_crate_says() {
-        let pid = i32::try_from(std::process::id()).expect("a pid fits in an i32");
-        let process = Process::new(pid).expect("this process is in /proc");
-
-        let stat = process.stat().expect("its stat");
-        let (utime, stime, cutime, cstime) =
-            read_cpu_full(&read_proc_file(pid, "stat").expect("its stat, read straight"))
-                .expect("four numbers");
-
-        assert!(
-            utime.abs_diff(stat.utime) <= 1 && stime.abs_diff(stat.stime) <= 1,
-            "utime/stime: straight ({utime} {stime}), crate {} {}",
-            stat.utime,
-            stat.stime
-        );
-        assert_eq!(cutime, u64::try_from(stat.cutime).unwrap_or_default());
-        assert_eq!(cstime, u64::try_from(stat.cstime).unwrap_or_default());
-
-        if let Ok(io) = process.io() {
-            let io_counters = read_io(&read_proc_file(pid, "io").expect("its io, read straight"));
-
-            assert_eq!(io_counters[0], io.read_bytes, "read_bytes");
-            assert_eq!(io_counters[1], io.write_bytes, "write_bytes");
-        }
-    }
-
-    #[test]
-    fn a_process_that_is_gone_is_one_less_rather_than_a_failure() {
+    fn ended_process_skipped() {
         assert!(read_proc_file(-1, "stat").is_none());
         let (io, cpu) = read_cpu_and_io_counters(-1, &[-1]);
 

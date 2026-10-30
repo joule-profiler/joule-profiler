@@ -1,9 +1,10 @@
 //! Cgroup v2 helpers.
 
-use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -453,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cgroup_is_only_a_path_until_it_is_asked_for_something() {
+    fn absent_cgroup_reads_nothing() {
         let cgroup = fake("absent");
 
         assert!(!cgroup.exists());
@@ -462,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn a_keyed_file_is_read_as_its_pairs() {
+    fn read_keyed() {
         let cgroup = fake("keyed");
         cgroup.create().unwrap();
         fs::write(
@@ -481,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_controller_reads_as_nothing_rather_than_failing() {
+    fn missing_controller_reads_none() {
         let cgroup = fake("no-controller");
         cgroup.create().unwrap();
 
@@ -492,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn processes_are_read_as_numbers() {
+    fn processes() {
         let cgroup = fake("procs");
         cgroup.create().unwrap();
         fs::write(cgroup.path().join(PROCS), "12\n34\n\n").unwrap();
@@ -512,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_cgroup_is_made_with_what_its_parent_can_hand_down_and_taken_away_after() {
+    fn run_cgroup_enables_and_restores_controllers() {
         let parent = fake_parent("run-parent", "cpu memory", "memory");
 
         let run = CgroupConfig::new()
@@ -522,11 +523,7 @@ mod tests {
             .unwrap();
 
         assert!(run.path().is_dir());
-        assert_eq!(
-            run.controllers,
-            ["cpu"],
-            "memory was handed down already, io is not there"
-        );
+        assert_eq!(run.controllers, ["cpu"]);
         assert_eq!(
             fs::read_to_string(parent.path().join(SUBTREE)).unwrap(),
             "+cpu"
@@ -537,14 +534,13 @@ mod tests {
         assert!(!parent.child("a-run").exists());
         assert_eq!(
             fs::read_to_string(parent.path().join(SUBTREE)).unwrap(),
-            "-cpu",
-            "what was handed down is taken back"
+            "-cpu"
         );
         fs::remove_dir_all(parent.path()).unwrap();
     }
 
     #[test]
-    fn a_controller_asked_for_by_name_has_to_be_there() {
+    fn required_controller_must_exist() {
         let parent = fake_parent("run-required", "cpu memory", "");
 
         let error = CgroupConfig::new()
@@ -560,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cgroup_that_exists_already_is_used_and_left_in_place() {
+    fn existing_cgroup_is_kept() {
         let parent = fake_parent("run-existing", "memory", "memory");
         parent.child("there").create().unwrap();
 
@@ -576,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_cgroup_is_frozen_only_when_asked_and_thawed_when_dropped() {
+    fn freeze_and_thaw() {
         let parent = fake_parent("run-freeze", "", "");
         let freeze = parent.child("a-run").path().join(FREEZE);
 
@@ -586,7 +582,7 @@ mod tests {
             .create()
             .unwrap();
         run.freeze().unwrap();
-        assert!(!freeze.exists(), "not asked to freeze");
+        assert!(!freeze.exists());
         drop(run);
 
         let mut run = CgroupConfig::new()
@@ -606,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parent_that_is_not_a_cgroup_is_refused() {
+    fn parent_must_be_cgroup() {
         let parent = fake("run-plain");
         parent.create().unwrap();
 

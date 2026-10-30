@@ -2,8 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use log::{debug, trace};
 
-use crate::error::{AmdSmiError, Result};
-use crate::sensor::{Device, DeviceSupport};
+use crate::{
+    error::{AmdSmiError, Result},
+    sensor::{Device, DeviceSupport},
+};
 
 /// The AMD SMI calls of the source.
 #[cfg_attr(test, mockall::automock)]

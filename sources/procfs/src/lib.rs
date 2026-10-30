@@ -19,8 +19,7 @@
 
 use std::time::Duration;
 
-use joule_profiler_core::source::Source;
-use joule_profiler_core::unit::MemoryUnit;
+use joule_profiler_core::{MemoryUnit, Source};
 use procfs::{Current, Meminfo};
 use serde::Deserialize;
 

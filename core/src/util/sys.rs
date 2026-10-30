@@ -1,7 +1,9 @@
-use std::fmt::Write as _;
-use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader};
-use std::path::Path;
+use std::{
+    fmt::Write as _,
+    fs::{self, File},
+    io::{self, BufRead, BufReader},
+    path::Path,
+};
 
 const CPU_PATH: &str = "/sys/devices/system/cpu";
 const PACKAGE_ID: &str = "topology/physical_package_id";
@@ -202,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn cpus_are_grouped_by_package() {
+    fn groups_cpus_by_package() {
         let root = fake_machine(
             "grouped",
             &[
@@ -224,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn cpus_are_grouped_by_die_within_their_package() {
+    fn groups_cpus_by_die() {
         let root = fake_machine(
             "dies",
             &[
@@ -254,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn a_package_is_a_single_die_before_linux_5_3() {
+    fn single_die_before_linux_5_3() {
         let root = fake_machine("nodie", &[(0, Some(0), None), (1, Some(0), None)]);
 
         let sockets = read_topology(&root).unwrap();
@@ -270,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cpu_without_a_package_is_left_out() {
+    fn cpu_without_package_is_skipped() {
         let root = fake_machine("offline", &[(0, Some(0), Some(0)), (1, None, None)]);
 
         let sockets = read_topology(&root).unwrap();
@@ -281,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn directories_that_are_not_cpus_are_ignored() {
+    fn ignores_other_directories() {
         let root = fake_machine("neighbours", &[(0, Some(0), Some(0))]);
 
         assert_eq!(read_topology(&root).unwrap().len(), 1);
@@ -289,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cpu_list_reads_its_ranges_and_single_cpus() {
+    fn cpu_list_ranges() {
         assert_eq!(
             parse_cpu_list("0-3,8,10-11\n"),
             Some(vec![0, 1, 2, 3, 8, 10, 11])
@@ -300,14 +302,14 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_cpus_are_written_as_a_range() {
+    fn format_cpu_list() {
         assert_eq!(cpu_list(&[0, 1, 2, 3, 8, 10, 11]), "0-3,8,10-11");
         assert_eq!(cpu_list(&[5]), "5");
         assert_eq!(cpu_list(&[]), "");
     }
 
     #[test]
-    fn the_model_is_that_of_the_first_processor() {
+    fn model_of_first_cpu() {
         let cpuinfo = "processor\t: 0\nvendor_id\t: GenuineIntel\n\
                        model name\t: Intel(R) Xeon(R) Gold 5220\n\n\
                        processor\t: 1\nmodel name\t: something else\n";
@@ -319,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cpuinfo_that_names_no_model_is_an_error() {
+    fn missing_model() {
         let error = read_model("processor\t: 0\nCPU part\t: 0xd0c\n".as_bytes()).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::NotFound);

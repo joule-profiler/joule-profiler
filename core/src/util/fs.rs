@@ -1,7 +1,9 @@
-use std::fs::{self, File};
-use std::io;
-use std::os::unix::fs::{MetadataExt, chown};
-use std::path::Path;
+use std::{
+    fs::{self, File},
+    io,
+    os::unix::fs::{MetadataExt, chown},
+    path::Path,
+};
 
 use crate::util::{sys::is_root, time::timestamp_micros};
 

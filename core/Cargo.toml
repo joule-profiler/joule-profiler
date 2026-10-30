@@ -18,6 +18,9 @@ triple_buffer = "9.0.0"
 
 [dev-dependencies]
 serde_json.workspace = true
+joule-profiler-injector-stdout = { path = "../injectors/stdout" }
+joule-profiler-exporter-terminal = { path = "../exporters/terminal" }
+joule-profiler-source-rapl = { path = "../sources/rapl" }
 
 [lints]
 workspace = true

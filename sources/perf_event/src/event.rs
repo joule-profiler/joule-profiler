@@ -1,8 +1,10 @@
 use std::fmt::{self, Display};
 
-use joule_profiler_core::unit::MetricUnit;
-use perf_event::Builder;
-use perf_event::events::{Hardware, Software};
+use joule_profiler_core::MetricUnit;
+use perf_event::{
+    Builder,
+    events::{Hardware, Software},
+};
 use serde::Deserialize;
 
 /// A hardware or software performance event.
@@ -206,14 +208,14 @@ mod tests {
     }
 
     #[test]
-    fn an_event_is_read_from_its_snake_case_perf_or_uppercase_name() {
+    fn parse_names() {
         for name in ["cpu_cycles", "cycles", "cpu-cycles", "CPU_CYCLES"] {
             assert_eq!(read(name).unwrap(), Event::CpuCycles, "{name}");
         }
     }
 
     #[test]
-    fn every_event_is_read_back_from_its_metric_name() {
+    fn display_round_trip() {
         for event in ALL {
             assert_eq!(read(&event.to_string()).unwrap(), event);
         }

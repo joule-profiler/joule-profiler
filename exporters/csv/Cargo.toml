@@ -9,6 +9,7 @@ description = "CSV exporter for Joule Profiler"
 
 [dependencies]
 joule-profiler-core.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 csv = "1.4.0"

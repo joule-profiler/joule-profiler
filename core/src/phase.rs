@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::metric::{Metric, MetricInfo, MetricValue};
-use crate::schema::Schema;
+use crate::{
+    metric::{Metric, MetricInfo, MetricValue},
+    schema::Schema,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhaseInfo {
@@ -77,11 +79,10 @@ pub struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::SourceInfo;
-    use crate::unit::MetricUnit;
+    use crate::{schema::SourceInfo, unit::MetricUnit};
 
     #[test]
-    fn the_metrics_of_a_run_are_named_once_and_take_the_values_of_each_phase() {
+    fn fill_values() {
         let schema = Schema {
             sources: vec![
                 SourceInfo {
