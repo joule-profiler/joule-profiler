@@ -49,6 +49,10 @@ pub struct CliArgs {
     #[cfg_attr(not(feature = "rapl"), arg(long, value_delimiter = ','))]
     pub sources: Vec<Source>,
 
+    /// Target a container (Docker/Podman) for cgroup metrics by name or ID.
+    #[arg(long = "container")]
+    pub container: Option<String>,
+
     #[allow(clippy::doc_markdown)]
     /// Override a configuration key, repeatable. (e.g., -D profiler.rapl_backend=powercap)
     ///
@@ -205,6 +209,7 @@ mod tests {
             output_format: None,
             output_file: None,
             sources,
+            container: None,
             overrides: Vec::new(),
             config_file: None,
             command: ProfilerCommand::ListSensors,

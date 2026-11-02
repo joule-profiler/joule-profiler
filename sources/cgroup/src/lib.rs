@@ -18,9 +18,12 @@ use tokio::task::JoinHandle;
 use tokio_timerfd::Interval;
 use tokio_util::sync::CancellationToken;
 
-use crate::cgroup::{CgroupBackend, ChildCgroup, RootCgroup, SysFsBackend};
+use crate::cgroup::{
+    CgroupBackend, ChildCgroup, RootCgroup, SysFsBackend, detect_default_cgroup_root,
+};
 use crate::counters::{Counters, CpuCounters, IoCounters, MemoryCounters};
 use crate::error::CgroupError;
+use crate::util::resolve_container_cgroup;
 
 mod cgroup;
 mod config;
@@ -71,6 +74,7 @@ where
     global_io_counters: IoCounters,
     begin_timestamp: u128,
     end_timestamp: u128,
+    cgroup_created: bool,
 }
 
 impl<B: CgroupBackend> Cgroup<B> {
@@ -133,9 +137,25 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
     type Config = CgroupConfig;
 
     /// Builds the cgroup handles.
-    fn from_config(config: Self::Config) -> Result<Self> {
-        let (root_cgroup, proc_cgroup) =
-            RootCgroup::build(config.cgroup_root.clone(), &config.cgroup_name);
+    fn from_config(mut config: Self::Config) -> Result<Self> {
+        let mut cgroup_root = config
+            .cgroup_root
+            .clone()
+            .unwrap_or_else(detect_default_cgroup_root);
+
+        if let Some(ref container) = config.container {
+            let (resolved_root, container_cgroup) = resolve_container_cgroup(container)?;
+            debug!(
+                "Resolved container `{container}` to cgroup path `{container_cgroup}` with root `{}`",
+                resolved_root.display()
+            );
+            cgroup_root = config.cgroup_root.clone().unwrap_or(resolved_root);
+            config.cgroup_name = container_cgroup;
+            config.create_cgroup = false;
+            config.attach_pid = false;
+        }
+
+        let (root_cgroup, proc_cgroup) = RootCgroup::build(Some(cgroup_root), &config.cgroup_name);
 
         Ok(Self {
             config,
@@ -150,6 +170,7 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
             global_io_counters: IoCounters::default(),
             begin_timestamp: 0,
             end_timestamp: 0,
+            cgroup_created: false,
         })
     }
 
@@ -163,8 +184,10 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
                     "Cgroup {} already mounted, if a process has already been spawned inside the cgroup, then the peak metrics might be wrong.",
                     self.config.cgroup_name
                 );
+            } else {
+                self.proc_cgroup.create()?;
+                self.cgroup_created = true;
             }
-            self.proc_cgroup.create()?;
         }
 
         self.proc_cgroup.verify()?;
@@ -282,7 +305,7 @@ impl<B: CgroupBackend> MetricReader for Cgroup<B> {
             cancellation_token.cancel();
             handle.await??;
         }
-        if self.config.create_cgroup {
+        if self.cgroup_created {
             self.proc_cgroup.cleanup()?;
         }
         Ok(())
@@ -549,6 +572,7 @@ mod tests {
             global_io_counters: IoCounters::default(),
             begin_timestamp: 0,
             end_timestamp: 0,
+            cgroup_created: false,
         };
 
         (source, backend)

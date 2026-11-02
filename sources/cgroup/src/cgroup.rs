@@ -142,8 +142,28 @@ impl CgroupBackend for SysFsBackend {
 
     /// Reads memory statistics from cgroup memory files.
     fn memory(&self, path: &Path) -> Result<MemorySnapshot> {
-        let mut stat = read_flat_keyed_file(&path.join("memory.stat"))
-            .map_err(|e| e.into_controller_error("memory", path))?;
+        let stat_path = path.join("memory.stat");
+        let mut stat = match read_flat_keyed_file(&stat_path) {
+            Ok(stat) => stat,
+            Err(e) => {
+                let err = e.into_controller_error("memory", path);
+                if matches!(
+                    err,
+                    CgroupError::ControllerNotAvailable {
+                        controller: "memory",
+                        ..
+                    }
+                ) {
+                    debug!(
+                        "Cgroup controller `memory` is not available at {}. Skipping memory metrics.",
+                        path.display()
+                    );
+                    return Ok(MemorySnapshot::default());
+                }
+                return Err(err);
+            }
+        };
+
         Ok(MemorySnapshot {
             current: read_u64_opt(&path.join("memory.current"))?,
             swap_current: read_u64_opt(&path.join("memory.swap.current"))?,
@@ -182,9 +202,28 @@ impl CgroupBackend for SysFsBackend {
 
     /// Reads I/O statistics from `io.stat`.
     fn io(&self, path: &Path) -> Result<IoSnapshot> {
-        let (rbytes, wbytes) =
-            read_io_stat(&path.join("io.stat")).map_err(|e| e.into_controller_error("io", path))?;
-        Ok(IoSnapshot { rbytes, wbytes })
+        let stat_path = path.join("io.stat");
+        match read_io_stat(&stat_path) {
+            Ok((rbytes, wbytes)) => Ok(IoSnapshot { rbytes, wbytes }),
+            Err(e) => {
+                let err = e.into_controller_error("io", path);
+                if matches!(
+                    err,
+                    CgroupError::ControllerNotAvailable {
+                        controller: "io",
+                        ..
+                    }
+                ) {
+                    debug!(
+                        "Cgroup controller `io` is not available at {}. Skipping I/O metrics.",
+                        path.display()
+                    );
+                    Ok(IoSnapshot::default())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 }
 
@@ -215,7 +254,7 @@ impl<B: CgroupBackend> RootCgroup<B> {
     /// Builds the root cgroup and its named child in one go, using a default backend.
     pub fn build(cgroup_root: Option<PathBuf>, cgroup_name: &str) -> (Self, ChildCgroup<B>) {
         let root = Self::new(
-            cgroup_root.unwrap_or_else(|| PathBuf::from(DEFAULT_CGROUP_ROOT)),
+            cgroup_root.unwrap_or_else(detect_default_cgroup_root),
             B::default(),
         );
         let child = root.child(cgroup_name);
@@ -255,9 +294,33 @@ impl<B: CgroupBackend> RootCgroup<B> {
 
 const DEFAULT_CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
+/// Returns the default cgroup root.
+///
+/// If running as an unprivileged user on a systemd system with user cgroup delegation,
+/// this automatically selects the user's delegated cgroup hierarchy
+/// (`/sys/fs/cgroup/user.slice/user-<UID>.slice/user@<UID>.service`), allowing non-root
+/// users to profile workloads without root privileges.
+/// Otherwise, falls back to `/sys/fs/cgroup`.
+pub fn detect_default_cgroup_root() -> PathBuf {
+    if !joule_profiler_core::sys::is_root() {
+        let uid = joule_profiler_core::sys::geteuid();
+        let user_service = PathBuf::from(format!(
+            "/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service"
+        ));
+        if is_cgroup_dir(&user_service) {
+            debug!(
+                "Detected rootless user delegated cgroup hierarchy at {}",
+                user_service.display()
+            );
+            return user_service;
+        }
+    }
+    PathBuf::from(DEFAULT_CGROUP_ROOT)
+}
+
 impl Default for RootCgroup {
     fn default() -> Self {
-        Self::at(PathBuf::from(DEFAULT_CGROUP_ROOT))
+        Self::at(detect_default_cgroup_root())
     }
 }
 
@@ -508,5 +571,26 @@ mod tests {
 
         assert_eq!(stats.rbytes, Some(120));
         assert_eq!(stats.wbytes, Some(80));
+    }
+
+    #[test]
+    fn test_detect_default_cgroup_root() {
+        let root = detect_default_cgroup_root();
+        assert!(!root.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_sysfs_backend_graceful_controller_degradation() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create cgroup.controllers without 'io' or 'memory'
+        std::fs::write(dir.path().join("cgroup.controllers"), "cpu").unwrap();
+
+        let backend = SysFsBackend;
+        let io_stats = backend.io(dir.path()).unwrap();
+        assert_eq!(io_stats.rbytes, None);
+        assert_eq!(io_stats.wbytes, None);
+
+        let mem_stats = backend.memory(dir.path()).unwrap();
+        assert_eq!(mem_stats.current, None);
     }
 }

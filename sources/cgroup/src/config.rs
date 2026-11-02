@@ -26,6 +26,13 @@ pub struct CgroupConfig {
     #[serde(default = "default_cgroup_name")]
     pub cgroup_name: String,
 
+    /// Optional container ID or name to profile.
+    ///
+    /// When specified, Joule Profiler automatically resolves the container's
+    /// cgroup, scopes metrics to it, and disables cgroup creation and PID attachment.
+    #[serde(default)]
+    pub container: Option<String>,
+
     /// Background polling interval.
     #[serde(default = "default_poll_interval", with = "humantime_serde")]
     pub poll_interval: Duration,
@@ -44,6 +51,7 @@ impl Default for CgroupConfig {
         Self {
             cgroup_root: None,
             cgroup_name: default_cgroup_name(),
+            container: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             attach_pid: true,
             create_cgroup: true,

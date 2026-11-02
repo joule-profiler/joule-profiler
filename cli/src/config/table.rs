@@ -66,6 +66,17 @@ impl ConfigTable {
             self.profiler_config.output_file = Some(output_file);
         }
 
+        if let Some(container) = cli.container.take() {
+            self.enabled_sources.insert("cgroup".to_string());
+            let source_entry = self
+                .sources_config
+                .entry("cgroup".to_string())
+                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+            if let toml::Value::Table(map) = source_entry {
+                map.insert("container".to_string(), toml::Value::String(container));
+            }
+        }
+
         if let ProfilerCommand::Profile(profile_args) = &mut cli.command {
             if let Some(stdout_file) = profile_args.stdout_file.take() {
                 self.profiler_config.stdout_file = Some(stdout_file);
@@ -291,6 +302,7 @@ mod tests {
             output_format: None,
             output_file: None,
             sources: Vec::new(),
+            container: None,
             overrides: Vec::new(),
             config_file: None,
             command,
@@ -565,6 +577,22 @@ mod tests {
         assert!(
             err.to_string()
                 .contains(&Source::value_variants()[0].to_string())
+        );
+    }
+
+    #[test]
+    fn apply_cli_enables_cgroup_for_container() {
+        let mut table = config_table_with(ProfilerConfig::default());
+        let mut cli = cli_args(ProfilerCommand::ListSensors);
+        cli.container = Some("test_container_123".to_string());
+
+        table.apply_cli(&mut cli);
+
+        assert!(table.enabled_sources.contains("cgroup"));
+        let cgroup_val = table.sources_config.get("cgroup").unwrap();
+        assert_eq!(
+            cgroup_val.get("container").and_then(|v| v.as_str()),
+            Some("test_container_123")
         );
     }
 }
