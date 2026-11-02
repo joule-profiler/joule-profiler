@@ -51,7 +51,6 @@ impl Default for StdoutInjectorConfig {
 
 impl StdoutInjectorConfig {
     pub fn build(self, command: Vec<String>) -> Result<StdoutInjector, StdoutError> {
-        println!("{}", self.use_root);
         Ok(StdoutInjector::new(command, &self.token_pattern)?
             .use_root(self.use_root)
             .output_file(self.stdout_file)
