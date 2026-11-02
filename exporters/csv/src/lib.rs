@@ -111,7 +111,7 @@ impl Exporter for CsvExporter {
         let name = phase.name();
         let start_line = line(phase.start_line);
         let end_line = line(phase.end_line);
-        let timestamp = phase.timestamp_us.to_string();
+        let timestamp = phase.timestamp.to_string();
         let duration = phase.duration_us.to_string();
 
         for source in sources {

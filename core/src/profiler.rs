@@ -295,8 +295,8 @@ fn export_loop(
                 end_token: end.token.clone(),
                 start_line: start.line,
                 end_line: end.line,
-                timestamp_us: start.timestamp_us,
-                duration_us: micros_between(start.timestamp_us, end.timestamp_us),
+                timestamp: start.timestamp,
+                duration_us: micros_between(start.timestamp, end.timestamp),
             };
             exporter.export(&phase, &sources)?;
             phases += 1;

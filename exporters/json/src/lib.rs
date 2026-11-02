@@ -233,7 +233,7 @@ mod tests {
             end_token: "END".to_owned(),
             start_line: None,
             end_line: Some(3),
-            timestamp_us: 10,
+            timestamp: 10,
             duration_us: 2_000,
         }
     }

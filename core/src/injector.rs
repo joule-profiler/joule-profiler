@@ -115,7 +115,7 @@ fn run_with(
     send_fn(PhaseBoundary {
         token: "START".to_owned(),
         line: None,
-        timestamp_us: start_timestamp,
+        timestamp: start_timestamp,
     })?;
 
     let mut phases = 0;
@@ -133,7 +133,7 @@ fn run_with(
         send_fn(PhaseBoundary {
             token,
             line,
-            timestamp_us: end_timestamp,
+            timestamp: end_timestamp,
         })?;
         if ends {
             break end_timestamp;
@@ -141,7 +141,7 @@ fn run_with(
     };
 
     Ok(Summary {
-        timestamp_us: start_timestamp,
+        timestamp: start_timestamp,
         duration_us: micros_between(start_timestamp, end_timestamp),
         phases,
         exit_code: None,
