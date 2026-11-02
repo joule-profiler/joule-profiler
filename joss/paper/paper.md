@@ -13,15 +13,15 @@ tags:
   - phase-based profiling
 authors:
   - name: Jérémy Woirhaye
-	orcid: 0009-0005-0777-9090
+    orcid: 0009-0005-0777-9090
     equal-contrib: true
     affiliation: "1,2"
   - name: François Gibier
-	orcid: 0009-0005-5164-8063
+    orcid: 0009-0005-5164-8063
     equal-contrib: true 
     affiliation: "1,2"
   - name: Romain Rouvoy
-	orcid: 0000-0003-1771-8791
+    orcid: 0000-0003-1771-8791
     affiliation: "1,2"
 affiliations:
  - name: Inria, France
@@ -102,7 +102,7 @@ We performed 4,000 measurements to achieve 80% power and applied a *Two One-Side
 
 \begin{figure}
 	\centering
-	\includegraphics[width=\linewidth]{images/full_comparison_parallel2.pdf}
+	\includegraphics[width=\linewidth]{images/full_comparison_parallel2.png}
 	\caption{Bland–Altman analysis of energy measurements (J) across RAPL domains (DRAM, PACKAGE) comparing perf and Joule Profiler, and GPU comparing Alumet and Joule Profiler.}
 	\label{fig:rapl_bland_altman}
 \end{figure}

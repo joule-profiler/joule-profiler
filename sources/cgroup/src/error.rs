@@ -26,6 +26,13 @@ pub enum CgroupError {
     )]
     NotFound(PathBuf),
 
+    /// Failed to resolve a container identifier to its cgroup.
+    #[error(
+        "Container `{0}` cgroup could not be found. Make sure the container is running \
+        and accessible."
+    )]
+    ContainerNotFound(String),
+
     /// Attempted to create a cgroup that already exists.
     #[error("Cgroup with name \"{0}\" already created.")]
     AlreadyCreated(String),

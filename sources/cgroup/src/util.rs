@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs, io::ErrorKind, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use crate::{Result, error::CgroupError};
 
@@ -121,6 +126,68 @@ pub fn read_io_stat(path: &Path) -> Result<(Option<u64>, Option<u64>)> {
         if has_r { Some(rbytes) } else { None },
         if has_w { Some(wbytes) } else { None },
     ))
+}
+
+/// Resolves a container ID or name to its cgroup root and relative cgroup path.
+///
+/// Tries two discovery strategies:
+/// 1. Querying `docker inspect` for the container's PID, then parsing `/proc/<PID>/cgroup`.
+/// 2. Scanning `/sys/fs/cgroup/system.slice` or `/sys/fs/cgroup/docker` for matching container scope directories.
+pub fn resolve_container_cgroup(identifier: &str) -> Result<(PathBuf, String)> {
+    let sys_root = Path::new("/sys/fs/cgroup");
+
+    // Strategy 1: Attempt to query docker inspect for the container PID
+    if let Ok(output) = std::process::Command::new("docker")
+        .args(["inspect", "-f", "{{.State.Pid}}", identifier])
+        .output()
+        && output.status.success()
+    {
+        let pid_str = String::from_utf8_lossy(&output.stdout);
+        if let Ok(pid) = pid_str.trim().parse::<i32>()
+            && let Ok(cgroup_content) = fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        {
+            for line in cgroup_content.lines() {
+                if let Some(path) = line.strip_prefix("0::") {
+                    let rel = path.trim_start_matches('/');
+                    if sys_root.join(rel).exists() {
+                        return Ok((sys_root.to_path_buf(), rel.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Strategy 2: Search in common cgroup v2 locations (system.slice or docker/)
+    let system_slice = sys_root.join("system.slice");
+    if system_slice.is_dir()
+        && let Ok(entries) = fs::read_dir(&system_slice)
+    {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if (name_str.starts_with("docker-") || name_str.starts_with("libpod-"))
+                && name_str.contains(identifier)
+                && name_str.ends_with(".scope")
+            {
+                return Ok((sys_root.to_path_buf(), format!("system.slice/{name_str}")));
+            }
+        }
+    }
+
+    let docker_dir = sys_root.join("docker");
+    if docker_dir.is_dir()
+        && let Ok(entries) = fs::read_dir(&docker_dir)
+    {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.contains(identifier) {
+                return Ok((sys_root.to_path_buf(), format!("docker/{name_str}")));
+            }
+        }
+    }
+
+    Err(CgroupError::ContainerNotFound(identifier.to_string()))
 }
 
 #[cfg(test)]
@@ -258,5 +325,13 @@ baz not_a_number";
         assert_eq!(w, None);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_container_cgroup_not_found() {
+        let res = resolve_container_cgroup("nonexistent_container_id_0123456789");
+        assert!(
+            matches!(res, Err(CgroupError::ContainerNotFound(id)) if id == "nonexistent_container_id_0123456789")
+        );
     }
 }
