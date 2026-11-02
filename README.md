@@ -46,7 +46,7 @@ joule-profiler --output-format json profile -- <COMMAND>
 joule-profiler --sources rapl,nvml profile -- <COMMAND>
 ```
 
-A configuration file can be used to configure the tool using the CLI flag `--config`, see [configuration file](examples/example_config.toml). The CLI arguments will ALWAYS override the configuration arguments.
+A configuration file can be used to configure the tool using the CLI flag `--config`, see [configuration file](examples/example_config.toml). The CLI arguments will always override the configuration arguments.
 
 Any key of the configuration file can be set from the command line with `-D KEY=VALUE`, where `KEY` is the toml key. This works with or without a `--config` file, and can be repeated:
 
