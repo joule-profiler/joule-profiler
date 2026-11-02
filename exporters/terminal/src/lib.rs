@@ -15,10 +15,11 @@ const VALUE: usize = 12;
 /// Padding is written as a slice of this: `Formatter::pad` writes one character at a time.
 const SPACES: &str = "                                                        ";
 
-/// The top and bottom of a heavy box, built once.
+/// The lines of a heavy box and of a phase heading, built once.
 struct Rules {
     heavy_top: String,
     heavy_bottom: String,
+    heavy_rule: String,
 }
 
 impl Default for Rules {
@@ -28,6 +29,7 @@ impl Default for Rules {
         Self {
             heavy_top: format!("╔{heavy}╗\n"),
             heavy_bottom: format!("╚{heavy}╝\n"),
+            heavy_rule: format!("{}\n", "═".repeat(WIDTH)),
         }
     }
 }
@@ -133,7 +135,7 @@ impl Exporter for TerminalExporter {
 
         scratch.clear();
         let _ = write!(scratch, "{} -> {}", phase.start_token, phase.end_token);
-        heavy_box(out, scratch, rules)?;
+        heading(out, scratch, rules)?;
 
         label(out, "Duration")?;
         write_duration(out, scratch, phase.duration_us)?;
@@ -278,6 +280,15 @@ fn heavy_box(out: &mut impl Write, title: &str, rules: &Rules) -> io::Result<()>
     out.write_all(" ║\n".as_bytes())?;
 
     out.write_all(rules.heavy_bottom.as_bytes())
+}
+
+/// Writes `title` between two heavy rules, which a long title overflows without breaking.
+fn heading(out: &mut impl Write, title: &str, rules: &Rules) -> io::Result<()> {
+    out.write_all(rules.heavy_rule.as_bytes())?;
+    out.write_all(b" ")?;
+    out.write_all(title.as_bytes())?;
+    out.write_all(b"\n")?;
+    out.write_all(rules.heavy_rule.as_bytes())
 }
 
 fn light_box(title: &str) -> String {

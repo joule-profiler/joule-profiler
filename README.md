@@ -40,7 +40,7 @@ sudo cp target/release/joule-profiler /usr/local/bin/
 joule-profiler profile -- <COMMAND>
 
 # JSON output
-joule-profiler --output-format json profile -- <COMMAND>
+joule-profiler profile --output-format json -- <COMMAND>
 
 # GPU profiling (NVIDIA)
 joule-profiler --sources rapl,nvml profile -- <COMMAND>
