@@ -74,7 +74,7 @@ pub enum StdoutError {
 
     #[error(
         "running as root, but SUDO_UID and SUDO_GID do not say who asked: set them, or use \
-         `use_root` to run the command as root"
+         `use-root` flag to run the command as root"
     )]
     NoInvokingUser,
 
