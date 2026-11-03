@@ -62,6 +62,7 @@ pub enum Command {
     Info,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Parser, Debug)]
 pub struct ProfileArgs {
     /// The regular expression used to detect tokens on the standard output.
@@ -92,6 +93,10 @@ pub struct ProfileArgs {
     /// Discards what the command prints.
     #[arg(long = "no-stdout")]
     pub no_stdout: bool,
+
+    /// Doesn't print the machine and sources information before profiling.
+    #[arg(long = "no-info")]
+    pub no_info: bool,
 
     /// Under `sudo`, whether the command keeps root privileges.
     #[arg(long = "use-root")]

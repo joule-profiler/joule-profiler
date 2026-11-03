@@ -42,7 +42,9 @@ fn main() -> Result<()> {
             joule_profiler.set_injector(injector);
             joule_profiler.set_defer(config.defer);
 
-            print_info("Information", &joule_profiler.info())?;
+            if !config.no_info {
+                print_info("Information", &joule_profiler.info())?;
+            }
             joule_profiler.profile()?;
         }
     }

@@ -36,6 +36,8 @@ pub struct Config {
 
     pub defer: bool,
 
+    pub no_info: bool,
+
     pub cgroup: Option<CgroupConfig>,
 }
 
@@ -52,8 +54,12 @@ impl Config {
         let mut config_file: ConfigFile = table.deserialize()?;
 
         let mut defer = config_file.profiler.defer;
+        let mut no_info = false;
+
         if let Command::Profile(args) = &cli.command {
             defer |= args.defer;
+            no_info |= args.no_info;
+
             if let Some(pattern) = &args.token_pattern {
                 config_file.injector.token_pattern.clone_from(pattern);
             }
@@ -80,6 +86,7 @@ impl Config {
             exporter: config_file.exporter,
             injector: config_file.injector,
             defer,
+            no_info,
             cgroup,
         })
     }
