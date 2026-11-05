@@ -13,6 +13,9 @@ pub enum Format {
 
     #[cfg(feature = "json")]
     Json,
+
+    #[cfg(feature = "yaml")]
+    Yaml,
 }
 
 impl Format {
@@ -23,12 +26,14 @@ impl Format {
             "toml" => Some(Self::Toml),
             #[cfg(feature = "json")]
             "json" => Some(Self::Json),
+            #[cfg(feature = "yaml")]
+            "yaml" | "yml" => Some(Self::Yaml),
             _ => None,
         }
     }
 
     #[cfg_attr(
-        not(any(feature = "toml", feature = "json")),
+        not(any(feature = "toml", feature = "json", feature = "yaml")),
         allow(unused_variables, clippy::unnecessary_wraps)
     )]
     fn parse(
@@ -40,6 +45,8 @@ impl Format {
             Self::Toml => Ok(toml::from_str(text)?),
             #[cfg(feature = "json")]
             Self::Json => Ok(serde_json::from_str(text)?),
+            #[cfg(feature = "yaml")]
+            Self::Yaml => Ok(yaml_serde::from_str(text)?),
         }
     }
 }
@@ -101,17 +108,11 @@ impl ConfigTable {
     }
 }
 
-#[cfg(feature = "toml")]
 fn parse_value(raw: &str) -> Value {
     toml::from_str::<Map<String, Value>>(&format!("value = {raw}"))
         .ok()
         .and_then(|mut table| table.remove("value"))
         .unwrap_or_else(|| Value::String(raw.to_owned()))
-}
-
-#[cfg(not(feature = "toml"))]
-fn parse_value(raw: &str) -> Value {
-    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_owned()))
 }
 
 #[cfg(test)]

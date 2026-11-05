@@ -15,8 +15,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
-toml = { version = "1.1.2", optional = true }
+toml = "1.1.2"
 clap = { version = "4.5.53", features = ["derive"], optional = true }
+yaml_serde = { version = "0.10.7", optional = true }
 
 joule-profiler-source-rapl = { path = "../sources/rapl", version = "1.0.4", default-features = false, optional = true }
 joule-profiler-source-perf_event = { path = "../sources/perf_event", version = "1.0.2", optional = true }
@@ -26,10 +27,11 @@ joule-profiler-source-procfs = { path = "../sources/procfs", version = "0.1.0", 
 joule-profiler-source-cgroup = { path = "../sources/cgroup", version = "0.1.0", optional = true }
 
 [features]
-default = ["toml", "rapl-perf", "rapl-powercap", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
+default = ["toml", "json", "yaml", "rapl-perf", "rapl-powercap", "perf_event", "nvml", "amdsmi", "procfs", "cgroup"]
 
-toml = ["dep:toml"]
+toml = []
 json = []
+yaml = ["dep:yaml_serde"]
 clap = ["dep:clap"]
 
 _rapl = ["dep:joule-profiler-source-rapl"]

@@ -162,7 +162,7 @@ impl FromStr for SourceName {
 }
 
 /// Returns the `named` sources, then those with a table in `tables`, each with its table.
-/// Without any, returns the default source.
+/// Without any, returns the RAPL source only.
 pub fn configured_sources(
     named: &[SourceName],
     tables: &Map<String, Value>,
@@ -178,10 +178,12 @@ pub fn configured_sources(
         }
     }
 
-    if sources.is_empty()
-        && let Some(default) = SourceName::ALL.first()
-    {
-        sources.push((*default, None));
+    if sources.is_empty() {
+        #[cfg(feature = "_rapl")]
+        sources.push((SourceName::Rapl, None));
+
+        #[cfg(not(feature = "_rapl"))]
+        Err(ConfigError::NoSourceConfigured)?;
     }
 
     Ok(sources)

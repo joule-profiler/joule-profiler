@@ -36,4 +36,7 @@ pub enum ConfigError {
 
     #[error("building the `{0}` source")]
     Unavailable(&'static str, #[source] Box<dyn Error + Send + Sync>),
+
+    #[error("no source configured, add at least one")]
+    NoSourceConfigured,
 }
