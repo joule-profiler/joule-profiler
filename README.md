@@ -46,6 +46,9 @@ joule-profiler --output-format json profile -- <COMMAND>
 joule-profiler --sources rapl,nvml profile -- <COMMAND>
 ```
 
+After writing the profiling report, the profile command returns the exit code of the profiled program.
+This lets automation detect failed workloads while keeping their reports.
+
 A configuration file can be used to configure the tool using the CLI flag `--config`, see [configuration file](examples/example_config.toml). The CLI arguments will ALWAYS override the configuration arguments.
 
 Any key of the configuration file can be set from the command line with `-D KEY=VALUE`, where `KEY` is the toml key. This works with or without a `--config` file, and can be repeated:

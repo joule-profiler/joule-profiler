@@ -1,3 +1,5 @@
+use std::process::ExitCode;
+
 use anyhow::Result;
 use joule_profiler_cli::config::load_global_config;
 use joule_profiler_cli::config::source::register_source;
@@ -24,7 +26,7 @@ use joule_profiler_source_rapl::perf;
 use joule_profiler_source_rapl::powercap;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<ExitCode> {
     let mut cli = CliArgs::from_args();
     cli.validate()?;
 
@@ -75,12 +77,12 @@ async fn main() -> Result<()> {
                 &profile_config.token_pattern,
                 &results,
             )?;
+            Ok(u8::try_from(results.exit_code).map_or(ExitCode::FAILURE, ExitCode::from))
         }
         Command::ListSensors => {
             let sensors = profiler.list_sensors()?;
             displayer.list_sensors(&sensors)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
-
-    Ok(())
 }
