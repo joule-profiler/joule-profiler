@@ -31,8 +31,10 @@ pub struct ProcfsBackend;
 impl Backend for ProcfsBackend {
     /// Reads memory and I/O stats for a single pid.
     ///
-    /// Silently ignores `PermissionDenied` on I/O reads, which can happen
-    /// if the process exits between the smaps and io reads.
+    /// Silently ignores `PermissionDenied` and `NotFound` on I/O reads. The
+    /// latter happens when the kernel has no task I/O accounting (no
+    /// `/proc/<pid>/io`, e.g. WSL2) or when the process exits between the
+    /// smaps and io reads. Memory metrics are still valid in both cases.
     fn read_proc(&self, pid: i32) -> Result<ProcSnapshot> {
         let process = Process::new(pid)?;
         let mut snapshot = ProcSnapshot::default();
@@ -57,7 +59,7 @@ impl Backend for ProcfsBackend {
                 snapshot.read_bytes += io.rchar;
                 snapshot.write_bytes += io.wchar;
             }
-            Err(procfs::ProcError::PermissionDenied(_)) => {}
+            Err(procfs::ProcError::PermissionDenied(_) | procfs::ProcError::NotFound(_)) => {}
             Err(err) => return Err(err.into()),
         }
 
@@ -99,5 +101,22 @@ impl Backend for ProcfsBackend {
     fn mem_total(&self) -> Result<u64> {
         trace!("Retrieving Meminfo from {}.", Meminfo::PATH);
         Ok(Meminfo::from_file(Meminfo::PATH)?.mem_total)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Memory metrics must not depend on `/proc/<pid>/io`, which kernels built
+    /// without task I/O accounting (e.g. WSL2) do not provide.
+    #[test]
+    fn read_proc_reports_memory_of_the_current_process() {
+        let pid = i32::try_from(std::process::id()).unwrap();
+
+        let snapshot = ProcfsBackend.read_proc(pid).unwrap();
+
+        assert!(snapshot.vm_size > 0);
+        assert!(snapshot.rss > 0);
     }
 }
