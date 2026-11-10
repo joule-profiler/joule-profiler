@@ -11,7 +11,10 @@ use crate::{
     config::{overrides::ConfigOverride, table::ConfigTable},
     output::{
         displayer::Displayer,
-        formats::{OutputFormat, csv::CsvOutput, json::JsonOutput, terminal::TerminalOutput},
+        formats::{
+            OutputFormat, csv::CsvOutput, json::JsonOutput, markdown::MarkdownOutput,
+            terminal::TerminalOutput,
+        },
     },
 };
 
@@ -33,11 +36,11 @@ pub struct CliArgs {
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
     pub verbose: u8,
 
-    /// Output format to export the results in. (e.g., terminal, json, csv)
+    /// Output format to export the results in. (e.g., terminal, json, csv, markdown)
     #[arg(long = "output-format")]
     pub output_format: Option<OutputFormat>,
 
-    /// Output file for CSV/JSON. (else `data<TIMESTAMP>`.csv/json)
+    /// Output file for CSV/JSON/Markdown. (else `data<TIMESTAMP>`.csv/json/md). Use `-` to write Markdown to stdout.
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
@@ -179,10 +182,11 @@ pub enum RaplBackend {
 pub fn config_table_to_displayer(config_table: &ConfigTable) -> Result<Box<dyn Displayer>> {
     let output_file = config_table.profiler_config.output_file.clone();
 
-    let displayer = match config_table.profiler_config.output_format {
+    let displayer: Box<dyn Displayer> = match config_table.profiler_config.output_format {
         OutputFormat::Terminal => TerminalOutput.into(),
         OutputFormat::Json => JsonOutput::new(output_file)?.into(),
         OutputFormat::Csv => CsvOutput::try_new(output_file)?.into(),
+        OutputFormat::Markdown => MarkdownOutput::new(output_file)?.into(),
     };
 
     Ok(displayer)

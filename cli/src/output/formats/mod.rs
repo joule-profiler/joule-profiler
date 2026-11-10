@@ -2,12 +2,12 @@
 //!
 //! This module defines the supported output formats and provides utilities
 //! for selecting and displaying metrics collected by `JouleProfiler`.
-//! It includes built-in formats for terminal display, JSON export, and CSV export.
+//! It includes built-in formats for terminal display, JSON export, CSV export, and Markdown export.
 //!
 //! # Overview
 //!
 //! - [`OutputFormat`] - Enum representing the available output formats.
-//! - `csv`, `json`, `terminal` - Submodules implementing the actual display logic for default output formats.
+//! - `csv`, `json`, `markdown`, `terminal` - Submodules implementing the actual display logic for default output formats.
 
 use clap::ValueEnum;
 use std::fmt::{Display, Formatter, Result};
@@ -16,6 +16,7 @@ use serde::Deserialize;
 
 pub mod csv;
 pub mod json;
+pub mod markdown;
 pub mod terminal;
 
 /// Represents the supported output formats for `JouleProfiler`.
@@ -30,6 +31,7 @@ pub mod terminal;
 /// - `Terminal` - Display metrics directly in the terminal (default).
 /// - `Json` - Export metrics as JSON for easy parsing or integration.
 /// - `Csv` - Export metrics in CSV format for spreadsheets or analysis.
+/// - `Markdown` - Export a Markdown report, handy for CI logs and PR comments.
 #[derive(Debug, Clone, Copy, Default, ValueEnum, Deserialize)]
 pub enum OutputFormat {
     #[default]
@@ -41,6 +43,9 @@ pub enum OutputFormat {
 
     #[serde(alias = "csv", alias = "CSV")]
     Csv,
+
+    #[serde(alias = "markdown", alias = "md", alias = "MARKDOWN", alias = "MD")]
+    Markdown,
 }
 
 impl Display for OutputFormat {
@@ -49,6 +54,7 @@ impl Display for OutputFormat {
             OutputFormat::Terminal => "Terminal",
             OutputFormat::Json => "Json",
             OutputFormat::Csv => "CSV",
+            OutputFormat::Markdown => "Markdown",
         })?;
         Ok(())
     }
