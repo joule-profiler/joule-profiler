@@ -84,7 +84,7 @@ After that you can use systemd to spawn a process directly in your slice:
 systemd-run --scope --slice={your_slice_name} {your_command}
 ```
 
-The slice can then be named in `[sources.cgroup]`, and in `[sources.perf_event]` with `scope = "cgroup"`. See [perf_event](../perf_event/README.md) source documentation for further information.
+The slice can then be named in `[sources.cgroup]`, or in `[cgroup.name]` and will be override.
 
 ## Implemented metrics
 
