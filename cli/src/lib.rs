@@ -40,7 +40,7 @@ pub struct CliArgs {
     #[arg(long = "output-format")]
     pub output_format: Option<OutputFormat>,
 
-    /// Output file for CSV/JSON/Markdown. (else `data<TIMESTAMP>`.csv/json/md)
+    /// Output file for CSV/JSON/Markdown. (else `data<TIMESTAMP>`.csv/json/md). Use `-` to write Markdown to stdout.
     #[arg(short = 'o', long = "output-file")]
     pub output_file: Option<String>,
 
